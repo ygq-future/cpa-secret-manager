@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -44,7 +45,7 @@ func main() {
 
 	serveErr := make(chan error, 1)
 	go func() {
-		log.Printf("devserver: control panel http://localhost%s/control-panel", normalizeAddr(parsed.addr))
+		log.Printf("devserver: control panel %s/control-panel", browserURL(parsed.addr))
 		log.Printf("devserver: management key %q, key store %s, state %s", parsed.managementKey, parsed.keysPath, parsed.statePath)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serveErr <- err
@@ -77,7 +78,7 @@ func main() {
 
 func parseOptions() options {
 	parsed := options{}
-	flag.StringVar(&parsed.addr, "addr", envString("CPA_SECRET_MANAGER_DEVSERVER_ADDR", ":8080"), "HTTP listen address")
+	flag.StringVar(&parsed.addr, "addr", envString("CPA_SECRET_MANAGER_DEVSERVER_ADDR", "127.0.0.1:8080"), "HTTP listen address; the default binds loopback only and does not trigger a firewall prompt")
 	flag.StringVar(&parsed.managementKey, "management-key", envString("CPA_SECRET_MANAGER_DEVSERVER_KEY", "devkey"), "simulated management key")
 	flag.StringVar(&parsed.keysPath, "keys", envString("CPA_SECRET_MANAGER_DEVSERVER_KEYS", "data/devserver/api-keys.json"), "simulated proxy API key store")
 	flag.StringVar(&parsed.statePath, "state", envString("CPA_SECRET_MANAGER_DEVSERVER_STATE", "data/devserver/cache.json"), "plugin state document path")
@@ -92,12 +93,15 @@ func envString(key string, fallback string) string {
 	return fallback
 }
 
-func normalizeAddr(addr string) string {
-	if strings.HasPrefix(addr, ":") {
-		return addr
+// browserURL renders the listen address as a URL a user can open. Wildcard
+// hosts are shown as localhost so the printed link always works locally.
+func browserURL(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "http://" + addr
 	}
-	if index := strings.LastIndex(addr, ":"); index >= 0 {
-		return addr[index:]
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "localhost"
 	}
-	return ":" + addr
+	return "http://" + net.JoinHostPort(host, port)
 }

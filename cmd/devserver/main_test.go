@@ -313,6 +313,21 @@ func TestDevHost_KeyStoreSurvivesRestart(t *testing.T) {
 	}
 }
 
+func TestBrowserURL_RendersOpenableLocalAddress(t *testing.T) {
+	cases := map[string]string{
+		"127.0.0.1:8080": "http://127.0.0.1:8080/control-panel",
+		":8080":          "http://localhost:8080/control-panel",
+		"0.0.0.0:8080":   "http://localhost:8080/control-panel",
+		"[::]:8080":      "http://localhost:8080/control-panel",
+		"127.0.0.1":      "http://127.0.0.1/control-panel",
+	}
+	for addr, want := range cases {
+		if got := browserURL(addr) + "/control-panel"; got != want {
+			t.Fatalf("browserURL(%q) = %q, want %q", addr, got, want)
+		}
+	}
+}
+
 func mustJSON(t *testing.T, value any) string {
 	t.Helper()
 	raw, err := json.Marshal(value)

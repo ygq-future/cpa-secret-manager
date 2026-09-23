@@ -14,10 +14,16 @@ go run ./cmd/devserver
 
 | 参数 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `-addr` | `CPA_SECRET_MANAGER_DEVSERVER_ADDR` | `:8080` | HTTP 监听地址 |
+| `-addr` | `CPA_SECRET_MANAGER_DEVSERVER_ADDR` | `127.0.0.1:8080` | HTTP 监听地址；默认只绑定回环地址，不会触发 Windows 防火墙授权提示 |
 | `-management-key` | `CPA_SECRET_MANAGER_DEVSERVER_KEY` | `devkey` | 模拟的管理密钥 |
 | `-keys` | `CPA_SECRET_MANAGER_DEVSERVER_KEYS` | `data/devserver/api-keys.json` | 模拟的代理密钥存储 |
 | `-state` | `CPA_SECRET_MANAGER_DEVSERVER_STATE` | `data/devserver/cache.json` | 插件状态文件 |
+
+需要从其它设备访问仿真环境时，显式指定全部网卡地址（会触发防火墙提示）：
+
+```bash
+go run ./cmd/devserver -addr 0.0.0.0:8080
+```
 
 ## 控制面板做了什么
 
