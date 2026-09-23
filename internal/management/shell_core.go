@@ -48,6 +48,7 @@ var state = {
   authBlocked: false,
   editingIndex: -1,
   busy: false,
+  pendingRefresh: null,
   refreshTimer: 0,
   language: 'zh-CN',
   toastTimer: 0,
@@ -296,20 +297,23 @@ function readHostThemePreference() {
 
 function readHostTheme() {
   var hostDoc = hostDocument();
-  if (hostDoc && hostDoc.documentElement) {
-    var root = hostDoc.documentElement;
-    var marker = root.getAttribute('data-theme');
-    if (marker === 'dark' || marker === 'white' || marker === 'light') {
-      return marker;
-    }
-    if (root.classList.contains('dark')) {
-      return 'dark';
-    }
-    if (hostDoc.body && hostDoc.body.classList.contains('dark')) {
-      return 'dark';
-    }
+  if (!hostDoc || !hostDoc.documentElement) {
+    return '';
   }
-  return '';
+  var root = hostDoc.documentElement;
+  var marker = root.getAttribute('data-theme');
+  if (marker === 'dark' || marker === 'white') {
+    return marker;
+  }
+  if (root.classList.contains('dark')) {
+    return 'dark';
+  }
+  if (hostDoc.body && hostDoc.body.classList.contains('dark')) {
+    return 'dark';
+  }
+  // The official host removes the attribute for its default light theme, so a
+  // present host document without a marker is authoritative light.
+  return 'light';
 }
 
 function fallbackTheme() {
@@ -389,15 +393,33 @@ function setTheme(theme) {
   return theme;
 }
 
+function readHostLanguage() {
+  var raw = readStorage(hostWindow(), 'localStorage', HOST_LANGUAGE_STORAGE_KEY);
+  if (!raw) {
+    raw = readStorage(window, 'localStorage', HOST_LANGUAGE_STORAGE_KEY);
+  }
+  if (!raw) {
+    return '';
+  }
+  var trimmed = raw.trim();
+  if (trimmed.charAt(0) !== '{') {
+    return trimmed;
+  }
+  try {
+    var parsed = JSON.parse(trimmed);
+    var payload = parsed && parsed.state ? parsed.state : parsed;
+    return payload && typeof payload.language === 'string' ? payload.language : '';
+  } catch (error) {
+    return '';
+  }
+}
+
 function detectLanguage() {
   var stored = readStorage(window, 'localStorage', LANGUAGE_STORAGE_KEY);
   if (stored === 'zh-CN' || stored === 'en-US') {
     return stored;
   }
-  var hostLanguage = readStorage(hostWindow(), 'localStorage', HOST_LANGUAGE_STORAGE_KEY);
-  if (!hostLanguage) {
-    hostLanguage = readStorage(window, 'localStorage', HOST_LANGUAGE_STORAGE_KEY);
-  }
+  var hostLanguage = readHostLanguage();
   if (hostLanguage.indexOf('zh') === 0) {
     return 'zh-CN';
   }

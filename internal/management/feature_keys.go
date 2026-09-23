@@ -54,6 +54,8 @@ var keysFeature = pageFeature{
 function refreshAll(options) {
   var settings = options || {};
   if (state.busy) {
+    // A mutation-triggered refresh must not be dropped while a poll is running.
+    state.pendingRefresh = settings;
     return Promise.resolve();
   }
   state.busy = true;
@@ -77,6 +79,12 @@ function refreshAll(options) {
     })
     .then(function () {
       state.busy = false;
+      var pending = state.pendingRefresh;
+      state.pendingRefresh = null;
+      if (pending) {
+        return refreshAll(pending);
+      }
+      return null;
     });
 }
 
