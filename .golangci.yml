@@ -1,0 +1,31 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    - govet
+    - staticcheck
+    - errcheck
+    - revive
+    - misspell
+
+  settings:
+    govet:
+      disable:
+        - fieldalignment
+        - shadow
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+        - name: unexported-return
+          disabled: false
+        - name: time-naming
+          disabled: false
+  exclusions:
+    paths:
+      - dist
+      - package

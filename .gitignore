@@ -1,0 +1,43 @@
+# Binaries and CGO dynamic libraries
+*.so
+*.dylib
+*.dll
+*.h
+*.exe
+*.test
+*.out
+test_plugin.*
+
+# Distribution and Packaging
+dist/
+package/
+*.zip
+checksums.txt
+
+# Local runtime state & test coverage
+data/
+*.tmp
+coverage.out
+coverage.html
+
+# Local plugin store reference
+CLIProxyAPI-Plugins-Store/
+
+# AI Editors & Tools
+.cursor/
+.windsurf/
+.cline/
+.claude/
+*.png
+
+# IDE & Editor configurations
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+
+# Operating System files
+.DS_Store
+Thumbs.db
