@@ -1,8 +1,6 @@
 package runtime
 
-// PluginVersion is the plugin release version. It must stay in sync with
-// registry.json, the embedded page version badge and the release notes file.
-const PluginVersion = "1.0.0"
+import "cpa-secret-manager/internal/version"
 
 const (
 	pluginName       = "CPA Secret Manager"
@@ -15,7 +13,7 @@ const (
 func buildMetadata() Metadata {
 	return Metadata{
 		Name:             pluginName,
-		Version:          PluginVersion,
+		Version:          version.PluginVersion,
 		Author:           pluginAuthor,
 		GitHubRepository: pluginRepository,
 		Description:      pluginSummary,

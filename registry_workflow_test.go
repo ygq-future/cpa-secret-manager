@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"cpa-secret-manager/internal/management"
-	pluginruntime "cpa-secret-manager/internal/runtime"
+	"cpa-secret-manager/internal/version"
 )
 
 type registryDocument struct {
@@ -74,12 +74,15 @@ func TestRegistry_ContractMatchesPluginStoreSchema(t *testing.T) {
 	}
 }
 
-// TestVersionConsistency keeps the registry entry and the runtime metadata in
-// lockstep. The embedded page badge joins this gate once the page exists.
+// TestVersionConsistency keeps the registry entry, the shared version constant
+// and the embedded page badge in lockstep.
 func TestVersionConsistency(t *testing.T) {
 	doc := readRegistry(t)
-	if got := doc.Plugins[0].Version; got != pluginruntime.PluginVersion {
-		t.Fatalf("registry version = %q, runtime version = %q; they must match", got, pluginruntime.PluginVersion)
+	if got := doc.Plugins[0].Version; got != version.PluginVersion {
+		t.Fatalf("registry version = %q, shared version = %q; they must match", got, version.PluginVersion)
+	}
+	if badge := "v" + version.PluginVersion; !strings.Contains(management.PageHTML, badge) {
+		t.Fatalf("embedded page does not carry the %s version badge", badge)
 	}
 }
 

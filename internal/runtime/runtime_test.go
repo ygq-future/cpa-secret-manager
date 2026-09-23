@@ -16,6 +16,7 @@ import (
 	"cpa-secret-manager/internal/management"
 	"cpa-secret-manager/internal/remarks"
 	"cpa-secret-manager/internal/state"
+	"cpa-secret-manager/internal/version"
 )
 
 type envelope struct {
@@ -120,8 +121,8 @@ func TestRegister_ReportsMetadataAndCapabilities(t *testing.T) {
 	if result.SchemaVersion != SchemaVersion {
 		t.Fatalf("schema_version = %d, want %d", result.SchemaVersion, SchemaVersion)
 	}
-	if result.Metadata.Version != PluginVersion {
-		t.Fatalf("metadata version = %q, want %q", result.Metadata.Version, PluginVersion)
+	if result.Metadata.Version != version.PluginVersion {
+		t.Fatalf("metadata version = %q, want %q", result.Metadata.Version, version.PluginVersion)
 	}
 	if result.Metadata.Name == "" || result.Metadata.GitHubRepository == "" {
 		t.Fatalf("metadata = %+v, want name and repository", result.Metadata)

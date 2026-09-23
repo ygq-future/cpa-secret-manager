@@ -68,7 +68,11 @@ func managementRoutes() []managementRoute {
 }
 
 func managementResources() []managementResource {
-	return nil
+	return []managementResource{{
+		Path:        management.PathPage,
+		Menu:        management.MenuLabel,
+		Description: management.PageDescription,
+	}}
 }
 
 func (r *Runtime) handleManagementRegister() []byte {

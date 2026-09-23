@@ -25,6 +25,10 @@ const (
 	resourceBase   = "/v0/resource/plugins/" + PluginID
 	legacyBase     = "/plugins/" + PluginID
 
+	// PathPage is the browser resource path served to the management center.
+	PathPage = "/keys"
+	// PageDescription is the management center menu description.
+	PageDescription = "Manage proxy API keys with per-key remarks and token usage."
 	// PathSettings is the plugin-owned settings route.
 	PathSettings = "/settings"
 	// PathResolve returns remark and usage data aligned with a key list.
@@ -160,6 +164,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch normalizePath(r.URL.Path) {
 	case PathSettings:
 		h.serveSettings(w, r)
+	case PathPage:
+		h.servePage(w, r)
 	case PathResolve:
 		h.serveResolve(w, r)
 	case PathRemarks:
@@ -169,6 +175,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, http.StatusNotFound, errorBody("not_found", "unknown plugin route"))
 	}
+}
+
+func (h *Handler) servePage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w, http.MethodGet)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(PageHTML))
 }
 
 func (h *Handler) serveSettings(w http.ResponseWriter, r *http.Request) {
