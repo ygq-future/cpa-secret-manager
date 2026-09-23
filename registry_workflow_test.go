@@ -107,12 +107,59 @@ func TestReleaseWorkflow_BuildsTheRegisteredPluginID(t *testing.T) {
 	}
 }
 
+// TestReleaseNotes_MatchTheCurrentVersion completes the four-place version
+// matrix: registry entry, shared constant, page badge and release notes file.
+func TestReleaseNotes_MatchTheCurrentVersion(t *testing.T) {
+	path := filepath.Join(".github", "release-notes", "v"+version.PluginVersion+".md")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read release notes %s: %v", path, err)
+	}
+	body := string(raw)
+	if !strings.Contains(body, "# cpa-secret-manager v"+version.PluginVersion) {
+		t.Fatalf("%s does not carry the title for v%s", path, version.PluginVersion)
+	}
+	for _, section := range []string{"### 中文", "### English"} {
+		if !strings.Contains(body, section) {
+			t.Fatalf("%s is missing the %s section", path, section)
+		}
+	}
+}
+
+// TestReadmesAreBilingualAndAligned keeps the public documentation pair in
+// step: both files present, non-empty and with matching section counts.
+func TestReadmesAreBilingualAndAligned(t *testing.T) {
+	countSections := func(path string) int {
+		t.Helper()
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		if len(strings.TrimSpace(string(raw))) == 0 {
+			t.Fatalf("%s is empty", path)
+		}
+		return strings.Count(string(raw), "\n## ")
+	}
+
+	chinese := countSections("README.md")
+	english := countSections("README.en.md")
+	if chinese == 0 {
+		t.Fatal("README.md declares no sections")
+	}
+	if chinese != english {
+		t.Fatalf("README.md has %d sections but README.en.md has %d; keep them aligned", chinese, english)
+	}
+}
+
 func TestDomainDocumentation_IsPresent(t *testing.T) {
 	for _, path := range []string{
 		"CONTEXT.md",
 		"AGENTS.md",
 		"CLAUDE.md",
+		"README.md",
+		"README.en.md",
 		"docs/requirements/v1.0.0-roadmap.md",
+		"docs/release-checklist.md",
 		"docs/agents/domain.md",
 	} {
 		info, err := os.Stat(path)
