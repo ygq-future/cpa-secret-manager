@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"cpa-secret-manager/internal/remarks"
+	"cpa-secret-manager/internal/usage"
 )
 
 // SchemaVersion is the current plugin state document schema.
@@ -36,10 +37,11 @@ type Metrics struct {
 
 // Document is the persisted plugin state.
 type Document struct {
-	SchemaVersion int                      `json:"schema_version"`
-	Remarks       map[string]remarks.Entry `json:"remarks,omitempty"`
-	AppConfig     AppConfig                `json:"app_config"`
-	Metrics       Metrics                  `json:"metrics"`
+	SchemaVersion int                       `json:"schema_version"`
+	Remarks       map[string]remarks.Entry  `json:"remarks,omitempty"`
+	Usage         map[string]usage.KeyUsage `json:"usage,omitempty"`
+	AppConfig     AppConfig                 `json:"app_config"`
+	Metrics       Metrics                   `json:"metrics"`
 }
 
 // Store owns the plugin state document and its atomic persistence.
@@ -117,14 +119,26 @@ func (s *Store) Metrics() Metrics {
 	return s.doc.Metrics
 }
 
-// AddUnattributed increments the unattributed request counter.
-func (s *Store) AddUnattributed(delta int64) {
-	if s == nil || delta == 0 {
+// Usage returns a deep copy of the persisted token accounting.
+func (s *Store) Usage() map[string]usage.KeyUsage {
+	if s == nil {
+		return map[string]usage.KeyUsage{}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return cloneUsage(s.doc.Usage)
+}
+
+// ReplaceUsage materializes the live aggregate into the document. The caller
+// owns the counters; this method only stores a copy.
+func (s *Store) ReplaceUsage(entries map[string]usage.KeyUsage, unattributed int64) {
+	if s == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.doc.Metrics.UnattributedRequests += delta
+	s.doc.Usage = cloneUsage(entries)
+	s.doc.Metrics.UnattributedRequests = unattributed
 }
 
 // Remarks returns a copy of the remark index.
@@ -255,5 +269,22 @@ func (doc Document) clone() Document {
 		}
 		doc.Remarks = remarksCopy
 	}
+	doc.Usage = cloneUsage(doc.Usage)
 	return doc
+}
+
+func cloneUsage(source map[string]usage.KeyUsage) map[string]usage.KeyUsage {
+	if len(source) == 0 {
+		return nil
+	}
+	out := make(map[string]usage.KeyUsage, len(source))
+	for hash, entry := range source {
+		copied := entry
+		copied.Models = make(map[string]usage.ModelUsage, len(entry.Models))
+		for model, modelUsage := range entry.Models {
+			copied.Models[model] = modelUsage
+		}
+		out[hash] = copied
+	}
+	return out
 }

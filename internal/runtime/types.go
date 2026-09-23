@@ -45,6 +45,9 @@ type Options struct {
 	StatePath string
 	// Random overrides the key generation entropy source; nil uses crypto/rand.
 	Random io.Reader
+	// FlushInterval bounds how much usage accounting a crash can lose; zero uses
+	// the default.
+	FlushInterval time.Duration
 }
 
 // RegisterResult is the metadata and capability declaration returned on

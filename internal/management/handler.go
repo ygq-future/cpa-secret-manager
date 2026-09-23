@@ -10,6 +10,8 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+
+	"cpa-secret-manager/internal/usage"
 )
 
 const (
@@ -50,6 +52,7 @@ type Settings struct {
 	UsageEnabled   bool     `json:"usage_enabled"`
 	StatePath      string   `json:"state_path"`
 	StateWarning   string   `json:"state_warning,omitempty"`
+	UsageWarning   string   `json:"usage_warning,omitempty"`
 	ConfigWarnings []string `json:"config_warnings,omitempty"`
 }
 
@@ -63,6 +66,22 @@ type SettingsUpdate struct {
 type KeyEntry struct {
 	Hash   string `json:"hash"`
 	Remark string `json:"remark"`
+	// Usage is nil until the key served at least one attributable request.
+	Usage *UsageSummary `json:"usage,omitempty"`
+}
+
+// UsageSummary is the cumulative token accounting shown for one key.
+type UsageSummary struct {
+	usage.Counters
+	FirstSeen string       `json:"first_seen,omitempty"`
+	LastSeen  string       `json:"last_seen,omitempty"`
+	Models    []ModelUsage `json:"models,omitempty"`
+}
+
+// ModelUsage is the cumulative token accounting for one model of one key.
+type ModelUsage struct {
+	Model string `json:"model"`
+	usage.Counters
 }
 
 // ResolveRequest carries the current proxy key list, in display order.
@@ -73,9 +92,15 @@ type ResolveRequest struct {
 // ResolveResult is the resolved metadata for the submitted key list.
 type ResolveResult struct {
 	Items []KeyEntry `json:"items"`
+	// UnattributedRequests counts usage records that carried no attributable
+	// key, so the page can explain a key that shows no usage.
+	UnattributedRequests int64 `json:"unattributed_requests"`
 	// OrphanRemarks counts stored remarks whose key is absent from the submitted
 	// list, so the page can explain leftover metadata after a key is removed.
 	OrphanRemarks int `json:"orphan_remarks"`
+	// OrphanUsage counts usage aggregates whose key is absent from the submitted
+	// list.
+	OrphanUsage int `json:"orphan_usage"`
 }
 
 // RemarkUpdate sets or clears the remark of one proxy API key.

@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"cpa-secret-manager/internal/usage"
 )
 
 func TestLoad_MissingFileYieldsDefaults(t *testing.T) {
@@ -29,7 +31,9 @@ func TestSaveAtomic_RoundTripsDocument(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 	store.SetAppConfig(AppConfig{UsageEnabled: false})
-	store.AddUnattributed(7)
+	store.ReplaceUsage(map[string]usage.KeyUsage{
+		"hash-a": {Counters: usage.Counters{Requests: 2, Total: 30}, Models: map[string]usage.ModelUsage{"m": {Counters: usage.Counters{Requests: 2}}}},
+	}, 7)
 	if err := store.SaveAtomic(); err != nil {
 		t.Fatalf("SaveAtomic() error = %v", err)
 	}
@@ -43,6 +47,10 @@ func TestSaveAtomic_RoundTripsDocument(t *testing.T) {
 	}
 	if got := reloaded.Metrics().UnattributedRequests; got != 7 {
 		t.Fatalf("reloaded unattributed = %d, want 7", got)
+	}
+	entry, ok := reloaded.Usage()["hash-a"]
+	if !ok || entry.Requests != 2 || entry.Models["m"].Requests != 2 {
+		t.Fatalf("reloaded usage = %+v (ok=%v), want the persisted counters", entry, ok)
 	}
 	if got := reloaded.Snapshot().SchemaVersion; got != SchemaVersion {
 		t.Fatalf("schema version = %d, want %d", got, SchemaVersion)
@@ -67,14 +75,29 @@ func TestLoad_CorruptFileKeepsServiceUsable(t *testing.T) {
 	}
 }
 
-func TestAddUnattributed_IgnoresZeroDelta(t *testing.T) {
+func TestUsage_IsIsolatedFromLaterMutations(t *testing.T) {
 	store, err := Load(filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	store.AddUnattributed(0)
-	if got := store.Metrics().UnattributedRequests; got != 0 {
-		t.Fatalf("unattributed = %d, want 0", got)
+	store.ReplaceUsage(map[string]usage.KeyUsage{
+		"hash-a": {Counters: usage.Counters{Requests: 1}, Models: map[string]usage.ModelUsage{"m": {}}},
+	}, 0)
+
+	snapshot := store.Snapshot()
+	snapshot.Usage["hash-a"].Models["injected"] = usage.ModelUsage{}
+
+	fresh := store.Usage()
+	if _, ok := fresh["hash-a"].Models["injected"]; ok {
+		t.Fatal("Usage() returned a map that aliases internal state")
+	}
+}
+
+func TestReplaceUsage_IgnoresNilStore(t *testing.T) {
+	var store *Store
+	store.ReplaceUsage(map[string]usage.KeyUsage{"hash-a": {}}, 1)
+	if got := store.Usage(); len(got) != 0 {
+		t.Fatalf("Usage() = %+v, want an empty map", got)
 	}
 }
 

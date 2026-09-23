@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"cpa-secret-manager/internal/keys"
 	"cpa-secret-manager/internal/management"
@@ -37,13 +38,50 @@ func decodeEnvelope(t *testing.T, raw []byte) envelope {
 
 func registerRuntime(t *testing.T, statePath string) *Runtime {
 	t.Helper()
-	rt := New(Options{StatePath: statePath})
-	request := fmt.Sprintf(`{"config_yaml":%q}`, "state_path: "+filepath.ToSlash(statePath)+"\n")
+	return registerRuntimeWith(t, Options{StatePath: statePath})
+}
+
+func registerRuntimeWith(t *testing.T, opts Options) *Runtime {
+	t.Helper()
+	rt := New(opts)
+	request := fmt.Sprintf(`{"config_yaml":%q}`, "state_path: "+filepath.ToSlash(opts.StatePath)+"\n")
 	env := decodeEnvelope(t, rt.Handle(context.Background(), MethodPluginRegister, []byte(request)))
 	if !env.OK {
 		t.Fatalf("register failed: %s", env.Result)
 	}
 	return rt
+}
+
+func usageCall(t *testing.T, rt *Runtime, payload map[string]any) {
+	t.Helper()
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("encode usage record: %v", err)
+	}
+	env := decodeEnvelope(t, rt.Handle(context.Background(), MethodUsageHandle, raw))
+	if !env.OK {
+		t.Fatalf("usage.handle failed: %+v", env.Error)
+	}
+}
+
+func resolveResult(t *testing.T, rt *Runtime, apiKeys []string) management.ResolveResult {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{"keys": apiKeys})
+	if err != nil {
+		t.Fatalf("encode resolve: %v", err)
+	}
+	status, responseBody := managementCall(t, rt, "POST", management.RouteResolve, body)
+	if status != 200 {
+		t.Fatalf("resolve status = %d, want 200", status)
+	}
+	var result management.ResolveResult
+	if err := json.Unmarshal(responseBody, &result); err != nil {
+		t.Fatalf("decode resolve: %v", err)
+	}
+	if len(result.Items) != len(apiKeys) {
+		t.Fatalf("items = %d, want one per submitted key", len(result.Items))
+	}
+	return result
 }
 
 func managementCall(t *testing.T, rt *Runtime, method string, path string, body []byte) (int, []byte) {
@@ -322,6 +360,153 @@ func TestGenerateKey_MatchesOfficialAlgorithm(t *testing.T) {
 	}
 	if want := keys.Prefix + keys.Charset[:keys.RandomLength]; result.Key != want {
 		t.Fatalf("generated key = %q, want %q", result.Key, want)
+	}
+}
+
+func TestUsage_AttributesTokensPerKeyAndModel(t *testing.T) {
+	rt := registerRuntime(t, filepath.Join(t.TempDir(), "state.json"))
+
+	for _, payload := range []map[string]any{
+		{"APIKey": "sk-a", "Model": "gpt-5.6", "Detail": map[string]any{"InputTokens": 10, "OutputTokens": 20, "TotalTokens": 30}},
+		{"APIKey": "sk-a", "Model": "gpt-5.6", "Failed": true, "Detail": map[string]any{"InputTokens": 1, "TotalTokens": 1}},
+		{"APIKey": "sk-a", "Model": "claude-sonnet", "Detail": map[string]any{"InputTokens": 5, "CacheReadTokens": 7, "TotalTokens": 12}},
+		{"APIKey": "sk-b", "Model": "gpt-5.6", "Detail": map[string]any{"TotalTokens": 100}},
+	} {
+		usageCall(t, rt, payload)
+	}
+
+	result := resolveResult(t, rt, []string{"sk-a", "sk-b"})
+	first := result.Items[0].Usage
+	if first == nil {
+		t.Fatal("no usage recorded for sk-a")
+	}
+	if first.Requests != 3 || first.Failed != 1 {
+		t.Fatalf("requests = %d, failed = %d; want 3 and 1", first.Requests, first.Failed)
+	}
+	if first.Input != 16 || first.Output != 20 || first.CacheRead != 7 || first.Total != 43 {
+		t.Fatalf("counters = %+v, want input 16, output 20, cache read 7, total 43", first.Counters)
+	}
+	if first.FirstSeen == "" || first.LastSeen == "" {
+		t.Fatalf("usage window = %q..%q, want timestamps", first.FirstSeen, first.LastSeen)
+	}
+	if len(first.Models) != 2 {
+		t.Fatalf("models = %+v, want two model rows", first.Models)
+	}
+	// Ordered by token volume so the page renders a stable list.
+	if first.Models[0].Model != "gpt-5.6" || first.Models[0].Total != 31 || first.Models[0].Requests != 2 {
+		t.Fatalf("models[0] = %+v, want gpt-5.6 with 2 requests and 31 tokens", first.Models[0])
+	}
+	if first.Models[1].Model != "claude-sonnet" {
+		t.Fatalf("models[1] = %+v, want claude-sonnet", first.Models[1])
+	}
+
+	if result.Items[1].Usage == nil || result.Items[1].Usage.Total != 100 {
+		t.Fatalf("sk-b usage = %+v, want 100 total tokens", result.Items[1].Usage)
+	}
+	if result.Items[0].Hash != remarks.Index("sk-a") {
+		t.Fatalf("items[0].hash = %q, want the digest of sk-a", result.Items[0].Hash)
+	}
+}
+
+func TestUsage_KeepsUnattributedAndOrphanCounts(t *testing.T) {
+	rt := registerRuntime(t, filepath.Join(t.TempDir(), "state.json"))
+
+	usageCall(t, rt, map[string]any{"Model": "gpt-5.6", "Detail": map[string]any{"TotalTokens": 5}})
+	usageCall(t, rt, map[string]any{"APIKey": "sk-retired", "Model": "gpt-5.6", "Detail": map[string]any{"TotalTokens": 6}})
+
+	result := resolveResult(t, rt, []string{"sk-a"})
+	if result.UnattributedRequests != 1 {
+		t.Fatalf("unattributed_requests = %d, want 1", result.UnattributedRequests)
+	}
+	if result.OrphanUsage != 1 {
+		t.Fatalf("orphan_usage = %d, want 1 for the key that is no longer listed", result.OrphanUsage)
+	}
+	if result.Items[0].Usage != nil {
+		t.Fatalf("items[0].usage = %+v, want no usage for an unused key", result.Items[0].Usage)
+	}
+}
+
+func TestUsage_DisabledSettingStopsCollection(t *testing.T) {
+	rt := registerRuntime(t, filepath.Join(t.TempDir(), "state.json"))
+
+	if status, _ := managementCall(t, rt, "PUT", management.RouteSettings, []byte(`{"usage_enabled":false}`)); status != 200 {
+		t.Fatalf("settings status = %d, want 200", status)
+	}
+	usageCall(t, rt, map[string]any{"APIKey": "sk-a", "Model": "m", "Detail": map[string]any{"TotalTokens": 9}})
+	usageCall(t, rt, map[string]any{"Model": "m", "Detail": map[string]any{"TotalTokens": 9}})
+
+	result := resolveResult(t, rt, []string{"sk-a"})
+	if result.Items[0].Usage != nil {
+		t.Fatalf("usage = %+v, want nothing recorded while collection is disabled", result.Items[0].Usage)
+	}
+	if result.UnattributedRequests != 0 {
+		t.Fatalf("unattributed_requests = %d, want 0 while collection is disabled", result.UnattributedRequests)
+	}
+}
+
+func TestUsageHandle_AcceptsSnakeCasePayload(t *testing.T) {
+	rt := registerRuntime(t, filepath.Join(t.TempDir(), "state.json"))
+
+	raw := []byte(`{"api_key":"sk-a","model":"gpt-5.6","failed":true,"requested_at":"2026-09-23T10:00:00Z",` +
+		`"detail":{"input_tokens":3,"output_tokens":4,"total_tokens":7}}`)
+	env := decodeEnvelope(t, rt.Handle(context.Background(), MethodUsageHandle, raw))
+	if !env.OK {
+		t.Fatalf("usage.handle failed: %+v", env.Error)
+	}
+
+	result := resolveResult(t, rt, []string{"sk-a"})
+	usageRecord := result.Items[0].Usage
+	if usageRecord == nil || usageRecord.Input != 3 || usageRecord.Output != 4 || usageRecord.Total != 7 || usageRecord.Failed != 1 {
+		t.Fatalf("usage = %+v, want the snake_case payload counters", usageRecord)
+	}
+	if usageRecord.FirstSeen != "2026-09-23T10:00:00Z" {
+		t.Fatalf("first_seen = %q, want the payload timestamp", usageRecord.FirstSeen)
+	}
+}
+
+func TestFlushUsage_PersistsAggregateInBackground(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	rt := registerRuntimeWith(t, Options{StatePath: statePath, FlushInterval: 10 * time.Millisecond})
+	t.Cleanup(func() {
+		if err := rt.Shutdown(context.Background()); err != nil {
+			t.Errorf("Shutdown() error = %v", err)
+		}
+	})
+
+	usageCall(t, rt, map[string]any{"APIKey": "sk-a", "Model": "m", "Detail": map[string]any{"TotalTokens": 42}})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		reloaded, err := state.Load(statePath)
+		if err == nil {
+			if entry, ok := reloaded.Usage()[remarks.Index("sk-a")]; ok && entry.Total == 42 {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("usage counters were not persisted by the background flush loop")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestShutdown_PersistsPendingUsageAndSeedsOnRestart(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	rt := registerRuntimeWith(t, Options{StatePath: statePath, FlushInterval: time.Hour})
+
+	usageCall(t, rt, map[string]any{"APIKey": "sk-a", "Model": "m", "Detail": map[string]any{"TotalTokens": 42}})
+	usageCall(t, rt, map[string]any{"Model": "m", "Detail": map[string]any{"TotalTokens": 1}})
+	if err := rt.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+
+	restarted := registerRuntime(t, statePath)
+	result := resolveResult(t, restarted, []string{"sk-a"})
+	if result.Items[0].Usage == nil || result.Items[0].Usage.Total != 42 {
+		t.Fatalf("usage after restart = %+v, want the persisted 42 tokens", result.Items[0].Usage)
+	}
+	if result.UnattributedRequests != 1 {
+		t.Fatalf("unattributed_requests = %d, want the persisted 1", result.UnattributedRequests)
 	}
 }
 
