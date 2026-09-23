@@ -10,13 +10,16 @@ import (
 	"sync"
 
 	"cpa-secret-manager/internal/config"
+	"cpa-secret-manager/internal/keys"
 	"cpa-secret-manager/internal/management"
+	"cpa-secret-manager/internal/remarks"
 	"cpa-secret-manager/internal/state"
 )
 
 // Runtime is the plugin application layer.
 type Runtime struct {
-	clock Clock
+	clock     Clock
+	generator *keys.Generator
 
 	// lifecycleMu serializes register, reconfigure and shutdown.
 	lifecycleMu sync.Mutex
@@ -42,8 +45,12 @@ func New(opts Options) *Runtime {
 	if trimmed := strings.TrimSpace(opts.StatePath); trimmed != "" {
 		cfg.StatePath = trimmed
 	}
+	generator := keys.NewGenerator()
+	if opts.Random != nil {
+		generator = keys.NewGeneratorWithSource(opts.Random)
+	}
 
-	r := &Runtime{clock: clock, cfg: cfg}
+	r := &Runtime{clock: clock, cfg: cfg, generator: generator}
 	r.handler = management.NewHandler(r)
 	r.loadState(cfg.StatePath)
 	return r
@@ -129,6 +136,69 @@ func (r *Runtime) UpdateSettings(_ context.Context, usageEnabled bool) error {
 	}
 	store.SetAppConfig(state.AppConfig{UsageEnabled: usageEnabled})
 	return store.SaveAtomic()
+}
+
+// Resolve implements management.Backend: it maps the submitted proxy key list
+// onto stored metadata, preserving list order.
+func (r *Runtime) Resolve(_ context.Context, apiKeys []string) (management.ResolveResult, error) {
+	store := r.Store()
+	if store == nil {
+		return management.ResolveResult{}, ErrShutdown
+	}
+
+	items := make([]management.KeyEntry, 0, len(apiKeys))
+	resolved := make(map[string]struct{}, len(apiKeys))
+	for _, apiKey := range apiKeys {
+		hash := remarks.Index(apiKey)
+		resolved[hash] = struct{}{}
+		entry, _ := store.Remark(hash)
+		items = append(items, management.KeyEntry{Hash: hash, Remark: entry.Remark})
+	}
+
+	orphans := 0
+	for hash := range store.Remarks() {
+		if _, ok := resolved[hash]; !ok {
+			orphans++
+		}
+	}
+	return management.ResolveResult{Items: items, OrphanRemarks: orphans}, nil
+}
+
+// SetRemark implements management.Backend: it stores a remark for one proxy API
+// key. An empty remark clears the stored text.
+func (r *Runtime) SetRemark(_ context.Context, apiKey string, remark string) error {
+	if err := remarks.ValidateKey(apiKey); err != nil {
+		return management.NewInvalidRequest(err.Error())
+	}
+	normalized := remarks.Normalize(remark)
+	if err := remarks.Validate(normalized); err != nil {
+		return management.NewInvalidRequest(err.Error())
+	}
+
+	r.runMu.Lock()
+	defer r.runMu.Unlock()
+
+	r.mu.RLock()
+	store := r.store
+	closed := r.closed
+	r.mu.RUnlock()
+	if closed || store == nil {
+		return ErrShutdown
+	}
+
+	hash := remarks.Index(apiKey)
+	if normalized == "" {
+		store.DeleteRemark(hash)
+	} else {
+		store.SetRemark(hash, remarks.Entry{Remark: normalized, UpdatedAt: r.clock.Now().UTC()})
+	}
+	return store.SaveAtomic()
+}
+
+// GenerateKey implements management.Backend: it returns one proxy API key in
+// the official format.
+func (r *Runtime) GenerateKey(_ context.Context) (string, error) {
+	return r.generator.Generate()
 }
 
 // Store exposes the plugin state store to local harnesses and tests.

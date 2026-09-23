@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"cpa-secret-manager/internal/remarks"
 )
 
 // SchemaVersion is the current plugin state document schema.
@@ -34,9 +36,10 @@ type Metrics struct {
 
 // Document is the persisted plugin state.
 type Document struct {
-	SchemaVersion int       `json:"schema_version"`
-	AppConfig     AppConfig `json:"app_config"`
-	Metrics       Metrics   `json:"metrics"`
+	SchemaVersion int                      `json:"schema_version"`
+	Remarks       map[string]remarks.Entry `json:"remarks,omitempty"`
+	AppConfig     AppConfig                `json:"app_config"`
+	Metrics       Metrics                  `json:"metrics"`
 }
 
 // Store owns the plugin state document and its atomic persistence.
@@ -124,6 +127,60 @@ func (s *Store) AddUnattributed(delta int64) {
 	s.doc.Metrics.UnattributedRequests += delta
 }
 
+// Remarks returns a copy of the remark index.
+func (s *Store) Remarks() map[string]remarks.Entry {
+	if s == nil {
+		return map[string]remarks.Entry{}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	out := make(map[string]remarks.Entry, len(s.doc.Remarks))
+	for hash, entry := range s.doc.Remarks {
+		out[hash] = entry
+	}
+	return out
+}
+
+// Remark returns the remark stored for one hash index.
+func (s *Store) Remark(hash string) (remarks.Entry, bool) {
+	if s == nil {
+		return remarks.Entry{}, false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	entry, ok := s.doc.Remarks[hash]
+	return entry, ok
+}
+
+// SetRemark stores or replaces one remark.
+func (s *Store) SetRemark(hash string, entry remarks.Entry) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.doc.Remarks == nil {
+		s.doc.Remarks = make(map[string]remarks.Entry)
+	}
+	s.doc.Remarks[hash] = entry
+}
+
+// DeleteRemark removes one remark, reporting whether it existed.
+func (s *Store) DeleteRemark(hash string) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.doc.Remarks[hash]; !ok {
+		return false
+	}
+	delete(s.doc.Remarks, hash)
+	return true
+}
+
 // Snapshot returns a deep copy of the document for persistence or inspection.
 func (s *Store) Snapshot() Document {
 	if s == nil {
@@ -191,5 +248,12 @@ func applyDefaults(doc Document, raw []byte) Document {
 }
 
 func (doc Document) clone() Document {
+	if len(doc.Remarks) > 0 {
+		remarksCopy := make(map[string]remarks.Entry, len(doc.Remarks))
+		for hash, entry := range doc.Remarks {
+			remarksCopy[hash] = entry
+		}
+		doc.Remarks = remarksCopy
+	}
 	return doc
 }

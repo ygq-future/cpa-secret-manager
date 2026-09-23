@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 )
@@ -24,8 +25,24 @@ const (
 
 	// PathSettings is the plugin-owned settings route.
 	PathSettings = "/settings"
-	// RouteSettings is the route path registered with the host.
+	// PathResolve returns remark and usage data aligned with a key list.
+	PathResolve = "/resolve"
+	// PathRemarks creates, replaces or clears one remark.
+	PathRemarks = "/remarks"
+	// PathGenerate returns a freshly generated proxy API key.
+	PathGenerate = "/keys/generate"
+
+	// RouteSettings is the settings route path registered with the host.
 	RouteSettings = legacyBase + PathSettings
+	// RouteResolve is the resolve route path registered with the host.
+	RouteResolve = legacyBase + PathResolve
+	// RouteRemarks is the remark route path registered with the host.
+	RouteRemarks = legacyBase + PathRemarks
+	// RouteGenerate is the key generation route path registered with the host.
+	RouteGenerate = legacyBase + PathGenerate
+
+	// maxRequestBody bounds plugin management request bodies.
+	maxRequestBody = 1 << 20
 )
 
 // Settings is the plugin business configuration exposed to the page.
@@ -41,10 +58,57 @@ type SettingsUpdate struct {
 	UsageEnabled *bool `json:"usage_enabled"`
 }
 
+// KeyEntry is the per-key payload returned by Resolve. Items are aligned with
+// the submitted key list.
+type KeyEntry struct {
+	Hash   string `json:"hash"`
+	Remark string `json:"remark"`
+}
+
+// ResolveRequest carries the current proxy key list, in display order.
+type ResolveRequest struct {
+	Keys []string `json:"keys"`
+}
+
+// ResolveResult is the resolved metadata for the submitted key list.
+type ResolveResult struct {
+	Items []KeyEntry `json:"items"`
+	// OrphanRemarks counts stored remarks whose key is absent from the submitted
+	// list, so the page can explain leftover metadata after a key is removed.
+	OrphanRemarks int `json:"orphan_remarks"`
+}
+
+// RemarkUpdate sets or clears the remark of one proxy API key.
+type RemarkUpdate struct {
+	Key    string `json:"key"`
+	Remark string `json:"remark"`
+}
+
+// GenerateResult carries one generated proxy API key.
+type GenerateResult struct {
+	Key string `json:"key"`
+}
+
+// InvalidRequest reports a request rejected by business validation. The HTTP
+// adapter maps it to status 400.
+type InvalidRequest struct {
+	Message string
+}
+
+func (e *InvalidRequest) Error() string { return e.Message }
+
+// NewInvalidRequest builds an InvalidRequest error.
+func NewInvalidRequest(message string) error {
+	return &InvalidRequest{Message: message}
+}
+
 // Backend is the runtime surface the HTTP adapter is allowed to call.
 type Backend interface {
 	Settings(ctx context.Context) (Settings, error)
 	UpdateSettings(ctx context.Context, usageEnabled bool) error
+	Resolve(ctx context.Context, apiKeys []string) (ResolveResult, error)
+	SetRemark(ctx context.Context, apiKey string, remark string) error
+	GenerateKey(ctx context.Context) (string, error)
 }
 
 // Handler serves the plugin-owned Management API routes.
@@ -63,10 +127,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "handler unavailable", http.StatusInternalServerError)
 		return
 	}
+	if h.backend == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("backend_unavailable", "runtime not available"))
+		return
+	}
 
 	switch normalizePath(r.URL.Path) {
 	case PathSettings:
 		h.serveSettings(w, r)
+	case PathResolve:
+		h.serveResolve(w, r)
+	case PathRemarks:
+		h.serveRemarks(w, r)
+	case PathGenerate:
+		h.serveGenerate(w, r)
 	default:
 		writeJSON(w, http.StatusNotFound, errorBody("not_found", "unknown plugin route"))
 	}
@@ -75,39 +149,100 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) serveSettings(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		if h.backend == nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("backend_unavailable", "runtime not available"))
-			return
-		}
 		settings, err := h.backend.Settings(r.Context())
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, errorBody("settings_failed", err.Error()))
+		if h.fail(w, err) {
 			return
 		}
 		writeJSON(w, http.StatusOK, settings)
 	case http.MethodPut, http.MethodPatch:
-		if h.backend == nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("backend_unavailable", "runtime not available"))
-			return
-		}
 		var update SettingsUpdate
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&update); err != nil {
-			writeJSON(w, http.StatusBadRequest, errorBody("invalid_request", "request body must be a JSON object"))
+		if !decodeBody(w, r, &update) {
 			return
 		}
 		if update.UsageEnabled == nil {
 			writeJSON(w, http.StatusBadRequest, errorBody("invalid_request", "usage_enabled is required"))
 			return
 		}
-		if err := h.backend.UpdateSettings(r.Context(), *update.UsageEnabled); err != nil {
-			writeJSON(w, http.StatusInternalServerError, errorBody("settings_failed", err.Error()))
+		if h.fail(w, h.backend.UpdateSettings(r.Context(), *update.UsageEnabled)) {
 			return
 		}
 		writeJSON(w, http.StatusOK, statusBody())
 	default:
-		w.Header().Set("Allow", "GET, PUT, PATCH")
-		writeJSON(w, http.StatusMethodNotAllowed, errorBody("method_not_allowed", "method not allowed"))
+		methodNotAllowed(w, "GET, PUT, PATCH")
 	}
+}
+
+func (h *Handler) serveResolve(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, http.MethodPost)
+		return
+	}
+	var request ResolveRequest
+	if !decodeBody(w, r, &request) {
+		return
+	}
+	result, err := h.backend.Resolve(r.Context(), request.Keys)
+	if h.fail(w, err) {
+		return
+	}
+	if result.Items == nil {
+		result.Items = []KeyEntry{}
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) serveRemarks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		methodNotAllowed(w, http.MethodPut)
+		return
+	}
+	var update RemarkUpdate
+	if !decodeBody(w, r, &update) {
+		return
+	}
+	if h.fail(w, h.backend.SetRemark(r.Context(), update.Key, update.Remark)) {
+		return
+	}
+	writeJSON(w, http.StatusOK, statusBody())
+}
+
+func (h *Handler) serveGenerate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, http.MethodPost)
+		return
+	}
+	key, err := h.backend.GenerateKey(r.Context())
+	if h.fail(w, err) {
+		return
+	}
+	writeJSON(w, http.StatusOK, GenerateResult{Key: key})
+}
+
+// fail writes an error response and reports whether the request is finished.
+func (h *Handler) fail(w http.ResponseWriter, err error) bool {
+	if err == nil {
+		return false
+	}
+	var invalid *InvalidRequest
+	if errors.As(err, &invalid) {
+		writeJSON(w, http.StatusBadRequest, errorBody("invalid_request", invalid.Message))
+		return true
+	}
+	writeJSON(w, http.StatusInternalServerError, errorBody("backend_failed", err.Error()))
+	return true
+}
+
+func decodeBody(w http.ResponseWriter, r *http.Request, target any) bool {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBody)).Decode(target); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody("invalid_request", "request body must be a JSON object"))
+		return false
+	}
+	return true
+}
+
+func methodNotAllowed(w http.ResponseWriter, allow string) {
+	w.Header().Set("Allow", allow)
+	writeJSON(w, http.StatusMethodNotAllowed, errorBody("method_not_allowed", "method not allowed"))
 }
 
 // normalizePath reduces a host-forwarded path to the plugin-relative route.

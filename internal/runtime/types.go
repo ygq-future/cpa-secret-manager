@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"errors"
+	"io"
 	"time"
 )
 
@@ -42,6 +43,8 @@ type Options struct {
 	// StatePath overrides the configured plugin state document path. It is used
 	// by local harnesses and tests; production uses the host configuration.
 	StatePath string
+	// Random overrides the key generation entropy source; nil uses crypto/rand.
+	Random io.Reader
 }
 
 // RegisterResult is the metadata and capability declaration returned on

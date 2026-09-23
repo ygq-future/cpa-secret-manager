@@ -12,6 +12,8 @@ import (
 type stubBackend struct {
 	settings Settings
 	updated  *bool
+	remark   *RemarkUpdate
+	key      string
 }
 
 func (s *stubBackend) Settings(context.Context) (Settings, error) {
@@ -21,6 +23,23 @@ func (s *stubBackend) Settings(context.Context) (Settings, error) {
 func (s *stubBackend) UpdateSettings(_ context.Context, usageEnabled bool) error {
 	s.updated = &usageEnabled
 	return nil
+}
+
+func (s *stubBackend) Resolve(_ context.Context, keys []string) (ResolveResult, error) {
+	items := make([]KeyEntry, 0, len(keys))
+	for _, key := range keys {
+		items = append(items, KeyEntry{Hash: "hash:" + key, Remark: key})
+	}
+	return ResolveResult{Items: items, OrphanRemarks: len(keys)}, nil
+}
+
+func (s *stubBackend) SetRemark(_ context.Context, key string, remark string) error {
+	s.remark = &RemarkUpdate{Key: key, Remark: remark}
+	return nil
+}
+
+func (s *stubBackend) GenerateKey(context.Context) (string, error) {
+	return s.key, nil
 }
 
 func TestNormalizePath_ReducesHostPrefixes(t *testing.T) {
@@ -94,6 +113,74 @@ func TestHandler_UnknownRouteAndMethod(t *testing.T) {
 	if recorder.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("unsupported method status = %d, want 405", recorder.Code)
 	}
+}
+
+func TestHandler_ResolveKeepsKeyOrderAndMetadata(t *testing.T) {
+	handler := NewHandler(&stubBackend{})
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, RouteResolve, strings.NewReader(`{"keys":["sk-a","sk-b"]}`)))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	var result ResolveResult
+	if err := json.Unmarshal(recorder.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode resolve result: %v", err)
+	}
+	if len(result.Items) != 2 || result.Items[1].Hash != "hash:sk-b" {
+		t.Fatalf("items = %+v, want one entry per submitted key in order", result.Items)
+	}
+	if result.OrphanRemarks != 2 {
+		t.Fatalf("orphan_remarks = %d, want the backend value", result.OrphanRemarks)
+	}
+}
+
+func TestHandler_RemarksRejectsWrongMethod(t *testing.T) {
+	handler := NewHandler(&stubBackend{})
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, RouteRemarks, strings.NewReader(`{}`)))
+	if recorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", recorder.Code)
+	}
+	if allow := recorder.Header().Get("Allow"); allow != http.MethodPut {
+		t.Fatalf("Allow = %q, want PUT", allow)
+	}
+}
+
+func TestHandler_GenerateReturnsBackendKey(t *testing.T) {
+	handler := NewHandler(&stubBackend{key: "sk-generated"})
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, RouteGenerate, nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	var result GenerateResult
+	if err := json.Unmarshal(recorder.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode generate result: %v", err)
+	}
+	if result.Key != "sk-generated" {
+		t.Fatalf("key = %q, want sk-generated", result.Key)
+	}
+}
+
+func TestHandler_MapsBackendValidationToBadRequest(t *testing.T) {
+	handler := NewHandler(&rejectingBackend{})
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPut, RouteRemarks, strings.NewReader(`{"key":"sk-a","remark":"x"}`)))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for a rejected remark", recorder.Code)
+	}
+}
+
+type rejectingBackend struct {
+	stubBackend
+}
+
+func (b *rejectingBackend) SetRemark(context.Context, string, string) error {
+	return NewInvalidRequest("remark too long")
 }
 
 func TestRecorder_DefaultsToOKAndKeepsHeaders(t *testing.T) {

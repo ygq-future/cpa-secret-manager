@@ -1,15 +1,19 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"cpa-secret-manager/internal/keys"
 	"cpa-secret-manager/internal/management"
+	"cpa-secret-manager/internal/remarks"
 	"cpa-secret-manager/internal/state"
 )
 
@@ -197,6 +201,127 @@ func TestShutdown_PersistsOnceAndRejectsFurtherWrites(t *testing.T) {
 	}
 	if err := rt.UpdateSettings(context.Background(), false); err != ErrShutdown {
 		t.Fatalf("UpdateSettings() error = %v, want ErrShutdown", err)
+	}
+}
+
+func TestResolve_AlignsItemsWithSubmittedOrder(t *testing.T) {
+	rt := registerRuntime(t, filepath.Join(t.TempDir(), "state.json"))
+
+	remarkBody, err := json.Marshal(map[string]string{"key": "sk-two", "remark": "  second key  "})
+	if err != nil {
+		t.Fatalf("encode remark: %v", err)
+	}
+	if status, _ := managementCall(t, rt, "PUT", management.RouteRemarks, remarkBody); status != 200 {
+		t.Fatalf("remark status = %d, want 200", status)
+	}
+
+	resolveBody, err := json.Marshal(map[string]any{"keys": []string{"sk-one", "sk-two", "sk-three"}})
+	if err != nil {
+		t.Fatalf("encode resolve: %v", err)
+	}
+	status, body := managementCall(t, rt, "POST", management.RouteResolve, resolveBody)
+	if status != 200 {
+		t.Fatalf("resolve status = %d, want 200", status)
+	}
+
+	var result management.ResolveResult
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatalf("decode resolve: %v", err)
+	}
+	if len(result.Items) != 3 {
+		t.Fatalf("items = %d, want one per submitted key", len(result.Items))
+	}
+	if result.Items[0].Hash != remarks.Index("sk-one") {
+		t.Fatalf("items[0].hash = %q, want the digest of sk-one", result.Items[0].Hash)
+	}
+	if result.Items[0].Remark != "" || result.Items[2].Remark != "" {
+		t.Fatalf("unexpected remark on an unannotated key: %+v", result.Items)
+	}
+	if result.Items[1].Remark != "second key" {
+		t.Fatalf("items[1].remark = %q, want the trimmed remark", result.Items[1].Remark)
+	}
+	if result.OrphanRemarks != 0 {
+		t.Fatalf("orphan_remarks = %d, want 0 while every stored remark matches a submitted key", result.OrphanRemarks)
+	}
+}
+
+func TestSetRemark_PersistsAndClears(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	rt := registerRuntime(t, statePath)
+
+	body, err := json.Marshal(map[string]string{"key": "sk-dev", "remark": "local development"})
+	if err != nil {
+		t.Fatalf("encode remark: %v", err)
+	}
+	if status, _ := managementCall(t, rt, "PUT", management.RouteRemarks, body); status != 200 {
+		t.Fatalf("remark status = %d, want 200", status)
+	}
+
+	reloaded, err := state.Load(statePath)
+	if err != nil {
+		t.Fatalf("reload state: %v", err)
+	}
+	entry, ok := reloaded.Remark(remarks.Index("sk-dev"))
+	if !ok || entry.Remark != "local development" {
+		t.Fatalf("persisted remark = %+v (ok=%v), want local development", entry, ok)
+	}
+	if entry.UpdatedAt.IsZero() {
+		t.Fatal("persisted remark has no updated_at timestamp")
+	}
+
+	clearBody, err := json.Marshal(map[string]string{"key": "sk-dev", "remark": ""})
+	if err != nil {
+		t.Fatalf("encode clear: %v", err)
+	}
+	if status, _ := managementCall(t, rt, "PUT", management.RouteRemarks, clearBody); status != 200 {
+		t.Fatalf("clear status = %d, want 200", status)
+	}
+	if _, ok := rt.Store().Remark(remarks.Index("sk-dev")); ok {
+		t.Fatal("remark still present after being cleared")
+	}
+}
+
+func TestSetRemark_RejectsMissingKeyAndOverlongText(t *testing.T) {
+	rt := registerRuntime(t, filepath.Join(t.TempDir(), "state.json"))
+
+	for name, payload := range map[string]map[string]string{
+		"blank key":     {"key": "   ", "remark": "x"},
+		"overlong text": {"key": "sk-a", "remark": strings.Repeat("备", remarks.MaxLength+1)},
+	} {
+		body, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("encode %s: %v", name, err)
+		}
+		if status, _ := managementCall(t, rt, "PUT", management.RouteRemarks, body); status != 400 {
+			t.Fatalf("%s status = %d, want 400", name, status)
+		}
+	}
+}
+
+func TestGenerateKey_MatchesOfficialAlgorithm(t *testing.T) {
+	source := make([]byte, 0, 128)
+	for value := keys.MaxUnbiasedByte; value <= 255; value++ {
+		source = append(source, byte(value))
+	}
+	for index := range keys.RandomLength {
+		source = append(source, byte(index))
+	}
+	source = append(source, make([]byte, 128-len(source))...)
+
+	rt := New(Options{
+		StatePath: filepath.Join(t.TempDir(), "state.json"),
+		Random:    bytes.NewReader(source),
+	})
+	status, body := managementCall(t, rt, "POST", management.RouteGenerate, nil)
+	if status != 200 {
+		t.Fatalf("generate status = %d, want 200", status)
+	}
+	var result management.GenerateResult
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatalf("decode generate result: %v", err)
+	}
+	if want := keys.Prefix + keys.Charset[:keys.RandomLength]; result.Key != want {
+		t.Fatalf("generated key = %q, want %q", result.Key, want)
 	}
 }
 
