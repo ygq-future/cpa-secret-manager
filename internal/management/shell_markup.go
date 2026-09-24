@@ -77,8 +77,8 @@ const shellModals = `  </main>
       <div class="field" id="key-form-value-field">
         <label for="key-form-value" data-i18n="key_form.value">API key</label>
         <div class="field-row">
-          <input id="key-form-value" type="text" autocomplete="off" spellcheck="false" required>
-          <button id="key-form-generate" class="btn btn-secondary" type="button" data-i18n="key_form.generate">Generate</button>
+          <input id="key-form-value" type="text" autocomplete="off" spellcheck="false" readonly required placeholder="Generating key...">
+          <button id="key-form-generate" class="btn btn-secondary" type="button" data-i18n="key_form.generate">Regenerate</button>
         </div>
       </div>
       <div class="field" id="key-form-chip-field" hidden>
@@ -105,6 +105,17 @@ const shellModals = `  </main>
     <div class="modal-actions">
       <button id="confirm-cancel" class="btn btn-secondary" type="button" data-i18n="shell.cancel">Cancel</button>
       <button id="confirm-accept" class="btn btn-danger" type="button" data-i18n="shell.confirm">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<div id="failures-modal" class="modal-backdrop">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="failures-title">
+    <h2 id="failures-title" data-i18n="failures.title">Failure records & diagnostics</h2>
+    <div id="failures-content"></div>
+    <div class="modal-actions">
+      <button id="failures-close" class="btn btn-secondary" type="button" data-i18n="shell.cancel">Close</button>
+      <button id="failures-open-logs" class="btn btn-primary" type="button" data-i18n="failures.open_logs">Open Host Logs</button>
     </div>
   </div>
 </div>

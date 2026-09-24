@@ -24,7 +24,7 @@ var I18N = {
     'key_form.add_title': '新增 API Key',
     'key_form.edit_title': '编辑备注',
     'key_form.value': 'API Key',
-    'key_form.generate': '自动生成',
+    'key_form.generate': '重新生成',
     'key_form.key_label': '密钥',
     'key_form.remark': '备注',
     'key_form.remark_placeholder': '例如：本地开发',
@@ -108,7 +108,16 @@ var I18N = {
     'error.duplicate_key': '该 API Key 已存在。',
     'error.auth_required': '请先提供管理密钥。',
     'error.auth_failed': '管理密钥无效或管理接口不可用。',
-    'error.copy_failed': '复制失败，请手动选择文本。'
+    'error.copy_failed': '复制失败，请手动选择文本。',
+    'failures.title': '失败记录与诊断',
+    'failures.key': '关联密钥',
+    'failures.total': '失败总数',
+    'failures.breakdown': '模型失败分布',
+    'failures.last_seen': '最近活跃时间',
+    'failures.tip': '说明：CPA 宿主通过用量协议仅下发了失败标记；具体上游报错堆栈与 HTTP 状态码由宿主集中记录，请前往宿主控制台左侧【日志查看】检索对应时间点的错误日志。',
+    'failures.open_logs': '前往宿主日志查看',
+    'failures.none': '当前未发现失败请求。',
+    'failures.view_details': '查看失败诊断',
   },
   'en-US': {
     'app.title': 'API Key Manager',
@@ -129,7 +138,7 @@ var I18N = {
     'key_form.add_title': 'Add API key',
     'key_form.edit_title': 'Edit remark',
     'key_form.value': 'API key',
-    'key_form.generate': 'Generate',
+    'key_form.generate': 'Regenerate',
     'key_form.key_label': 'Key',
     'key_form.remark': 'Remark',
     'key_form.remark_placeholder': 'For example: local development',
@@ -213,7 +222,16 @@ var I18N = {
     'error.duplicate_key': 'That API key already exists.',
     'error.auth_required': 'A management key is required first.',
     'error.auth_failed': 'The management key is invalid or the management API is unavailable.',
-    'error.copy_failed': 'Copy failed; select the text manually.'
+    'error.copy_failed': 'Copy failed; select the text manually.',
+    'failures.title': 'Failure records & diagnostics',
+    'failures.key': 'Key',
+    'failures.total': 'Total failures',
+    'failures.breakdown': 'Failures by model',
+    'failures.last_seen': 'Last seen',
+    'failures.tip': 'Note: Failure counts are reported by the CPA host usage protocol. Detailed error logs and HTTP response statuses are recorded in the host "Logs" section.',
+    'failures.open_logs': 'Open Host Logs',
+    'failures.none': 'No failure records observed.',
+    'failures.view_details': 'View failure diagnostics',
   }
 };
 `

@@ -235,22 +235,29 @@ function loadKeys() {
     } else if (payload && Array.isArray(payload.apiKeys)) {
       list = payload.apiKeys;
     }
-    state.keys = list.map(function (value) {
+    var nextKeys = list.map(function (value) {
       return String(value);
     });
-    return loadEntries();
+    var currentSig = nextKeys.slice().sort().join('|');
+    var keysChanged = state.lastKeysSignature !== null && state.lastKeysSignature !== currentSig;
+    state.lastKeysSignature = currentSig;
+    state.keys = nextKeys;
+    return loadEntries(keysChanged);
   }).then(function () {
     renderKeys();
   });
 }
 
-function loadEntries() {
+function loadEntries(keysChanged) {
   return apiFetch(RESOLVE_PATH, { method: 'POST', body: JSON.stringify({ keys: state.keys }) }).then(function (payload) {
     state.entries = payload && Array.isArray(payload.items) ? payload.items : [];
     var stale = payload && Array.isArray(payload.stale_hashes) ? payload.stale_hashes : [];
-    return adoptStaleHashes(stale.map(function (value) {
-      return String(value);
-    }));
+    if (keysChanged) {
+      return adoptStaleHashes(stale.map(function (value) {
+        return String(value);
+      }));
+    }
+    return Promise.resolve(null);
   });
 }
 
@@ -327,6 +334,9 @@ function renderStats() {
   var failedCard = byId('stat-failed-card');
   if (failedCard) {
     failedCard.classList.toggle('is-danger', failed > 0);
+    failedCard.style.cursor = failed > 0 ? 'pointer' : 'default';
+    failedCard.title = failed > 0 ? t('failures.view_details') : '';
+    failedCard.onclick = failed > 0 ? function () { openFailuresModal(-1); } : null;
   }
 }
 
@@ -436,7 +446,7 @@ function buildKeyRow(index, value, remark, usage) {
   row.appendChild(remarkCell);
 
   row.appendChild(buildNumberCell(usage ? usage.requests : 0, !usage));
-  row.appendChild(buildFailedCell(usage));
+  row.appendChild(buildFailedCell(usage, index));
   row.appendChild(buildValueCell(usage ? usage.input : 0, !usage, false, formatTokenValue));
   row.appendChild(buildValueCell(usage ? usage.output : 0, !usage, false, formatTokenValue));
   row.appendChild(buildValueCell(usage ? usage.total : 0, !usage, true, formatTokenValue));
@@ -490,7 +500,7 @@ function buildValueCell(value, empty, strong, formatter) {
   return cell;
 }
 
-function buildFailedCell(usage) {
+function buildFailedCell(usage, index) {
   var cell = document.createElement('td');
   cell.className = 'num';
   var failed = usage ? usage.failed || 0 : 0;
@@ -501,8 +511,13 @@ function buildFailedCell(usage) {
   }
   if (failed > 0) {
     var badge = document.createElement('span');
-    badge.className = 'badge badge-danger';
+    badge.className = 'badge badge-danger badge-clickable';
     badge.textContent = formatNumber(failed);
+    badge.title = t('failures.view_details');
+    badge.addEventListener('click', function (e) {
+      e.stopPropagation();
+      openFailuresModal(index);
+    });
     cell.appendChild(badge);
     return cell;
   }
@@ -756,6 +771,7 @@ function openAddKeyForm() {
   var value = byId('key-form-value');
   if (value) {
     value.value = '';
+    value.readOnly = true;
   }
   var remark = byId('key-form-remark');
   if (remark) {
@@ -766,9 +782,7 @@ function openAddKeyForm() {
     generate.disabled = false;
   }
   openModal('key-form-modal');
-  if (value) {
-    value.focus();
-  }
+  generateKeyIntoForm({ silent: true });
 }
 
 function openEditKeyForm(index) {
@@ -800,7 +814,8 @@ function closeKeyForm() {
   closeModal('key-form-modal');
 }
 
-function generateKeyIntoForm() {
+function generateKeyIntoForm(options) {
+  var settings = options && typeof options === 'object' && !options.preventDefault ? options : {};
   var generate = byId('key-form-generate');
   if (generate) {
     generate.disabled = true;
@@ -810,12 +825,13 @@ function generateKeyIntoForm() {
     var input = byId('key-form-value');
     if (input && value) {
       input.value = value;
-      input.focus();
-      input.select();
+      input.readOnly = true;
     }
     return copyToClipboard(value);
   }).then(function () {
-    showToast(t('keys.generated'), 'success');
+    if (!settings.silent) {
+      showToast(t('keys.generated'), 'success');
+    }
   }).catch(function (error) {
     showToast(error.message, 'error');
   }).then(function () {
@@ -896,9 +912,14 @@ function confirmDeleteKey(index) {
     state.expanded = {};
     persistKeys(next)
       .then(function () {
-        // The host owns the key; the plugin owns its remark and counters. Both
-        // disappear with one explicit call.
-        return apiFetch(FORGET_PATH, { method: 'POST', body: JSON.stringify({ hashes: [entry.hash] }) });
+        // The host owns the key; the plugin owns its remark and counters.
+        if (entry.hash) {
+          return apiFetch(FORGET_PATH, { method: 'POST', body: JSON.stringify({ hashes: [entry.hash] }) }).catch(function () {
+            // Non-fatal: adoptStaleHashes cleans up unreferenced hashes on subsequent refreshes.
+            return null;
+          });
+        }
+        return null;
       })
       .then(function () {
         showToast(t('keys.deleted'), 'success');
@@ -908,6 +929,117 @@ function confirmDeleteKey(index) {
         showToast(error.message, 'error');
       });
   });
+}
+
+function openFailuresModal(index) {
+  var container = byId('failures-content');
+  if (!container) {
+    return;
+  }
+  container.textContent = '';
+
+  var box = document.createElement('div');
+  box.className = 'failures-box';
+
+  var targetEntries = [];
+  if (index >= 0 && state.entries[index]) {
+    targetEntries.push({ key: state.keys[index], usage: state.entries[index].usage, remark: state.entries[index].remark });
+  } else {
+    for (var i = 0; i < state.entries.length; i++) {
+      var u = state.entries[i] ? state.entries[i].usage : null;
+      if (u && u.failed > 0) {
+        targetEntries.push({ key: state.keys[i], usage: u, remark: state.entries[i].remark });
+      }
+    }
+  }
+
+  if (targetEntries.length === 0) {
+    var empty = document.createElement('p');
+    empty.className = 'hint';
+    empty.textContent = t('failures.none');
+    box.appendChild(empty);
+  } else {
+    for (var k = 0; k < targetEntries.length; k++) {
+      var item = targetEntries[k];
+      var summary = document.createElement('div');
+      summary.className = 'failures-summary';
+      var keyTitle = maskKey(item.key) + (item.remark ? ' (' + item.remark + ')' : '');
+      var titleSpan = document.createElement('span');
+      titleSpan.textContent = keyTitle;
+      var countSpan = document.createElement('span');
+      countSpan.textContent = tf('failures.total') + ': ' + formatNumber(item.usage.failed);
+      summary.appendChild(titleSpan);
+      summary.appendChild(countSpan);
+      box.appendChild(summary);
+
+      if (item.usage.last_seen) {
+        var timeP = document.createElement('div');
+        timeP.className = 'failures-list-item';
+        var timeLabel = document.createElement('span');
+        timeLabel.textContent = t('failures.last_seen');
+        var timeValue = document.createElement('span');
+        timeValue.textContent = new Date(item.usage.last_seen).toLocaleString();
+        timeP.appendChild(timeLabel);
+        timeP.appendChild(timeValue);
+        box.appendChild(timeP);
+      }
+
+      var models = item.usage.models || [];
+      if (models.length > 0) {
+        var list = document.createElement('ul');
+        list.className = 'failures-list';
+        for (var m = 0; m < models.length; m++) {
+          if (models[m].failed > 0) {
+            var li = document.createElement('li');
+            li.className = 'failures-list-item';
+            var mName = document.createElement('span');
+            mName.textContent = models[m].model;
+            var mFail = document.createElement('span');
+            mFail.textContent = formatNumber(models[m].failed) + ' ' + t('keys.stat.failed');
+            li.appendChild(mName);
+            li.appendChild(mFail);
+            list.appendChild(li);
+          }
+        }
+        box.appendChild(list);
+      }
+    }
+  }
+
+  var tip = document.createElement('div');
+  tip.className = 'failures-tip';
+  tip.textContent = t('failures.tip');
+  box.appendChild(tip);
+
+  container.appendChild(box);
+  openModal('failures-modal');
+}
+
+function closeFailuresModal() {
+  closeModal('failures-modal');
+}
+
+function openHostLogs() {
+  closeFailuresModal();
+  var hostWin = hostWindow();
+  if (hostWin) {
+    try {
+      var links = hostWin.document.querySelectorAll('a, button, [role="button"]');
+      for (var i = 0; i < links.length; i++) {
+        var text = (links[i].textContent || '').trim();
+        if (text === '日志查看' || text === 'Logs' || text === 'Log viewer') {
+          links[i].click();
+          return;
+        }
+      }
+      if (hostWin.location) {
+        hostWin.location.hash = '#/logs';
+        return;
+      }
+    } catch (e) {
+      // Fallback below
+    }
+  }
 }
 `,
 }

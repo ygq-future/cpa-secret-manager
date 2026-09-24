@@ -48,6 +48,9 @@ const ThemePaletteCSS = `
   --accent-red: #ef4444;
   --accent-red-subtle: #fef2f2;
   --accent-red-text: #b91c1c;
+  --btn-primary-bg: #0f172a;
+  --btn-primary-hover: #1e293b;
+  --btn-primary-text: #ffffff;
   --focus-ring: rgba(59, 130, 246, 0.15);
   --switch-knob: #ffffff;
   --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.04), 0 1px 2px -1px rgba(0, 0, 0, 0.03);
@@ -85,6 +88,9 @@ const ThemePaletteCSS = `
     --accent-red: #ef4444;
     --accent-red-subtle: rgba(127, 29, 29, 0.25);
     --accent-red-text: #f87171;
+    --btn-primary-bg: #f4f4f5;
+    --btn-primary-hover: #e4e4e7;
+    --btn-primary-text: #09090b;
     --focus-ring: rgba(59, 130, 246, 0.25);
     --switch-knob: #ffffff;
     --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
@@ -119,6 +125,9 @@ const ThemePaletteCSS = `
   --accent-red: #ef4444;
   --accent-red-subtle: #fef2f2;
   --accent-red-text: #b91c1c;
+  --btn-primary-bg: #0f172a;
+  --btn-primary-hover: #1e293b;
+  --btn-primary-text: #ffffff;
   --focus-ring: rgba(59, 130, 246, 0.15);
   --switch-knob: #ffffff;
   --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.04), 0 1px 2px -1px rgba(0, 0, 0, 0.03);
@@ -156,6 +165,9 @@ const ThemePaletteCSS = `
   --accent-red: #ef4444;
   --accent-red-subtle: rgba(127, 29, 29, 0.25);
   --accent-red-text: #f87171;
+  --btn-primary-bg: #f4f4f5;
+  --btn-primary-hover: #e4e4e7;
+  --btn-primary-text: #09090b;
   --focus-ring: rgba(59, 130, 246, 0.25);
   --switch-knob: #ffffff;
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.4);

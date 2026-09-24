@@ -53,6 +53,7 @@ var state = {
   language: 'zh-CN',
   toastTimer: 0,
   confirmHandler: null,
+  lastKeysSignature: null,
   themeObserver: null
 };
 
@@ -748,6 +749,10 @@ function bindGlobalEvents() {
   bindClick('keys-add', openAddKeyForm);
   bindClick('keys-unit', cycleTokenUnit);
   var filter = byId('keys-filter');
+  bindClick('failures-close', closeFailuresModal);
+  bindClick('failures-open-logs', openHostLogs);
+  bindBackdrop('failures-modal');
+
   if (filter) {
     filter.addEventListener('input', function () {
       renderKeys();

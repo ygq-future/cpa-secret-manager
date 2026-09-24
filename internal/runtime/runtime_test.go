@@ -602,3 +602,40 @@ func TestHandle_InvalidConfigFails(t *testing.T) {
 		t.Fatalf("error = %+v, want code invalid_config", env.Error)
 	}
 }
+func TestHandle_ManagementRegister_DeclaresAllRoutes(t *testing.T) {
+	rt := registerRuntime(t, filepath.Join(t.TempDir(), "state.json"))
+	env := decodeEnvelope(t, rt.Handle(context.Background(), MethodManagementRegister, nil))
+	if !env.OK {
+		t.Fatalf("management.register failed: %s", env.Result)
+	}
+
+	var reg struct {
+		Routes []struct {
+			Method string `json:"method"`
+			Path   string `json:"path"`
+		} `json:"routes"`
+	}
+	if err := json.Unmarshal(env.Result, &reg); err != nil {
+		t.Fatalf("unmarshal registration: %v", err)
+	}
+
+	wanted := map[string]string{
+		"GET " + management.RouteSettings:  "settings read",
+		"PUT " + management.RouteSettings:  "settings write",
+		"POST " + management.RouteResolve:  "resolve",
+		"PUT " + management.RouteRemarks:   "remarks",
+		"POST " + management.RouteForget:   "forget",
+		"POST " + management.RouteGenerate: "generate",
+	}
+
+	declared := make(map[string]bool)
+	for _, route := range reg.Routes {
+		declared[route.Method+" "+route.Path] = true
+	}
+
+	for key, desc := range wanted {
+		if !declared[key] {
+			t.Errorf("missing route for %s: %s", desc, key)
+		}
+	}
+}
