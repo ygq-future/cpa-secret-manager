@@ -73,7 +73,7 @@ const shellModals = `  </main>
 <div id="key-form-modal" class="modal-backdrop">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="key-form-title">
     <h2 id="key-form-title" data-i18n="key_form.add_title">Add API key</h2>
-    <form id="key-form">
+    <form id="key-form" novalidate>
       <div class="field" id="key-form-value-field">
         <label for="key-form-value" data-i18n="key_form.value">API key</label>
         <div class="field-row">

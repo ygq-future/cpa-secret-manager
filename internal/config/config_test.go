@@ -53,8 +53,8 @@ func TestLoadBytes_FallsBackWhenSectionMissing(t *testing.T) {
 	if cfg.StatePath != DefaultStatePath {
 		t.Fatalf("StatePath = %q, want default %q", cfg.StatePath, DefaultStatePath)
 	}
-	if len(warnings) == 0 {
-		t.Fatal("LoadBytes() returned no warning for a missing plugin section")
+	if len(warnings) != 0 {
+		t.Fatalf("LoadBytes() warnings = %v, want none for missing section", warnings)
 	}
 }
 

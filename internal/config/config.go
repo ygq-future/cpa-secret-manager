@@ -27,7 +27,7 @@ func LoadBytes(data []byte) (Config, []string, error) {
 
 	section := extractPluginConfigYAML(string(data))
 	if strings.TrimSpace(section) == "" {
-		return cfg, []string{"plugin config section not found; using default state path"}, nil
+		return cfg, nil, nil
 	}
 
 	values, err := parseConfigMap(section)

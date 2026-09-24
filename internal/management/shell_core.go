@@ -18,6 +18,7 @@ var HOST_THEME_VARIABLES = [
 
 var REFRESH_INTERVAL_MS = 15000;
 var LANGUAGE_STORAGE_KEY = 'cpa-secret-manager-language';
+var TOKEN_UNIT_STORAGE_KEY = 'cpa-secret-manager-token-unit';
 var MANUAL_KEY_STORAGE = 'cpa-secret-manager-key';
 var HOST_AUTH_STORAGE_KEY = 'cli-proxy-auth';
 var HOST_THEME_STORAGE_KEY = 'cli-proxy-theme';
@@ -114,6 +115,18 @@ function writeStorage(source, kind, key, value) {
     return false;
   }
 }
+function readStoredTokenUnit() {
+  var stored = readStorage(window, 'localStorage', TOKEN_UNIT_STORAGE_KEY);
+  if (!stored) {
+    return 0;
+  }
+  var parsed = parseInt(stored, 10);
+  if (isFinite(parsed) && parsed >= 0 && parsed <= 3) {
+    return parsed;
+  }
+  return 0;
+}
+
 
 function normalizeKey(value) {
   if (typeof value !== 'string') {
@@ -769,6 +782,7 @@ function startAutoRefresh() {
 }
 
 function initializeApp() {
+  state.tokenUnit = readStoredTokenUnit();
   state.language = detectLanguage();
   applyLanguage();
   syncTheme();

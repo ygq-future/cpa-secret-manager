@@ -262,11 +262,10 @@ function saveRemark(key, remark) {
   return apiFetch(REMARKS_PATH, { method: 'PUT', body: JSON.stringify({ key: key, remark: remark }) });
 }
 
-function setBusy(busy) {
-  state.busy = busy;
+function setKeyFormSaving(saving) {
   var button = byId('key-form-save');
   if (button) {
-    button.disabled = busy;
+    button.disabled = saving;
   }
 }
 
@@ -282,6 +281,7 @@ var DETAIL_COLLAPSE_MS = 160;
 
 function cycleTokenUnit() {
   state.tokenUnit = (state.tokenUnit + 1) % TOKEN_UNITS.length;
+  writeStorage(window, 'localStorage', TOKEN_UNIT_STORAGE_KEY, String(state.tokenUnit));
   renderKeys();
 }
 
@@ -655,21 +655,66 @@ function buildEmptyRow(message) {
   return row;
 }
 
+function fallbackCopyText(value) {
+  try {
+    var area = document.createElement('textarea');
+    area.value = value;
+    area.setAttribute('readonly', '');
+    area.style.position = 'fixed';
+    area.style.left = '-9999px';
+    area.style.top = '-9999px';
+    area.style.opacity = '0';
+    document.body.appendChild(area);
+    area.focus();
+    area.select();
+    area.setSelectionRange(0, value.length);
+    var ok = document.execCommand('copy');
+    document.body.removeChild(area);
+    return ok;
+  } catch (err) {
+    return false;
+  }
+}
+
+function writeClipboardText(value) {
+  if (!value) {
+    return Promise.resolve(false);
+  }
+  var nav = window.navigator;
+  if (nav && nav.clipboard && typeof nav.clipboard.writeText === 'function') {
+    return nav.clipboard.writeText(value).then(function () {
+      return true;
+    }).catch(function () {
+      return fallbackCopyText(value) ? Promise.resolve(true) : Promise.resolve(false);
+    });
+  }
+  try {
+    if (window.parent && window.parent !== window && window.parent.navigator && window.parent.navigator.clipboard) {
+      return window.parent.navigator.clipboard.writeText(value).then(function () {
+        return true;
+      }).catch(function () {
+        return fallbackCopyText(value) ? Promise.resolve(true) : Promise.resolve(false);
+      });
+    }
+  } catch (e) {
+    // Ignore cross-origin error and fallback below
+  }
+  return fallbackCopyText(value) ? Promise.resolve(true) : Promise.resolve(false);
+}
+
 function copyKeyValue(index, button) {
   var value = state.keys[index] || '';
   if (!value) {
     return;
   }
-  if (window.navigator.clipboard && window.navigator.clipboard.writeText) {
-    window.navigator.clipboard.writeText(value).then(function () {
+  writeClipboardText(value).then(function (ok) {
+    if (ok) {
       flashCopied(button);
       showToast(t('keys.copied'), 'success');
-    }, function () {
+    } else {
       showToast(t('error.copy_failed'), 'error');
-    });
-    return;
-  }
-  showToast(t('error.copy_failed'), 'error');
+    }
+  });
 }
 
 function flashCopied(button) {
@@ -688,11 +733,16 @@ function flashCopied(button) {
 function setKeyFormMode(mode) {
   var valueField = byId('key-form-value-field');
   var chipField = byId('key-form-chip-field');
+  var valueInput = byId('key-form-value');
   if (valueField) {
     valueField.hidden = mode === 'edit';
   }
   if (chipField) {
     chipField.hidden = mode !== 'edit';
+  }
+  if (valueInput) {
+    valueInput.required = mode !== 'edit';
+    valueInput.disabled = mode === 'edit';
   }
 }
 
@@ -776,14 +826,7 @@ function generateKeyIntoForm() {
 }
 
 function copyToClipboard(value) {
-  if (!value || !window.navigator.clipboard || !window.navigator.clipboard.writeText) {
-    return Promise.resolve(false);
-  }
-  return window.navigator.clipboard.writeText(value).then(function () {
-    return true;
-  }, function () {
-    return false;
-  });
+  return writeClipboardText(value);
 }
 
 function saveKeyForm() {
@@ -793,7 +836,7 @@ function saveKeyForm() {
   if (state.editingKey) {
     // Editing never touches the key list: the host owns the key, the plugin
     // owns the remark.
-    setBusy(true);
+    setKeyFormSaving(true);
     saveRemark(state.editingKey, remark)
       .then(function () {
         closeKeyForm();
@@ -804,7 +847,7 @@ function saveKeyForm() {
         showToast(error.message, 'error');
       })
       .then(function () {
-        setBusy(false);
+        setKeyFormSaving(false);
       });
     return;
   }
@@ -826,7 +869,7 @@ function saveKeyForm() {
   var next = state.keys.slice();
   next.push(value);
 
-  setBusy(true);
+  setKeyFormSaving(true);
   persistKeys(next)
     .then(function () {
       return saveRemark(value, remark);
@@ -840,7 +883,7 @@ function saveKeyForm() {
       showToast(error.message, 'error');
     })
     .then(function () {
-      setBusy(false);
+      setKeyFormSaving(false);
     });
 }
 
@@ -851,7 +894,6 @@ function confirmDeleteKey(index) {
     var next = state.keys.slice();
     next.splice(index, 1);
     state.expanded = {};
-    setBusy(true);
     persistKeys(next)
       .then(function () {
         // The host owns the key; the plugin owns its remark and counters. Both
@@ -864,9 +906,6 @@ function confirmDeleteKey(index) {
       })
       .catch(function (error) {
         showToast(error.message, 'error');
-      })
-      .then(function () {
-        setBusy(false);
       });
   });
 }
