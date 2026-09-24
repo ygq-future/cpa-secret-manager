@@ -284,6 +284,25 @@ func TestPage_JavaScriptSyntax(t *testing.T) {
 	}
 }
 
+func TestPage_HasKeysTableLoadingAndDefaultExpandedContracts(t *testing.T) {
+	if !strings.Contains(PageHTML, `id="keys-loading"`) {
+		t.Fatal("PageHTML is missing #keys-loading element")
+	}
+	if !strings.Contains(PageHTML, `id="keys-table-wrap"`) {
+		t.Fatal("PageHTML is missing #keys-table-wrap element")
+	}
+	if !strings.Contains(PageHTML, "table-loading-spinner") {
+		t.Fatal("PageHTML is missing table-loading-spinner")
+	}
+
+	script := extractPageScript(t)
+	for _, fn := range []string{"isModelsExpanded", "setKeysLoading"} {
+		if !strings.Contains(script, "function "+fn) {
+			t.Fatalf("page script missing function %s", fn)
+		}
+	}
+}
+
 func extractDictionaries(t *testing.T, script string) map[string]map[string]bool {
 	t.Helper()
 	match := regexp.MustCompile(`(?s)var I18N = \{(.*?)\n\};`).FindStringSubmatch(script)

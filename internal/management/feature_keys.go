@@ -44,7 +44,11 @@ var keysFeature = pageFeature{
             </button>
           </div>
         </div>
-        <div class="table-wrap">
+        <div id="keys-table-wrap" class="table-wrap">
+          <div id="keys-loading" class="table-loading" aria-hidden="true">
+            <div class="table-loading-spinner"></div>
+            <span class="table-loading-text" data-i18n="shell.loading">Loading…</span>
+          </div>
           <table class="data-table">
             <thead>
               <tr>
@@ -66,6 +70,65 @@ var keysFeature = pageFeature{
     </section>
 `,
 	styles: `
+#keys-table-wrap {
+  position: relative;
+  min-height: 200px;
+}
+
+.table-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: var(--bg-card);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1), visibility 0.2s ease;
+}
+
+#keys-table-wrap.is-loading .table-loading {
+  opacity: 0.88;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+#keys-table-wrap.is-loading .data-table {
+  pointer-events: none;
+  user-select: none;
+  opacity: 0.35;
+  transition: opacity 0.2s ease;
+}
+
+.table-loading-spinner {
+  width: 30px;
+  height: 30px;
+  border: 3px solid var(--border-color);
+  border-top-color: var(--accent-blue);
+  border-radius: 50%;
+  animation: tableSpin 0.75s linear infinite;
+}
+
+@keyframes tableSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.table-loading-text {
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 550;
+  letter-spacing: 0.02em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .table-loading-spinner { animation: none; }
+}
+
 .key-cell {
   display: flex;
   gap: 8px;
@@ -152,6 +215,32 @@ table.detail-table {
 }
 `,
 	scripts: `
+function isModelsExpanded(key) {
+  if (!key) {
+    return true;
+  }
+  return !state.collapsed[key];
+}
+
+function setKeysLoading(loading) {
+  var wrap = byId('keys-table-wrap');
+  var mask = byId('keys-loading');
+  if (!wrap) {
+    return;
+  }
+  if (loading) {
+    wrap.classList.add('is-loading');
+    if (mask) {
+      mask.setAttribute('aria-hidden', 'false');
+    }
+  } else {
+    wrap.classList.remove('is-loading');
+    if (mask) {
+      mask.setAttribute('aria-hidden', 'true');
+    }
+  }
+}
+
 // forgetHashes drops the plugin-side metadata of hash indexes. Deleting is
 // always an explicit call; resolving the key list never destroys anything.
 function forgetHashes(hashes) {
@@ -365,7 +454,7 @@ function renderKeys() {
     }
     shown++;
     body.appendChild(buildKeyRow(index, value, remark, item.usage));
-    if (state.expanded[index]) {
+    if (isModelsExpanded(value)) {
       body.appendChild(buildUsageDetailRow(index, item.usage));
     }
   }
@@ -454,25 +543,21 @@ function buildKeyRow(index, value, remark, usage) {
   var modelsCell = document.createElement('td');
   modelsCell.className = 'num';
   var models = usage && Array.isArray(usage.models) ? usage.models : [];
-  if (models.length === 0) {
-    modelsCell.className = 'num muted';
-    modelsCell.textContent = '—';
-  } else {
-    var modelsButton = document.createElement('button');
-    modelsButton.className = 'pill-btn';
-    modelsButton.type = 'button';
-    modelsButton.title = t('keys.models_title');
-    modelsButton.setAttribute('aria-label', tf('keys.models_a11y', { count: formatNumber(models.length) }));
-    modelsButton.setAttribute('aria-expanded', state.expanded[index] ? 'true' : 'false');
-    var modelsCount = document.createElement('span');
-    modelsCount.textContent = formatNumber(models.length);
-    modelsButton.appendChild(modelsCount);
-    modelsButton.appendChild(iconMarkup('chevron', 'icon-chevron'));
-    modelsButton.addEventListener('click', function () {
-      toggleModels(index);
-    });
-    modelsCell.appendChild(modelsButton);
-  }
+  var modelsButton = document.createElement('button');
+  modelsButton.className = 'pill-btn';
+  modelsButton.type = 'button';
+  modelsButton.title = t('keys.models_title');
+  modelsButton.setAttribute('aria-label', tf('keys.models_a11y', { count: formatNumber(models.length) }));
+  var expanded = isModelsExpanded(value);
+  modelsButton.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+  var modelsCount = document.createElement('span');
+  modelsCount.textContent = formatNumber(models.length);
+  modelsButton.appendChild(modelsCount);
+  modelsButton.appendChild(iconMarkup('chevron', 'icon-chevron'));
+  modelsButton.addEventListener('click', function () {
+    toggleModels(index);
+  });
+  modelsCell.appendChild(modelsButton);
   row.appendChild(modelsCell);
 
   var actions = document.createElement('td');
@@ -529,18 +614,23 @@ function buildFailedCell(usage, index) {
 // renders the row, whose panel plays the detailIn animation; collapsing plays
 // detailOut first so the row does not disappear in a single frame.
 function toggleModels(index) {
+  var value = state.keys[index] || '';
+  if (!value) {
+    return;
+  }
   if (state.collapseTimers[index]) {
     window.clearTimeout(state.collapseTimers[index]);
     delete state.collapseTimers[index];
   }
-  if (!state.expanded[index]) {
-    state.expanded[index] = true;
+  var currentlyExpanded = isModelsExpanded(value);
+  if (!currentlyExpanded) {
+    delete state.collapsed[value];
     renderKeys();
     return;
   }
   var row = findDetailRow(index);
   if (!row) {
-    state.expanded[index] = false;
+    state.collapsed[value] = true;
     renderKeys();
     return;
   }
@@ -550,7 +640,7 @@ function toggleModels(index) {
   }
   state.collapseTimers[index] = window.setTimeout(function () {
     delete state.collapseTimers[index];
-    state.expanded[index] = false;
+    state.collapsed[value] = true;
     renderKeys();
   }, DETAIL_COLLAPSE_MS);
 }
@@ -886,12 +976,13 @@ function saveKeyForm() {
   next.push(value);
 
   setKeyFormSaving(true);
+  closeKeyForm();
+  setKeysLoading(true);
   persistKeys(next)
     .then(function () {
       return saveRemark(value, remark);
     })
     .then(function () {
-      closeKeyForm();
       showToast(t('keys.added'), 'success');
       return refreshAll({ silent: true });
     })
@@ -900,6 +991,7 @@ function saveKeyForm() {
     })
     .then(function () {
       setKeyFormSaving(false);
+      setKeysLoading(false);
     });
 }
 
@@ -909,7 +1001,8 @@ function confirmDeleteKey(index) {
   openConfirm(tf('keys.delete_confirm', { key: maskKey(value) }), function () {
     var next = state.keys.slice();
     next.splice(index, 1);
-    state.expanded = {};
+    delete state.collapsed[value];
+    setKeysLoading(true);
     persistKeys(next)
       .then(function () {
         // The host owns the key; the plugin owns its remark and counters.
@@ -927,6 +1020,9 @@ function confirmDeleteKey(index) {
       })
       .catch(function (error) {
         showToast(error.message, 'error');
+      })
+      .then(function () {
+        setKeysLoading(false);
       });
   });
 }
