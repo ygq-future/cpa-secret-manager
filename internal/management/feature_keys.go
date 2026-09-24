@@ -137,16 +137,22 @@ var keysFeature = pageFeature{
 
 .empty-row:hover td { background: transparent; }
 
-.data-table tbody tr.detail-row:hover td { background: inherit; }
+.data-table tbody tr.key-row.is-expanded td {
+  background-color: var(--bg-hover);
+  border-bottom: 1px dashed var(--border-color);
+}
+
+.data-table tbody tr.detail-row:hover td { background-color: var(--bg-subtle) !important; }
 
 .detail-row > td {
   padding: 0;
-  border-top: 1px solid var(--border-color);
-  background: var(--bg-secondary);
+  border-top: none;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-subtle);
 }
 
 .detail-panel {
-  padding: 14px;
+  padding: 10px 16px 14px 20px;
   animation: detailIn 200ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -155,13 +161,13 @@ var keysFeature = pageFeature{
 }
 
 @keyframes detailIn {
-  from { opacity: 0; transform: translateY(-6px); }
+  from { opacity: 0; transform: translateY(-4px); }
   to { opacity: 1; transform: none; }
 }
 
 @keyframes detailOut {
   from { opacity: 1; transform: none; }
-  to { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 0; transform: translateY(-4px); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -172,12 +178,13 @@ var keysFeature = pageFeature{
   display: flex;
   gap: 8px;
   align-items: baseline;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .detail-head h3 {
-  font-size: 12.5px;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--text-secondary);
 }
 
 table.detail-table {
@@ -186,14 +193,14 @@ table.detail-table {
   border-spacing: 0;
   overflow: hidden;
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  background: var(--bg-primary);
-  font-size: 12.5px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  font-size: 12px;
 }
 
 .detail-table th,
 .detail-table td {
-  padding: 8px 12px;
+  padding: 6px 10px;
   text-align: left;
   vertical-align: middle;
   white-space: nowrap;
@@ -202,7 +209,7 @@ table.detail-table {
 .detail-table thead th {
   background: var(--bg-tertiary);
   color: var(--text-secondary);
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 650;
 }
 
@@ -211,15 +218,27 @@ table.detail-table {
 
 .detail-table .model-name {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11.5px;
 }
 `,
 	scripts: `
-function isModelsExpanded(key) {
+function isModelsExpanded(key, models) {
   if (!key) {
-    return true;
+    return false;
   }
-  return !state.collapsed[key];
+  if (state.expanded && typeof state.expanded[key] === 'boolean') {
+    return state.expanded[key];
+  }
+  if (Array.isArray(models)) {
+    return models.length > 1;
+  }
+  if (Array.isArray(state.keys) && Array.isArray(state.entries)) {
+    var idx = state.keys.indexOf(key);
+    if (idx >= 0 && state.entries[idx] && state.entries[idx].usage && Array.isArray(state.entries[idx].usage.models)) {
+      return state.entries[idx].usage.models.length > 1;
+    }
+  }
+  return false;
 }
 
 function setKeysLoading(loading) {
@@ -453,8 +472,9 @@ function renderKeys() {
       continue;
     }
     shown++;
+    var models = item.usage && Array.isArray(item.usage.models) ? item.usage.models : [];
     body.appendChild(buildKeyRow(index, value, remark, item.usage));
-    if (isModelsExpanded(value)) {
+    if (isModelsExpanded(value, models)) {
       body.appendChild(buildUsageDetailRow(index, item.usage));
     }
   }
@@ -507,7 +527,9 @@ function buildIconButton(className, iconName, label, handler) {
 
 function buildKeyRow(index, value, remark, usage) {
   var row = document.createElement('tr');
-
+  var models = usage && Array.isArray(usage.models) ? usage.models : [];
+  var expanded = isModelsExpanded(value, models);
+  row.className = 'key-row' + (expanded ? ' is-expanded' : '');
   var keyCell = document.createElement('td');
   var keyWrap = document.createElement('div');
   keyWrap.className = 'key-cell';
@@ -530,8 +552,19 @@ function buildKeyRow(index, value, remark, usage) {
   row.appendChild(keyCell);
 
   var remarkCell = document.createElement('td');
-  remarkCell.className = 'remark' + (remark ? '' : ' muted');
-  remarkCell.textContent = remark || '—';
+  remarkCell.className = 'remark';
+  if (remark) {
+    var remarkBadge = document.createElement('span');
+    remarkBadge.className = 'badge badge-remark';
+    remarkBadge.textContent = remark;
+    remarkBadge.title = remark;
+    remarkCell.appendChild(remarkBadge);
+  } else {
+    var emptyRemark = document.createElement('span');
+    emptyRemark.className = 'muted';
+    emptyRemark.textContent = '—';
+    remarkCell.appendChild(emptyRemark);
+  }
   row.appendChild(remarkCell);
 
   row.appendChild(buildNumberCell(usage ? usage.requests : 0, !usage));
@@ -548,7 +581,6 @@ function buildKeyRow(index, value, remark, usage) {
   modelsButton.type = 'button';
   modelsButton.title = t('keys.models_title');
   modelsButton.setAttribute('aria-label', tf('keys.models_a11y', { count: formatNumber(models.length) }));
-  var expanded = isModelsExpanded(value);
   modelsButton.setAttribute('aria-expanded', expanded ? 'true' : 'false');
   var modelsCount = document.createElement('span');
   modelsCount.textContent = formatNumber(models.length);
@@ -618,19 +650,21 @@ function toggleModels(index) {
   if (!value) {
     return;
   }
+  var item = state.entries[index] || {};
+  var models = item.usage && Array.isArray(item.usage.models) ? item.usage.models : [];
   if (state.collapseTimers[index]) {
     window.clearTimeout(state.collapseTimers[index]);
     delete state.collapseTimers[index];
   }
-  var currentlyExpanded = isModelsExpanded(value);
+  var currentlyExpanded = isModelsExpanded(value, models);
   if (!currentlyExpanded) {
-    delete state.collapsed[value];
+    state.expanded[value] = true;
     renderKeys();
     return;
   }
   var row = findDetailRow(index);
   if (!row) {
-    state.collapsed[value] = true;
+    state.expanded[value] = false;
     renderKeys();
     return;
   }
@@ -640,7 +674,7 @@ function toggleModels(index) {
   }
   state.collapseTimers[index] = window.setTimeout(function () {
     delete state.collapseTimers[index];
-    state.collapsed[value] = true;
+    state.expanded[value] = false;
     renderKeys();
   }, DETAIL_COLLAPSE_MS);
 }
@@ -1001,7 +1035,7 @@ function confirmDeleteKey(index) {
   openConfirm(tf('keys.delete_confirm', { key: maskKey(value) }), function () {
     var next = state.keys.slice();
     next.splice(index, 1);
-    delete state.collapsed[value];
+    delete state.expanded[value];
     setKeysLoading(true);
     persistKeys(next)
       .then(function () {

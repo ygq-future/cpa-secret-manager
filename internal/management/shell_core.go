@@ -40,7 +40,6 @@ var state = {
   keys: [],
   entries: [],
   expanded: {},
-  collapsed: {},
   settings: null,
   pendingStale: [],
   collapseTimers: {},

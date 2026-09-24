@@ -301,6 +301,67 @@ func TestPage_HasKeysTableLoadingAndDefaultExpandedContracts(t *testing.T) {
 			t.Fatalf("page script missing function %s", fn)
 		}
 	}
+	if !strings.Contains(PageHTML, ".badge-remark") {
+		t.Fatal("PageHTML is missing .badge-remark style definition")
+	}
+	if !strings.Contains(PageHTML, "key-row.is-expanded") {
+		t.Fatal("PageHTML is missing key-row.is-expanded style definition")
+	}
+
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed; skipping runtime JS evaluation test")
+	}
+	fnMatch := regexp.MustCompile(`(?s)function isModelsExpanded\(.*?\n\}`).FindString(script)
+	if fnMatch == "" {
+		t.Fatal("cannot find function isModelsExpanded in script")
+	}
+	testRunner := `
+var state = { expanded: {}, keys: ['k1', 'k2', 'k3'], entries: [
+  { usage: { models: [{ model: 'm1' }] } },
+  { usage: { models: [{ model: 'm1' }, { model: 'm2' }] } },
+  { usage: { models: [] } }
+] };
+` + fnMatch + `
+if (isModelsExpanded('k1', [{ model: 'm1' }]) !== false) {
+  console.error('k1 single model should not be expanded by default');
+  process.exit(1);
+}
+if (isModelsExpanded('k2', [{ model: 'm1' }, { model: 'm2' }]) !== true) {
+  console.error('k2 multi models should be expanded by default');
+  process.exit(1);
+}
+if (isModelsExpanded('k3', []) !== false) {
+  console.error('k3 empty models should not be expanded by default');
+  process.exit(1);
+}
+if (isModelsExpanded('k1') !== false) {
+  console.error('k1 fallback lookup should not be expanded');
+  process.exit(1);
+}
+if (isModelsExpanded('k2') !== true) {
+  console.error('k2 fallback lookup should be expanded');
+  process.exit(1);
+}
+state.expanded['k1'] = true;
+if (isModelsExpanded('k1', [{ model: 'm1' }]) !== true) {
+  console.error('k1 should respect state.expanded override to true');
+  process.exit(1);
+}
+state.expanded['k2'] = false;
+if (isModelsExpanded('k2', [{ model: 'm1' }, { model: 'm2' }]) !== false) {
+  console.error('k2 should respect state.expanded override to false');
+  process.exit(1);
+}
+`
+	testScriptPath := filepath.Join(t.TempDir(), "test_expanded.js")
+	if err := os.WriteFile(testScriptPath, []byte(testRunner), 0o600); err != nil {
+		t.Fatalf("write test runner: %v", err)
+	}
+	cmd := exec.Command(nodePath, testScriptPath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("node test failed: %v\n%s", err, string(out))
+	}
 }
 
 func extractDictionaries(t *testing.T, script string) map[string]map[string]bool {

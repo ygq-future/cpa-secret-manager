@@ -655,6 +655,21 @@ table.data-table {
   color: var(--accent-red-text);
 }
 
+.badge-remark {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  background: var(--accent-blue-subtle);
+  color: var(--accent-blue-text);
+  border: 1px solid rgba(59, 130, 246, 0.22);
+}
+
 .switch-row {
   display: flex;
   gap: 16px;
