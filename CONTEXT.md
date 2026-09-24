@@ -31,11 +31,15 @@ _Avoid_: name、label、alias、note、description。
 _Avoid_: fingerprint、id、uuid。
 
 **Plugin State File**:
-插件自有状态文档 `data/cpa-secret-manager-cache.json`，包含 `remarks`、`usage`、`app_config`、`metrics` 四个节点；写入必须原子替换。
+插件自有状态文档 `data/cpa-secret-manager-cache.json`，包含 `remarks`、`usage`、`app_config` 三个节点；写入必须原子替换。
 _Avoid_: cache file、database、store（不加限定时歧义）。
 
 **App Config**:
 插件状态文件内的 `app_config` 节点，承载 `usage_enabled` 等业务开关，由插件设置页管理，**不写入宿主 `config.yaml`**。
+
+**State Projection**:
+插件状态只投影宿主 `api-keys` 里**当前存在**的密钥。读接口（`resolve`）永不删除任何东西；删除只发生在显式的 `forget` 调用：页面在本页删除密钥时调用它，或在确认某把密钥连续两轮都不在宿主列表里之后调用它。因此不存在"已删除但仍留在插件里"的中间态——在官方管理端删除与在本插件页删除，最终状态完全一致。
+_Avoid_: orphan、孤儿、无主、残留（都不应作为产品概念出现）。
 
 ### Usage Attribution
 
@@ -45,8 +49,8 @@ _Avoid_: cache file、database、store（不加限定时歧义）。
 **Attribution**:
 把一条 Usage Record 归集到某把 Proxy API Key 的过程，通过 Hash Index 完成。
 
-**Attributed / Unattributed**:
-`Attributed` = `APIKey` 命中了当前 `api-keys` 列表中的某把密钥；`Unattributed` = `APIKey` 为空，或它的摘要不在当前列表中。未归因记录只计入总数，不出现在任何密钥行上。
+**Attributed**:
+`APIKey` 命中了当前 `api-keys` 列表中的某把密钥时，该 Usage Record 才被计入。`APIKey` 为空、或它的摘要不属于任何受管密钥的记录**一律丢弃**：不计数、不落盘、不出现在页面上。
 
 **Token Counters**:
 每把密钥、每个模型维度的计数集合：`requests`、`failed`、`input`、`output`、`reasoning`、`cached`、`cache_read`、`cache_creation`、`total`。全部为**累计值**，无时间窗口。

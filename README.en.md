@@ -8,7 +8,7 @@ CLIProxyAPI can add, edit and delete proxy keys, but it offers no way to annotat
 
 ## Features
 
-- **Key management**: list, add, edit and delete proxy keys, masked by default, with per-row reveal and copy, plus filtering by key or remark.
+- **Key management**: list, add and delete proxy keys, always masked with per-row copy, plus filtering by key or remark; editing changes the remark only (the host owns the key, which is never rendered in clear text).
 - **Remarks**: one remark per key (there is no name field), indexed by the SHA-256 digest of the key; the plugin **never stores key material**.
 - **Generation**: keys are generated with exactly the official algorithm — an `sk-` prefix plus 48 alphanumeric characters, with modulo bias removed by rejection sampling.
 - **Token usage**: cumulative requests, failures, input/output/reasoning/cache tokens and totals per key, with a per-model breakdown.
@@ -52,7 +52,7 @@ Open the official management center and pick “API Key Manager” from the plug
 - Data comes from the host usage records (`usage_plugin`), attributed to the **proxy key that served the request** and grouped by model.
 - Counters are **cumulative** and start with the first request the plugin observes. There are no time windows and no cost estimates.
 - Requests whose upstream response carried no token counts still count as requests, with zero tokens.
-- Requests matching no current key are reported as unattributed requests; if a key keeps showing zero, check that counter first.
+- Only requests that hit a managed key are counted; records without one - or with a key that is not managed - are dropped outright, and the page never shows an "unattributed" bucket.
 - Usage is flushed to disk on a 5 second cadence, so a hard kill loses at most one window of counters.
 
 ## Privacy
@@ -81,7 +81,7 @@ Develop without a real CPA instance:
 go run ./cmd/devserver
 ```
 
-Then open <http://localhost:8080/control-panel>. The simulator provides the management API, the plugin menu, a same-origin iframe, theme and language switching, demo data and usage injection — see [`cmd/devserver/README.md`](cmd/devserver/README.md).
+Then open <http://localhost:8080/control-panel>. The simulator provides the management API, a same-origin iframe shell and usage injection; the shell draws no controls of its own, so **what you see is the plugin page exactly as a real host would render it** — switch theme and language from the console with `setTheme(...)` / `setLanguage(...)` and seed demo data with `seedDemo(3)`, see [`cmd/devserver/README.md`](cmd/devserver/README.md).
 
 ## Building
 

@@ -35,6 +35,8 @@ const (
 	PathResolve = "/resolve"
 	// PathRemarks creates, replaces or clears one remark.
 	PathRemarks = "/remarks"
+	// PathForget drops the plugin-side metadata of the submitted keys.
+	PathForget = "/forget"
 	// PathGenerate returns a freshly generated proxy API key.
 	PathGenerate = "/keys/generate"
 
@@ -44,6 +46,8 @@ const (
 	RouteResolve = legacyBase + PathResolve
 	// RouteRemarks is the remark route path registered with the host.
 	RouteRemarks = legacyBase + PathRemarks
+	// RouteForget is the metadata removal route path registered with the host.
+	RouteForget = legacyBase + PathForget
 	// RouteGenerate is the key generation route path registered with the host.
 	RouteGenerate = legacyBase + PathGenerate
 
@@ -96,15 +100,22 @@ type ResolveRequest struct {
 // ResolveResult is the resolved metadata for the submitted key list.
 type ResolveResult struct {
 	Items []KeyEntry `json:"items"`
-	// UnattributedRequests counts usage records that carried no attributable
-	// key, so the page can explain a key that shows no usage.
-	UnattributedRequests int64 `json:"unattributed_requests"`
-	// OrphanRemarks counts stored remarks whose key is absent from the submitted
-	// list, so the page can explain leftover metadata after a key is removed.
-	OrphanRemarks int `json:"orphan_remarks"`
-	// OrphanUsage counts usage aggregates whose key is absent from the submitted
-	// list.
-	OrphanUsage int `json:"orphan_usage"`
+	// StaleHashes lists stored entries - remarks or usage counters - whose key is
+	// absent from the submitted list. The page reports them back through Forget
+	// once it has seen them stay stale for two consecutive reads.
+	StaleHashes []string `json:"stale_hashes"`
+}
+
+// ForgetRequest carries the hash indexes whose plugin-side metadata - remark and
+// usage counters - must be dropped.
+type ForgetRequest struct {
+	Hashes []string `json:"hashes"`
+}
+
+// ForgetResult reports how many keys actually had metadata to drop.
+type ForgetResult struct {
+	Status  string `json:"status"`
+	Dropped int    `json:"dropped"`
 }
 
 // RemarkUpdate sets or clears the remark of one proxy API key.
@@ -136,6 +147,7 @@ type Backend interface {
 	Settings(ctx context.Context) (Settings, error)
 	UpdateSettings(ctx context.Context, usageEnabled bool) error
 	Resolve(ctx context.Context, apiKeys []string) (ResolveResult, error)
+	Forget(ctx context.Context, hashes []string) (int, error)
 	SetRemark(ctx context.Context, apiKey string, remark string) error
 	GenerateKey(ctx context.Context) (string, error)
 }
@@ -170,6 +182,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveResolve(w, r)
 	case PathRemarks:
 		h.serveRemarks(w, r)
+	case PathForget:
+		h.serveForget(w, r)
 	case PathGenerate:
 		h.serveGenerate(w, r)
 	default:
@@ -232,6 +246,29 @@ func (h *Handler) serveResolve(w http.ResponseWriter, r *http.Request) {
 		result.Items = []KeyEntry{}
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// serveForget drops the plugin-side metadata of the submitted keys. It is the
+// only route that deletes stored data, and it is always an explicit write: a
+// key list read is never destructive.
+func (h *Handler) serveForget(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, http.MethodPost)
+		return
+	}
+	var request ForgetRequest
+	if !decodeBody(w, r, &request) {
+		return
+	}
+	if len(request.Hashes) == 0 {
+		writeJSON(w, http.StatusBadRequest, errorBody("invalid_request", "hashes are required"))
+		return
+	}
+	dropped, err := h.backend.Forget(r.Context(), request.Hashes)
+	if h.fail(w, err) {
+		return
+	}
+	writeJSON(w, http.StatusOK, ForgetResult{Status: "ok", Dropped: dropped})
 }
 
 func (h *Handler) serveRemarks(w http.ResponseWriter, r *http.Request) {

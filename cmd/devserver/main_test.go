@@ -126,9 +126,6 @@ func TestDevHost_KeyLifecycleEndToEnd(t *testing.T) {
 			t.Fatalf("items[%d] usage = %+v, want 3 requests across 3 models", index, item.Usage)
 		}
 	}
-	if resolved.UnattributedRequests != 1 {
-		t.Fatalf("unattributed = %d, want the seeded unattributed record", resolved.UnattributedRequests)
-	}
 
 	// Rename the first key and move its remark, like the page does.
 	replacement := "sk-renamed-key"
@@ -157,8 +154,41 @@ func TestDevHost_KeyLifecycleEndToEnd(t *testing.T) {
 	if resolved.Items[0].Usage != nil {
 		t.Fatalf("renamed key usage = %+v, want no usage (attribution is per key material)", resolved.Items[0].Usage)
 	}
-	if resolved.OrphanUsage != 1 {
-		t.Fatalf("orphan_usage = %d, want 1 for the removed key", resolved.OrphanUsage)
+
+	// Resolving is read-only: the key that disappeared from the host list still
+	// keeps its counters until the page asks for them to be dropped.
+	status, body = call(t, server, http.MethodPost, "/v0/management/plugins/cpa-secret-manager/resolve",
+		`{"keys":`+mustJSON(t, list.APIKeys)+`}`, true)
+	if status != http.StatusOK {
+		t.Fatalf("resolve with the original list status = %d: %s", status, body)
+	}
+	retained := decode[management.ResolveResult](t, body)
+	if retained.Items[0].Usage == nil || retained.Items[0].Usage.Requests != 3 {
+		t.Fatalf("usage after resolve = %+v, want the stored counters untouched by a read", retained.Items[0].Usage)
+	}
+
+	// The page drops the removed key explicitly, and it starts from zero after.
+	status, body = call(t, server, http.MethodPost, "/v0/management/plugins/cpa-secret-manager/forget",
+		`{"hashes":`+mustJSON(t, []string{retained.Items[0].Hash})+`}`, true)
+	if status != http.StatusOK {
+		t.Fatalf("forget status = %d: %s", status, body)
+	}
+	forgotten := decode[management.ForgetResult](t, body)
+	if forgotten.Dropped != 1 {
+		t.Fatalf("dropped = %d, want the key that still had metadata", forgotten.Dropped)
+	}
+
+	status, body = call(t, server, http.MethodPost, "/v0/management/plugins/cpa-secret-manager/resolve",
+		`{"keys":`+mustJSON(t, list.APIKeys)+`}`, true)
+	if status != http.StatusOK {
+		t.Fatalf("resolve after forget status = %d: %s", status, body)
+	}
+	restored := decode[management.ResolveResult](t, body)
+	if restored.Items[0].Remark != "" {
+		t.Fatalf("restored key remark = %q, want the removed key to keep nothing", restored.Items[0].Remark)
+	}
+	if restored.Items[0].Usage != nil {
+		t.Fatalf("restored key usage = %+v, want the counters dropped with the key", restored.Items[0].Usage)
 	}
 
 	// The generated key must match the official algorithm shape.

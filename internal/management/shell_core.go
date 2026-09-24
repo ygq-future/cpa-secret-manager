@@ -7,14 +7,13 @@ import "strings"
 // wrapper, internationalization, tab switching and shared overlays.
 const templateScriptShellCoreTemplate = `
 var PLUGIN_ID = '{{PLUGIN_ID}}';
+// HOST_THEME_VARIABLES are the host tokens the page consumes: surfaces, text
+// and borders. Accents are the page's own tokens (see ThemePaletteCSS), so a
+// host theme can never repaint the page's buttons or states.
 var HOST_THEME_VARIABLES = [
-  '--bg-primary', '--bg-secondary', '--bg-tertiary', '--bg-quinary', '--bg-hover', '--floating-surface',
-  '--text-primary', '--text-secondary', '--text-tertiary', '--text-quaternary', '--text-muted',
-  '--border-color', '--border-primary', '--border-hover',
-  '--primary-color', '--primary-hover', '--primary-active', '--primary-contrast',
-  '--success-color', '--warning-color', '--error-color', '--danger-color', '--amber-color', '--quota-medium-color',
-  '--success-badge-bg', '--success-badge-text', '--failure-badge-bg', '--failure-badge-text',
-  '--shadow', '--shadow-lg', '--radius-md'
+  '--bg-primary', '--bg-secondary', '--bg-tertiary', '--bg-surface',
+  '--bg-hover', '--text-primary', '--text-secondary', '--text-tertiary',
+  '--text-muted', '--border-color', '--border-subtle'
 ];
 
 var REFRESH_INTERVAL_MS = 15000;
@@ -31,6 +30,7 @@ var KEYS_PATH = API_BASE + '/api-keys';
 var PLUGIN_BASE = API_BASE + '/plugins/' + PLUGIN_ID;
 var SETTINGS_PATH = PLUGIN_BASE + '/settings';
 var RESOLVE_PATH = PLUGIN_BASE + '/resolve';
+var FORGET_PATH = PLUGIN_BASE + '/forget';
 var REMARKS_PATH = PLUGIN_BASE + '/remarks';
 var GENERATE_PATH = PLUGIN_BASE + '/keys/generate';
 
@@ -38,15 +38,14 @@ var state = {
   managementKey: '',
   keys: [],
   entries: [],
-  visible: {},
   expanded: {},
   settings: null,
-  unattributedRequests: 0,
-  orphanRemarks: 0,
-  orphanUsage: 0,
+  pendingStale: [],
+  collapseTimers: {},
+  editingKey: '',
   activeTab: 'keys',
   authBlocked: false,
-  editingIndex: -1,
+  tokenUnit: 0,
   busy: false,
   pendingRefresh: null,
   refreshTimer: 0,
@@ -301,18 +300,14 @@ function readHostTheme() {
     return '';
   }
   var root = hostDoc.documentElement;
-  var marker = root.getAttribute('data-theme');
-  if (marker === 'dark' || marker === 'white') {
+  var body = hostDoc.body;
+  var marker = root.getAttribute('data-theme') || (body && body.getAttribute('data-theme'));
+  if (marker === 'dark' || marker === 'white' || marker === 'light') {
     return marker;
   }
-  if (root.classList.contains('dark')) {
+  if (root.classList.contains('dark') || (body && body.classList.contains('dark'))) {
     return 'dark';
   }
-  if (hostDoc.body && hostDoc.body.classList.contains('dark')) {
-    return 'dark';
-  }
-  // The official host removes the attribute for its default light theme, so a
-  // present host document without a marker is authoritative light.
   return 'light';
 }
 
@@ -327,8 +322,19 @@ function fallbackTheme() {
   return 'light';
 }
 
+function cleanInlineThemeStyles() {
+  var root = document.documentElement;
+  for (var index = 0; index < HOST_THEME_VARIABLES.length; index++) {
+    root.style.removeProperty(HOST_THEME_VARIABLES[index]);
+  }
+  root.style.removeProperty('--bg-surface');
+  root.style.removeProperty('--bg-card');
+  root.style.removeProperty('--bg-subtle');
+}
+
 function applyTheme(theme) {
   var root = document.documentElement;
+  cleanInlineThemeStyles();
   if (theme === 'dark' || theme === 'white') {
     root.setAttribute('data-theme', theme);
     return;
@@ -353,23 +359,38 @@ function copyHostVariables() {
   var root = document.documentElement;
   for (var index = 0; index < HOST_THEME_VARIABLES.length; index++) {
     var name = HOST_THEME_VARIABLES[index];
-    var value = computed.getPropertyValue(name);
-    if (value && value.trim()) {
-      root.style.setProperty(name, value.trim());
+    var value = readHostValue(computed, name);
+    if (value) {
+      root.style.setProperty(name, value);
     } else {
       root.style.removeProperty(name);
     }
   }
+
+  var sec = readHostValue(computed, '--bg-secondary') || readHostValue(computed, '--bg-primary');
+  var tert = readHostValue(computed, '--bg-tertiary');
+  if (sec) {
+    root.style.setProperty('--bg-surface', sec);
+    root.style.setProperty('--bg-card', sec);
+  }
+  if (tert) {
+    root.style.setProperty('--bg-subtle', tert);
+  }
+}
+
+function readHostValue(computed, name) {
+  var value = computed.getPropertyValue(name);
+  return value && value.trim() ? value.trim() : '';
 }
 
 function syncTheme() {
   var theme = readHostTheme();
+  var resolved = theme || fallbackTheme();
+  applyTheme(resolved);
   if (theme) {
     copyHostVariables();
   }
-  applyTheme(theme || fallbackTheme());
 }
-
 function watchTheme() {
   if (state.themeObserver) {
     state.themeObserver.disconnect();
@@ -389,8 +410,13 @@ function watchTheme() {
 }
 
 function setTheme(theme) {
-  applyTheme(theme);
-  return theme;
+  var preference = theme === 'dark' || theme === 'white' || theme === 'light' ? theme : 'auto';
+  applyTheme(preference);
+  // Standalone and devserver use have no host to remember the choice; keep the
+  // host's own envelope so a reload restores it. Inside a host iframe the host
+  // owns this key and keeps winning.
+  writeStorage(window, 'localStorage', HOST_THEME_STORAGE_KEY, JSON.stringify({ state: { theme: preference }, version: 0 }));
+  return preference;
 }
 
 function readHostLanguage() {
@@ -465,6 +491,10 @@ function applyLanguage() {
   for (var titleIndex = 0; titleIndex < titles.length; titleIndex++) {
     titles[titleIndex].setAttribute('title', t(titles[titleIndex].getAttribute('data-i18n-title')));
   }
+  var ariaLabels = document.querySelectorAll('[data-i18n-aria-label]');
+  for (var ariaIndex = 0; ariaIndex < ariaLabels.length; ariaIndex++) {
+    ariaLabels[ariaIndex].setAttribute('aria-label', t(ariaLabels[ariaIndex].getAttribute('data-i18n-aria-label')));
+  }
   var toggle = byId('lang-toggle');
   if (toggle) {
     toggle.textContent = state.language === 'zh-CN' ? 'EN' : '中文';
@@ -488,6 +518,7 @@ function activateTab(name) {
     var active = panels[index] === name;
     if (tab) {
       tab.classList.toggle('active', active);
+      tab.setAttribute('aria-selected', active ? 'true' : 'false');
     }
     if (panel) {
       panel.classList.toggle('active', active);
@@ -533,8 +564,9 @@ function showToast(message, type) {
   if (!toast) {
     return;
   }
+  var variant = type === 'error' ? ' error' : (type === 'success' ? ' success' : '');
   toast.textContent = message;
-  toast.className = 'toast visible' + (type === 'error' ? ' error' : '');
+  toast.className = 'toast visible' + variant;
   if (state.toastTimer) {
     window.clearTimeout(state.toastTimer);
   }
@@ -654,11 +686,19 @@ function bindSubmit(id, handler) {
 
 function bindBackdrop(id) {
   var node = byId(id);
-  if (node) {
-    node.addEventListener('click', function (event) {
-      modalDismiss(event, id);
-    });
+  if (!node) {
+    return;
   }
+  var startedOnBackdrop = false;
+  node.addEventListener('mousedown', function (event) {
+    startedOnBackdrop = event.target === node;
+  });
+  node.addEventListener('click', function (event) {
+    if (startedOnBackdrop && event.target === node) {
+      modalDismiss(event, id);
+    }
+    startedOnBackdrop = false;
+  });
 }
 
 function bindGlobalEvents() {
@@ -693,6 +733,7 @@ function bindGlobalEvents() {
   bindBackdrop('confirm-modal');
 
   bindClick('keys-add', openAddKeyForm);
+  bindClick('keys-unit', cycleTokenUnit);
   var filter = byId('keys-filter');
   if (filter) {
     filter.addEventListener('input', function () {

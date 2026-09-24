@@ -17,10 +17,7 @@ func TestObserve_AccumulatesKeyAndModelCounters(t *testing.T) {
 	aggregator.Observe(Record{Hash: "h1", Model: "claude-sonnet", At: base.Add(2 * time.Minute),
 		Detail: Detail{Input: 5, CacheRead: 7, CacheCreation: 9, Total: 21}})
 
-	snapshot, unattributed := aggregator.Snapshot()
-	if unattributed != 0 {
-		t.Fatalf("unattributed = %d, want 0", unattributed)
-	}
+	snapshot := aggregator.Snapshot()
 
 	entry, ok := snapshot["h1"]
 	if !ok {
@@ -45,7 +42,7 @@ func TestObserve_GroupsMissingModelAsUnknown(t *testing.T) {
 	aggregator := NewAggregator()
 	aggregator.Observe(Record{Hash: "h1", Detail: Detail{Total: 1}})
 
-	snapshot, _ := aggregator.Snapshot()
+	snapshot := aggregator.Snapshot()
 	if _, ok := snapshot["h1"].Models[UnknownModel]; !ok {
 		t.Fatalf("models = %+v, want an %s bucket", snapshot["h1"].Models, UnknownModel)
 	}
@@ -59,7 +56,7 @@ func TestObserve_KeepsEarliestTimestampOnReplay(t *testing.T) {
 	aggregator.Observe(Record{Hash: "h1", Model: "m", At: later})
 	aggregator.Observe(Record{Hash: "h1", Model: "m", At: earlier})
 
-	snapshot, _ := aggregator.Snapshot()
+	snapshot := aggregator.Snapshot()
 	if !snapshot["h1"].FirstSeen.Equal(earlier) {
 		t.Fatalf("first_seen = %v, want the earlier observation %v", snapshot["h1"].FirstSeen, earlier)
 	}
@@ -72,23 +69,9 @@ func TestObserve_IgnoresEmptyHash(t *testing.T) {
 	aggregator := NewAggregator()
 	aggregator.Observe(Record{Model: "m", Detail: Detail{Total: 5}})
 
-	snapshot, unattributed := aggregator.Snapshot()
-	if len(snapshot) != 0 || unattributed != 0 {
-		t.Fatalf("snapshot = %+v, unattributed = %d; want nothing recorded", snapshot, unattributed)
-	}
-}
-
-func TestObserveUnattributed_CountsSeparately(t *testing.T) {
-	aggregator := NewAggregator()
-	aggregator.ObserveUnattributed()
-	aggregator.ObserveUnattributed()
-
-	snapshot, unattributed := aggregator.Snapshot()
-	if unattributed != 2 {
-		t.Fatalf("unattributed = %d, want 2", unattributed)
-	}
+	snapshot := aggregator.Snapshot()
 	if len(snapshot) != 0 {
-		t.Fatalf("snapshot = %+v, want no key entries", snapshot)
+		t.Fatalf("snapshot = %+v, want nothing recorded", snapshot)
 	}
 }
 
@@ -99,14 +82,11 @@ func TestSeed_ReplacesAndIsolatesState(t *testing.T) {
 	seeded := map[string]KeyUsage{
 		"h1": {Counters: Counters{Requests: 4, Total: 40}, Models: map[string]ModelUsage{"m": {Counters: Counters{Requests: 4}}}},
 	}
-	aggregator.Seed(seeded, 3)
+	aggregator.Seed(seeded)
 
-	snapshot, unattributed := aggregator.Snapshot()
+	snapshot := aggregator.Snapshot()
 	if len(snapshot) != 1 || snapshot["h1"].Requests != 4 {
 		t.Fatalf("snapshot = %+v, want only the seeded entry", snapshot)
-	}
-	if unattributed != 3 {
-		t.Fatalf("unattributed = %d, want 3", unattributed)
 	}
 	if aggregator.Dirty() {
 		t.Fatal("Dirty() = true right after Seed, want false")
@@ -153,7 +133,7 @@ func TestObserve_IsConcurrencySafe(t *testing.T) {
 	}
 	waitGroup.Wait()
 
-	snapshot, _ := aggregator.Snapshot()
+	snapshot := aggregator.Snapshot()
 	if got := snapshot["h1"].Requests; got != workers*perWork {
 		t.Fatalf("requests = %d, want %d", got, workers*perWork)
 	}

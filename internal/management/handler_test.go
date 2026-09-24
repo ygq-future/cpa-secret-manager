@@ -14,6 +14,7 @@ type stubBackend struct {
 	updated  *bool
 	remark   *RemarkUpdate
 	key      string
+	forgot   []string
 }
 
 func (s *stubBackend) Settings(context.Context) (Settings, error) {
@@ -30,7 +31,12 @@ func (s *stubBackend) Resolve(_ context.Context, keys []string) (ResolveResult, 
 	for _, key := range keys {
 		items = append(items, KeyEntry{Hash: "hash:" + key, Remark: key})
 	}
-	return ResolveResult{Items: items, OrphanRemarks: len(keys)}, nil
+	return ResolveResult{Items: items}, nil
+}
+
+func (s *stubBackend) Forget(_ context.Context, hashes []string) (int, error) {
+	s.forgot = append([]string(nil), hashes...)
+	return len(hashes), nil
 }
 
 func (s *stubBackend) SetRemark(_ context.Context, key string, remark string) error {
@@ -130,8 +136,31 @@ func TestHandler_ResolveKeepsKeyOrderAndMetadata(t *testing.T) {
 	if len(result.Items) != 2 || result.Items[1].Hash != "hash:sk-b" {
 		t.Fatalf("items = %+v, want one entry per submitted key in order", result.Items)
 	}
-	if result.OrphanRemarks != 2 {
-		t.Fatalf("orphan_remarks = %d, want the backend value", result.OrphanRemarks)
+}
+
+func TestHandler_ForgetDropsSubmittedKeys(t *testing.T) {
+	backend := &stubBackend{}
+	handler := NewHandler(backend)
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, RouteForget, strings.NewReader(`{"hashes":["aa","bb"]}`)))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	if len(backend.forgot) != 2 || backend.forgot[0] != "aa" || backend.forgot[1] != "bb" {
+		t.Fatalf("forgot = %v, want the submitted hashes", backend.forgot)
+	}
+
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, RouteForget, strings.NewReader(`{"hashes":[]}`)))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("empty hashes status = %d, want 400", recorder.Code)
+	}
+
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, RouteForget, nil))
+	if recorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET status = %d, want 405", recorder.Code)
 	}
 }
 

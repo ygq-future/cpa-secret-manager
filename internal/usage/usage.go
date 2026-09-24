@@ -87,10 +87,9 @@ const UnknownModel = "unknown"
 // the live counters, which are materialized into the state document by the
 // application layer.
 type Aggregator struct {
-	mu           sync.Mutex
-	keys         map[string]*KeyUsage
-	unattributed int64
-	dirty        bool
+	mu    sync.Mutex
+	keys  map[string]*KeyUsage
+	dirty bool
 }
 
 // NewAggregator returns an empty aggregator.
@@ -139,19 +138,8 @@ func (a *Aggregator) Observe(record Record) {
 	a.dirty = true
 }
 
-// ObserveUnattributed counts a record that carried no attributable key.
-func (a *Aggregator) ObserveUnattributed() {
-	if a == nil {
-		return
-	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.unattributed++
-	a.dirty = true
-}
-
 // Seed replaces the aggregate with previously persisted counters.
-func (a *Aggregator) Seed(keys map[string]KeyUsage, unattributed int64) {
+func (a *Aggregator) Seed(keys map[string]KeyUsage) {
 	if a == nil {
 		return
 	}
@@ -167,14 +155,30 @@ func (a *Aggregator) Seed(keys map[string]KeyUsage, unattributed int64) {
 		}
 		a.keys[hash] = &copied
 	}
-	a.unattributed = unattributed
 	a.dirty = false
 }
 
+// Remove drops the counters of one key, reporting whether it had any. The
+// application layer calls it when a key disappears for good.
+func (a *Aggregator) Remove(hash string) bool {
+	if a == nil || hash == "" {
+		return false
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if _, ok := a.keys[hash]; !ok {
+		return false
+	}
+	delete(a.keys, hash)
+	a.dirty = true
+	return true
+}
+
 // Snapshot returns a deep copy of the aggregate.
-func (a *Aggregator) Snapshot() (map[string]KeyUsage, int64) {
+func (a *Aggregator) Snapshot() map[string]KeyUsage {
 	if a == nil {
-		return map[string]KeyUsage{}, 0
+		return map[string]KeyUsage{}
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -188,7 +192,7 @@ func (a *Aggregator) Snapshot() (map[string]KeyUsage, int64) {
 		}
 		out[hash] = copied
 	}
-	return out, a.unattributed
+	return out
 }
 
 // Dirty reports whether the aggregate changed since the last MarkClean.

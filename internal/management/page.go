@@ -29,7 +29,7 @@ func assemblePage() string {
 	page.Grow(64 << 10)
 
 	page.WriteString(pageDocumentStart)
-	page.WriteString(templateStyleTokens)
+	page.WriteString(ThemePaletteCSS)
 	page.WriteString(templateStyleShell)
 	for _, feature := range pageFeatures {
 		page.WriteString(feature.styles)

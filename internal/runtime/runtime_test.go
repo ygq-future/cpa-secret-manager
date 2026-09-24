@@ -279,9 +279,6 @@ func TestResolve_AlignsItemsWithSubmittedOrder(t *testing.T) {
 	if result.Items[1].Remark != "second key" {
 		t.Fatalf("items[1].remark = %q, want the trimmed remark", result.Items[1].Remark)
 	}
-	if result.OrphanRemarks != 0 {
-		t.Fatalf("orphan_remarks = %d, want 0 while every stored remark matches a submitted key", result.OrphanRemarks)
-	}
 }
 
 func TestSetRemark_PersistsAndClears(t *testing.T) {
@@ -409,21 +406,99 @@ func TestUsage_AttributesTokensPerKeyAndModel(t *testing.T) {
 	}
 }
 
-func TestUsage_KeepsUnattributedAndOrphanCounts(t *testing.T) {
-	rt := registerRuntime(t, filepath.Join(t.TempDir(), "state.json"))
+func TestResolve_NeverDeletesStoredMetadata(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	rt := registerRuntime(t, statePath)
 
-	usageCall(t, rt, map[string]any{"Model": "gpt-5.6", "Detail": map[string]any{"TotalTokens": 5}})
+	remarkBody, err := json.Marshal(map[string]string{"key": "sk-retired", "remark": "keep me"})
+	if err != nil {
+		t.Fatalf("encode remark: %v", err)
+	}
+	if status, _ := managementCall(t, rt, "PUT", management.RouteRemarks, remarkBody); status != 200 {
+		t.Fatalf("remark status = %d, want 200", status)
+	}
 	usageCall(t, rt, map[string]any{"APIKey": "sk-retired", "Model": "gpt-5.6", "Detail": map[string]any{"TotalTokens": 6}})
 
-	result := resolveResult(t, rt, []string{"sk-a"})
-	if result.UnattributedRequests != 1 {
-		t.Fatalf("unattributed_requests = %d, want 1", result.UnattributedRequests)
+	// A key list that omits the stored key must not touch it: reading is read-only,
+	// and the omission is only reported back as a stale hash.
+	omitted := resolveResult(t, rt, []string{"sk-a"})
+	if omitted.Items[0].Usage != nil {
+		t.Fatalf("items[0].usage = %+v, want no usage for an unused key", omitted.Items[0].Usage)
 	}
-	if result.OrphanUsage != 1 {
-		t.Fatalf("orphan_usage = %d, want 1 for the key that is no longer listed", result.OrphanUsage)
+	if len(omitted.StaleHashes) != 1 || omitted.StaleHashes[0] != remarks.Index("sk-retired") {
+		t.Fatalf("stale_hashes = %v, want the digest of the unlisted key", omitted.StaleHashes)
 	}
-	if result.Items[0].Usage != nil {
-		t.Fatalf("items[0].usage = %+v, want no usage for an unused key", result.Items[0].Usage)
+	retained := resolveResult(t, rt, []string{"sk-retired"})
+	if retained.Items[0].Remark != "keep me" {
+		t.Fatalf("remark = %q, want the stored remark to survive a resolve", retained.Items[0].Remark)
+	}
+	if retained.Items[0].Usage == nil || retained.Items[0].Usage.Total != 6 {
+		t.Fatalf("usage = %+v, want the stored counters to survive a resolve", retained.Items[0].Usage)
+	}
+}
+
+func TestForget_DropsMetadataAndKeepsARecoveryCopy(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	rt := registerRuntime(t, statePath)
+
+	remarkBody, err := json.Marshal(map[string]string{"key": "sk-retired", "remark": "old key"})
+	if err != nil {
+		t.Fatalf("encode remark: %v", err)
+	}
+	if status, _ := managementCall(t, rt, "PUT", management.RouteRemarks, remarkBody); status != 200 {
+		t.Fatalf("remark status = %d, want 200", status)
+	}
+	usageCall(t, rt, map[string]any{"APIKey": "sk-retired", "Model": "gpt-5.6", "Detail": map[string]any{"TotalTokens": 6}})
+	if status, _ := managementCall(t, rt, "POST", management.RouteResolve, []byte(`{"keys":["sk-retired"]}`)); status != 200 {
+		t.Fatalf("resolve status = %d, want 200", status)
+	}
+
+	hash := remarks.Index("sk-retired")
+	status, body := managementCall(t, rt, "POST", management.RouteForget, []byte(`{"hashes":["`+hash+`"]}`))
+	if status != 200 {
+		t.Fatalf("forget status = %d: %s", status, body)
+	}
+	var result management.ForgetResult
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatalf("decode forget result: %v", err)
+	}
+	if result.Dropped != 1 {
+		t.Fatalf("dropped = %d, want the one key that had metadata", result.Dropped)
+	}
+
+	after := resolveResult(t, rt, []string{"sk-retired"})
+	if after.Items[0].Remark != "" || after.Items[0].Usage != nil {
+		t.Fatalf("items[0] = %+v, want the key to keep no remark and no counters", after.Items[0])
+	}
+	reloaded, err := state.Load(statePath)
+	if err != nil {
+		t.Fatalf("state.Load() error = %v", err)
+	}
+	if _, ok := reloaded.Usage()[hash]; ok {
+		t.Fatal("state file still holds usage for a forgotten key")
+	}
+
+	backup, err := state.Load(statePath + ".bak")
+	if err != nil {
+		t.Fatalf("state.Load(backup) error = %v", err)
+	}
+	if _, ok := backup.Usage()[hash]; !ok {
+		t.Fatal("backup does not hold the counters that were dropped")
+	}
+	if entry, ok := backup.Remark(hash); !ok || entry.Remark != "old key" {
+		t.Fatalf("backup remark = %+v (ok=%v), want the dropped remark", entry, ok)
+	}
+
+	// Forgetting an unknown key is a no-op and must not overwrite the backup.
+	status, body = managementCall(t, rt, "POST", management.RouteForget, []byte(`{"hashes":["`+strings.Repeat("0", 64)+`"]}`))
+	if status != 200 {
+		t.Fatalf("second forget status = %d: %s", status, body)
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatalf("decode second forget: %v", err)
+	}
+	if result.Dropped != 0 {
+		t.Fatalf("second dropped = %d, want 0", result.Dropped)
 	}
 }
 
@@ -439,9 +514,6 @@ func TestUsage_DisabledSettingStopsCollection(t *testing.T) {
 	result := resolveResult(t, rt, []string{"sk-a"})
 	if result.Items[0].Usage != nil {
 		t.Fatalf("usage = %+v, want nothing recorded while collection is disabled", result.Items[0].Usage)
-	}
-	if result.UnattributedRequests != 0 {
-		t.Fatalf("unattributed_requests = %d, want 0 while collection is disabled", result.UnattributedRequests)
 	}
 }
 
@@ -496,7 +568,6 @@ func TestShutdown_PersistsPendingUsageAndSeedsOnRestart(t *testing.T) {
 	rt := registerRuntimeWith(t, Options{StatePath: statePath, FlushInterval: time.Hour})
 
 	usageCall(t, rt, map[string]any{"APIKey": "sk-a", "Model": "m", "Detail": map[string]any{"TotalTokens": 42}})
-	usageCall(t, rt, map[string]any{"Model": "m", "Detail": map[string]any{"TotalTokens": 1}})
 	if err := rt.Shutdown(context.Background()); err != nil {
 		t.Fatalf("Shutdown() error = %v", err)
 	}
@@ -505,9 +576,6 @@ func TestShutdown_PersistsPendingUsageAndSeedsOnRestart(t *testing.T) {
 	result := resolveResult(t, restarted, []string{"sk-a"})
 	if result.Items[0].Usage == nil || result.Items[0].Usage.Total != 42 {
 		t.Fatalf("usage after restart = %+v, want the persisted 42 tokens", result.Items[0].Usage)
-	}
-	if result.UnattributedRequests != 1 {
-		t.Fatalf("unattributed_requests = %d, want the persisted 1", result.UnattributedRequests)
 	}
 }
 

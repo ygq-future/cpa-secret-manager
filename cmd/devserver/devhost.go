@@ -25,6 +25,7 @@ type devHost struct {
 	managementKey string
 	keysPath      string
 	statePath     string
+	shellHTML     string
 	runtime       *pluginruntime.Runtime
 
 	mu   sync.Mutex
@@ -46,6 +47,7 @@ func newDevHost(options devHostOptions) (*devHost, error) {
 		managementKey: options.ManagementKey,
 		keysPath:      options.KeysPath,
 		statePath:     options.StatePath,
+		shellHTML:     hostShellHTML(options.ManagementKey),
 		runtime:       pluginruntime.New(pluginruntime.Options{StatePath: options.StatePath}),
 		keys:          keys,
 	}
@@ -106,7 +108,7 @@ func (h *devHost) handleControlPanel(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(controlPanelHTML))
+	_, _ = w.Write([]byte(h.shellHTML))
 }
 
 // handleManagement mirrors the host middleware: every /v0/management request
@@ -301,6 +303,12 @@ func (h *devHost) servePluginList(w http.ResponseWriter, r *http.Request) {
 func (h *devHost) handleSimulateUsage(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	apiKey := query.Get("key")
+	if apiKey == "" {
+		// Usage is only ever attributed to a managed key; a record without one is
+		// not accounted anywhere.
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "key is required"})
+		return
+	}
 	model := query.Get("model")
 	if model == "" {
 		model = "gpt-5.6"
@@ -391,18 +399,6 @@ func (h *devHost) handleSeed(w http.ResponseWriter, r *http.Request) {
 			h.runtime.Handle(context.Background(), pluginruntime.MethodUsageHandle, payload)
 		}
 	}
-	// One unattributed record so the diagnostic counter is visible.
-	unattributed, err := json.Marshal(map[string]any{
-		"Model":       "gpt-5.6",
-		"RequestedAt": time.Now().UTC().Format(time.RFC3339Nano),
-		"Detail":      map[string]any{"TotalTokens": 42},
-	})
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	h.runtime.Handle(context.Background(), pluginruntime.MethodUsageHandle, unattributed)
-
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "keys": seeded})
 }
 

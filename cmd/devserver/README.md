@@ -25,16 +25,24 @@ go run ./cmd/devserver
 go run ./cmd/devserver -addr 0.0.0.0:8080
 ```
 
-## 控制面板做了什么
+## 外壳做了什么
 
-控制面板模拟官方管理端在插件页面周围提供的一切：
+`/control-panel` 是一个**无可见控件**的宿主外壳，它把官方管理端在插件页面周围提供的一切补齐，然后原样呈现插件页：
 
-- 在 `documentElement` 上应用 CPA 主题（`light` / `white` / `dark`），并按官方语义写入 `cli-proxy-theme`（zustand 结构）；
+- 在 `documentElement` 上应用主题（`light` / `white` / `dark`），并按官方语义写入 `cli-proxy-theme`（zustand 结构）；
 - 写入 `cli-proxy-language`，用于验证语言跟随；
 - 以官方 `enc::v1::` 混淆格式写入 `cli-proxy-auth`，因此插件页的自动获取管理密钥路径会被真实覆盖；
-- 通过 `GET /v0/management/plugins` 读取插件菜单，并用**同源 iframe** 加载资源页（与官方 `PluginResourcePage` 一致）。
+- 用**同源 iframe** 加载资源页并让它铺满视口（与官方 `PluginResourcePage` 一致）。
 
-顶部「Seed demo data」会生成 3 把官方格式密钥、写入备注，并为每把密钥注入 3 个模型的用量记录，另加 1 条未归因记录。
+外壳本身不渲染任何 DOM：**仿真器里看到的就是插件页在真实宿主里的样子**，布局与滚动行为都是 1:1。因此主题与语言在控制台切换（与 `antigravity-priority` 暴露的 `window.setTheme` 同形）：
+
+```js
+setTheme('dark')      // 'auto' | 'light' | 'white' | 'dark'，写入 cli-proxy-theme
+setLanguage('en-US')  // 'zh-CN' | 'en-US'，写入 cli-proxy-language 并重载页面
+seedDemo(3)           // 生成 3 把官方格式密钥、备注与用量，再重载页面
+```
+
+`seedDemo` 等价于 `POST /dev/seed?keys=3`：生成官方格式密钥、写入备注，并为每把密钥注入 3 个模型的用量记录。
 
 ## 端点
 
@@ -60,9 +68,6 @@ go run ./cmd/devserver -addr 0.0.0.0:8080
 ```bash
 # 命中某把密钥的 3 条 gpt-5.6 用量
 curl -X POST "http://localhost:8080/dev/simulate-usage?key=sk-xxx&model=gpt-5.6&count=3&input=100&output=200&total=300"
-
-# 不传 key 即产生一条未归因记录
-curl -X POST "http://localhost:8080/dev/simulate-usage?model=gpt-5.6"
 ```
 
 其余可选参数：`reasoning`、`cached`、`cache_read`、`failed=true`。
@@ -71,4 +76,5 @@ curl -X POST "http://localhost:8080/dev/simulate-usage?model=gpt-5.6"
 
 - 用量记录由 `/dev/simulate-usage` 主动注入，而不是由代理请求产生。
 - 上游请求、凭证文件与模型执行不参与仿真：本插件不使用任何 `host.*` 回调。
-- 控制面板只实现官方管理端与插件相关的最小外壳，不包含其它页面。
+- 外壳只实现官方管理端与插件相关的最小部分，不包含其它页面，也不渲染自身控件。
+- 外壳发布的是插件页自带的三套兜底 Token（浅色 / 纯白 / 深色）；真实宿主会用它自己的配色覆盖同名变量，因此真机颜色以宿主主题为准。

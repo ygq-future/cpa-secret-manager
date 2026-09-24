@@ -161,19 +161,25 @@ func (r *Runtime) UpdateSettings(_ context.Context, usageEnabled bool) error {
 }
 
 // Resolve implements management.Backend: it maps the submitted proxy key list
-// onto stored metadata and usage, preserving list order.
+// onto stored metadata and usage, preserving list order. It is a pure read -
+// deleting plugin state is a separate, explicit call (Forget), so a mistimed or
+// mistrusted key list can never destroy anything.
 func (r *Runtime) Resolve(_ context.Context, apiKeys []string) (management.ResolveResult, error) {
-	store := r.Store()
-	if store == nil {
+	r.mu.RLock()
+	store := r.store
+	closed := r.closed
+	r.mu.RUnlock()
+	if closed || store == nil {
 		return management.ResolveResult{}, ErrShutdown
 	}
-	aggregate, unattributed := r.aggregator.Snapshot()
+
+	aggregate := r.aggregator.Snapshot()
 
 	items := make([]management.KeyEntry, 0, len(apiKeys))
-	resolved := make(map[string]struct{}, len(apiKeys))
+	live := make(map[string]struct{}, len(apiKeys))
 	for _, apiKey := range apiKeys {
 		hash := remarks.Index(apiKey)
-		resolved[hash] = struct{}{}
+		live[hash] = struct{}{}
 		entry, _ := store.Remark(hash)
 
 		item := management.KeyEntry{Hash: hash, Remark: entry.Remark}
@@ -183,25 +189,86 @@ func (r *Runtime) Resolve(_ context.Context, apiKeys []string) (management.Resol
 		items = append(items, item)
 	}
 
-	orphanRemarks := 0
+	return management.ResolveResult{Items: items, StaleHashes: staleHashes(store, aggregate, live)}, nil
+}
+
+// staleHashes reports the stored entries - remarks and usage counters - whose
+// key is not in the submitted list. Reporting them is the read side of the
+// host-list projection: the page decides when a stale entry has been stale long
+// enough to forget, and asks for it through Forget.
+func staleHashes(store *state.Store, aggregate map[string]usage.KeyUsage, live map[string]struct{}) []string {
+	stale := make([]string, 0)
 	for hash := range store.Remarks() {
-		if _, ok := resolved[hash]; !ok {
-			orphanRemarks++
+		if _, ok := live[hash]; !ok {
+			stale = append(stale, hash)
 		}
 	}
-	orphanUsage := 0
 	for hash := range aggregate {
-		if _, ok := resolved[hash]; !ok {
-			orphanUsage++
+		if _, ok := live[hash]; !ok {
+			stale = append(stale, hash)
 		}
+	}
+	sort.Strings(stale)
+	return dedupeHashes(stale)
+}
+
+func dedupeHashes(hashes []string) []string {
+	if len(hashes) < 2 {
+		return hashes
+	}
+	out := hashes[:1]
+	for _, hash := range hashes[1:] {
+		if hash != out[len(out)-1] {
+			out = append(out, hash)
+		}
+	}
+	return out
+}
+
+// Forget implements management.Backend: it drops the plugin-side metadata of the
+// submitted hash indexes - remark and usage counters alike. The page calls it
+// when the operator deletes a key here, or after it confirmed that the key is
+// gone from the host's list. Because the call is destructive, the state document
+// is copied to <state>.bak first.
+func (r *Runtime) Forget(_ context.Context, hashes []string) (int, error) {
+	r.runMu.Lock()
+	defer r.runMu.Unlock()
+
+	r.mu.RLock()
+	store := r.store
+	closed := r.closed
+	r.mu.RUnlock()
+	if closed || store == nil {
+		return 0, ErrShutdown
 	}
 
-	return management.ResolveResult{
-		Items:                items,
-		UnattributedRequests: unattributed,
-		OrphanRemarks:        orphanRemarks,
-		OrphanUsage:          orphanUsage,
-	}, nil
+	aggregate := r.aggregator.Snapshot()
+	pending := make([]string, 0, len(hashes))
+	for _, hash := range hashes {
+		_, hasRemark := store.Remark(hash)
+		_, hasUsage := aggregate[hash]
+		if hasRemark || hasUsage {
+			pending = append(pending, hash)
+		}
+	}
+	if len(pending) == 0 {
+		return 0, nil
+	}
+
+	// Materialize the live counters first: the recovery copy must contain them,
+	// not just whatever the last flush wrote.
+	store.ReplaceUsage(r.aggregator.Snapshot())
+	if err := store.Backup(); err != nil {
+		return 0, err
+	}
+	for _, hash := range pending {
+		store.DeleteRemark(hash)
+		r.aggregator.Remove(hash)
+	}
+	if err := r.persistStateLocked(store); err != nil {
+		return 0, err
+	}
+	return len(pending), nil
 }
 
 // SetRemark implements management.Backend: it stores a remark for one proxy API
@@ -255,7 +322,8 @@ func (r *Runtime) ObserveUsage(record usage.Record) {
 		return
 	}
 	if record.Hash == "" {
-		r.aggregator.ObserveUnattributed()
+		// The record carries no managed key, so there is nothing to attribute it
+		// to and nothing to count.
 		return
 	}
 	if record.At.IsZero() {
@@ -310,7 +378,7 @@ func (r *Runtime) applyConfig(cfg config.Config, warnings []string) {
 func (r *Runtime) loadState(path string) {
 	store, err := state.Load(path)
 	if store != nil {
-		r.aggregator.Seed(store.Usage(), store.Metrics().UnattributedRequests)
+		r.aggregator.Seed(store.Usage())
 	}
 	r.mu.Lock()
 	r.store = store
@@ -382,8 +450,13 @@ func (r *Runtime) flushUsage(force bool) error {
 		return nil
 	}
 
-	entries, unattributed := r.aggregator.Snapshot()
-	store.ReplaceUsage(entries, unattributed)
+	return r.persistStateLocked(store)
+}
+
+// persistStateLocked materializes the usage aggregate into the state document
+// and writes it atomically. Callers must hold runMu.
+func (r *Runtime) persistStateLocked(store *state.Store) error {
+	store.ReplaceUsage(r.aggregator.Snapshot())
 	if err := store.SaveAtomic(); err != nil {
 		r.setUsageWarning(err.Error())
 		return err

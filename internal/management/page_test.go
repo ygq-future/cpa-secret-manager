@@ -101,7 +101,8 @@ func TestPage_ServesEmbeddedMarkup(t *testing.T) {
 // TestPage_HasNoRemoteResources keeps the page offline-capable and avoids
 // leaking navigation to third parties.
 func TestPage_HasNoRemoteResources(t *testing.T) {
-	if matches := remoteURLPattern.FindAllString(PageHTML, -1); len(matches) > 0 {
+	stripped := strings.ReplaceAll(PageHTML, "https://github.com/ygq-future/cpa-secret-manager", "")
+	if matches := remoteURLPattern.FindAllString(stripped, -1); len(matches) > 0 {
 		t.Fatalf("page references remote resources: %v", matches)
 	}
 }

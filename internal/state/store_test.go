@@ -33,7 +33,7 @@ func TestSaveAtomic_RoundTripsDocument(t *testing.T) {
 	store.SetAppConfig(AppConfig{UsageEnabled: false})
 	store.ReplaceUsage(map[string]usage.KeyUsage{
 		"hash-a": {Counters: usage.Counters{Requests: 2, Total: 30}, Models: map[string]usage.ModelUsage{"m": {Counters: usage.Counters{Requests: 2}}}},
-	}, 7)
+	})
 	if err := store.SaveAtomic(); err != nil {
 		t.Fatalf("SaveAtomic() error = %v", err)
 	}
@@ -44,9 +44,6 @@ func TestSaveAtomic_RoundTripsDocument(t *testing.T) {
 	}
 	if got := reloaded.AppConfig(); got.UsageEnabled {
 		t.Fatal("reloaded usage_enabled = true, want false")
-	}
-	if got := reloaded.Metrics().UnattributedRequests; got != 7 {
-		t.Fatalf("reloaded unattributed = %d, want 7", got)
 	}
 	entry, ok := reloaded.Usage()["hash-a"]
 	if !ok || entry.Requests != 2 || entry.Models["m"].Requests != 2 {
@@ -82,7 +79,7 @@ func TestUsage_IsIsolatedFromLaterMutations(t *testing.T) {
 	}
 	store.ReplaceUsage(map[string]usage.KeyUsage{
 		"hash-a": {Counters: usage.Counters{Requests: 1}, Models: map[string]usage.ModelUsage{"m": {}}},
-	}, 0)
+	})
 
 	snapshot := store.Snapshot()
 	snapshot.Usage["hash-a"].Models["injected"] = usage.ModelUsage{}
@@ -95,7 +92,7 @@ func TestUsage_IsIsolatedFromLaterMutations(t *testing.T) {
 
 func TestReplaceUsage_IgnoresNilStore(t *testing.T) {
 	var store *Store
-	store.ReplaceUsage(map[string]usage.KeyUsage{"hash-a": {}}, 1)
+	store.ReplaceUsage(map[string]usage.KeyUsage{"hash-a": {}})
 	if got := store.Usage(); len(got) != 0 {
 		t.Fatalf("Usage() = %+v, want an empty map", got)
 	}

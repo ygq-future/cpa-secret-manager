@@ -29,19 +29,14 @@ func DefaultAppConfig() AppConfig {
 	return AppConfig{UsageEnabled: true}
 }
 
-// Metrics holds plugin-level counters that are not attributed to any key.
-type Metrics struct {
-	// UnattributedRequests counts usage records without a matching managed key.
-	UnattributedRequests int64 `json:"unattributed_requests"`
-}
-
-// Document is the persisted plugin state.
+// Document is the persisted plugin state. It only ever describes keys the host
+// currently manages: a key removed from the host takes its remark and its usage
+// counters with it, see Runtime.Forget.
 type Document struct {
 	SchemaVersion int                       `json:"schema_version"`
 	Remarks       map[string]remarks.Entry  `json:"remarks,omitempty"`
 	Usage         map[string]usage.KeyUsage `json:"usage,omitempty"`
 	AppConfig     AppConfig                 `json:"app_config"`
-	Metrics       Metrics                   `json:"metrics"`
 }
 
 // Store owns the plugin state document and its atomic persistence.
@@ -109,16 +104,6 @@ func (s *Store) SetAppConfig(cfg AppConfig) {
 	s.doc.AppConfig = cfg
 }
 
-// Metrics returns the current plugin-level counters.
-func (s *Store) Metrics() Metrics {
-	if s == nil {
-		return Metrics{}
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.doc.Metrics
-}
-
 // Usage returns a deep copy of the persisted token accounting.
 func (s *Store) Usage() map[string]usage.KeyUsage {
 	if s == nil {
@@ -131,14 +116,35 @@ func (s *Store) Usage() map[string]usage.KeyUsage {
 
 // ReplaceUsage materializes the live aggregate into the document. The caller
 // owns the counters; this method only stores a copy.
-func (s *Store) ReplaceUsage(entries map[string]usage.KeyUsage, unattributed int64) {
+func (s *Store) ReplaceUsage(entries map[string]usage.KeyUsage) {
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.doc.Usage = cloneUsage(entries)
-	s.doc.Metrics.UnattributedRequests = unattributed
+}
+
+// Backup writes the current document to <path>.bak so a destructive change - a
+// key forgotten on the page's request - stays recoverable by hand. It is a copy
+// of the in-memory document, written atomically like the state file itself, and
+// it always describes the state immediately before the latest deletion: it is a
+// recovery copy for the most recent destructive action, not a history archive.
+func (s *Store) Backup() error {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	raw, err := json.MarshalIndent(s.doc, "", "  ")
+	path := s.path
+	s.mu.RUnlock()
+	if err != nil {
+		return fmt.Errorf("state: encode backup: %w", err)
+	}
+	if path == "" {
+		return nil
+	}
+	return writeAtomic(path+".bak", append(raw, '\n'))
 }
 
 // Remarks returns a copy of the remark index.
@@ -216,22 +222,26 @@ func (s *Store) SaveAtomic() error {
 	if err != nil {
 		return fmt.Errorf("state: encode document: %w", err)
 	}
-	data = append(data, '\n')
+	return writeAtomic(s.path, append(data, '\n'))
+}
 
-	dir := filepath.Dir(s.path)
+// writeAtomic replaces path through a temporary sibling file and a rename, so
+// readers never observe a partially written document.
+func writeAtomic(path string, data []byte) error {
+	dir := filepath.Dir(path)
 	if dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Errorf("state: create directory %s: %w", dir, err)
 		}
 	}
 
-	tmpPath := s.path + ".tmp"
+	tmpPath := path + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
 		return fmt.Errorf("state: write %s: %w", tmpPath, err)
 	}
-	if err := os.Rename(tmpPath, s.path); err != nil {
+	if err := os.Rename(tmpPath, path); err != nil {
 		_ = os.Remove(tmpPath)
-		return fmt.Errorf("state: replace %s: %w", s.path, err)
+		return fmt.Errorf("state: replace %s: %w", path, err)
 	}
 	return nil
 }

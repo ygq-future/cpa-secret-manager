@@ -23,7 +23,7 @@ config.yaml api-keys
 ## Decision
 
 1. 用量归因只使用 `usage_plugin` 能力，不读取、不消费官方用量队列，也不需要开启任何宿主开关。
-2. 归因键为 `SHA-256(UsageRecord.APIKey)`；`APIKey` 为空或不属于 `api-keys` 的记录计入「未归因请求」计数，不落任何标识。
+2. 归因键为 `SHA-256(UsageRecord.APIKey)`；`APIKey` 为空或不属于 `api-keys` 的记录**直接丢弃**，不计数、不落任何标识。
 3. 只保存累计计数：按密钥与按模型的请求数、失败数、输入/输出/推理/缓存读取/缓存写入/合计 token。不做时间窗口、不做趋势、不做费用。
 4. 内存聚合 + 节流原子落盘（默认 5 秒或 200 次变更），`plugin.shutdown` 强制刷盘；崩溃最多丢失一个刷盘窗口。
 
