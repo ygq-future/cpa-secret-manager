@@ -754,6 +754,17 @@ function bindGlobalEvents() {
   bindBackdrop('failures-modal');
 
   if (filter) {
+    // Some browsers restore saved credentials into the first visible text field
+    // on load. Force the filter empty once the page has settled.
+    var clearAutofilledFilter = function () {
+      if (filter.value) {
+        filter.value = '';
+        renderKeys();
+      }
+    };
+    clearAutofilledFilter();
+    setTimeout(clearAutofilledFilter, 80);
+    setTimeout(clearAutofilledFilter, 350);
     filter.addEventListener('input', function () {
       renderKeys();
     });

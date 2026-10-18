@@ -30,7 +30,7 @@ var keysFeature = pageFeature{
         <div class="toolbar">
           <label class="search">
             <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.6-3.6"></path></svg>
-            <input id="keys-filter" type="search" autocomplete="off" data-i18n-placeholder="keys.filter" data-i18n-aria-label="keys.filter">
+            <input id="keys-filter" name="keys-filter-query" type="search" autocomplete="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-bwignore data-i18n-placeholder="keys.filter" data-i18n-aria-label="keys.filter">
           </label>
           <div class="toolbar-actions">
             <button id="keys-unit" class="btn btn-secondary" type="button" data-i18n-title="keys.unit_title">
@@ -54,6 +54,7 @@ var keysFeature = pageFeature{
               <tr>
                 <th data-i18n="keys.column.key">Key</th>
                 <th data-i18n="keys.column.remark">Remark</th>
+                <th class="num" data-i18n="keys.column.last_seen">Last seen</th>
                 <th class="num" data-i18n="keys.column.requests">Requests</th>
                 <th class="num" data-i18n="keys.column.failed">Failed</th>
                 <th class="num" data-i18n="keys.column.input">Input</th>
@@ -567,6 +568,11 @@ function buildKeyRow(index, value, remark, usage) {
   }
   row.appendChild(remarkCell);
 
+  var lastSeenCell = document.createElement('td');
+  lastSeenCell.className = 'num' + (usage && usage.last_seen ? '' : ' muted');
+  lastSeenCell.textContent = usage && usage.last_seen ? formatLastSeen(usage.last_seen) : '—';
+  row.appendChild(lastSeenCell);
+
   row.appendChild(buildNumberCell(usage ? usage.requests : 0, !usage));
   row.appendChild(buildFailedCell(usage, index));
   row.appendChild(buildValueCell(usage ? usage.input : 0, !usage, false, formatTokenValue));
@@ -604,6 +610,13 @@ function buildKeyRow(index, value, remark, usage) {
   actions.appendChild(actionsWrap);
   row.appendChild(actions);
   return row;
+}
+
+function formatLastSeen(value) {
+  if (!value) return '—';
+  var d = new Date(value);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleString();
 }
 
 function buildNumberCell(value, empty, strong) {

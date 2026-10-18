@@ -61,7 +61,7 @@ const shellModals = `  </main>
     <p class="hint" data-i18n="key_modal.hint">The key stays in this browser tab.</p>
     <div class="field">
       <label for="key-modal-input" data-i18n="key_modal.field">Management key</label>
-      <input id="key-modal-input" type="password" autocomplete="off" spellcheck="false">
+      <input id="key-modal-input" name="cpa-management-key-input" type="password" autocomplete="new-password" spellcheck="false" data-lpignore="true" data-1p-ignore data-bwignore>
     </div>
     <div class="modal-actions">
       <button id="key-modal-cancel" class="btn btn-secondary" type="button" data-i18n="shell.cancel">Cancel</button>
