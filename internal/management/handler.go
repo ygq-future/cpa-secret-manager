@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 
+	"cpa-secret-manager/internal/errorslog"
 	"cpa-secret-manager/internal/usage"
 )
 
@@ -39,7 +40,8 @@ const (
 	PathForget = "/forget"
 	// PathGenerate returns a freshly generated proxy API key.
 	PathGenerate = "/keys/generate"
-
+	// PathFailures queries failure error logs by key hash and time range.
+	PathFailures = "/failures"
 	// RouteSettings is the settings route path registered with the host.
 	RouteSettings = legacyBase + PathSettings
 	// RouteResolve is the resolve route path registered with the host.
@@ -50,7 +52,8 @@ const (
 	RouteForget = legacyBase + PathForget
 	// RouteGenerate is the key generation route path registered with the host.
 	RouteGenerate = legacyBase + PathGenerate
-
+	// RouteFailures is the failures route path registered with the host.
+	RouteFailures = legacyBase + PathFailures
 	// maxRequestBody bounds plugin management request bodies.
 	maxRequestBody = 1 << 20
 )
@@ -58,6 +61,7 @@ const (
 // Settings is the plugin business configuration exposed to the page.
 type Settings struct {
 	UsageEnabled   bool     `json:"usage_enabled"`
+	RetentionDays  int      `json:"retention_days"`
 	StatePath      string   `json:"state_path"`
 	StateWarning   string   `json:"state_warning,omitempty"`
 	UsageWarning   string   `json:"usage_warning,omitempty"`
@@ -66,9 +70,21 @@ type Settings struct {
 
 // SettingsUpdate is the request payload for updating business settings.
 type SettingsUpdate struct {
-	UsageEnabled *bool `json:"usage_enabled"`
+	UsageEnabled  *bool `json:"usage_enabled"`
+	RetentionDays *int  `json:"retention_days"`
 }
 
+// FailuresRequest specifies query parameters for error log retrieval.
+type FailuresRequest struct {
+	Hash  string `json:"hash"`
+	Start string `json:"start"`
+	End   string `json:"end"`
+}
+
+// FailuresResult returns the matched error log entries.
+type FailuresResult struct {
+	Items []errorslog.ErrorEntry `json:"items"`
+}
 // KeyEntry is the per-key payload returned by Resolve. Items are aligned with
 // the submitted key list.
 type KeyEntry struct {
@@ -145,13 +161,13 @@ func NewInvalidRequest(message string) error {
 // Backend is the runtime surface the HTTP adapter is allowed to call.
 type Backend interface {
 	Settings(ctx context.Context) (Settings, error)
-	UpdateSettings(ctx context.Context, usageEnabled bool) error
+	UpdateSettings(ctx context.Context, update SettingsUpdate) error
 	Resolve(ctx context.Context, apiKeys []string) (ResolveResult, error)
 	Forget(ctx context.Context, hashes []string) (int, error)
 	SetRemark(ctx context.Context, apiKey string, remark string) error
 	GenerateKey(ctx context.Context) (string, error)
+	Failures(ctx context.Context, req FailuresRequest) (FailuresResult, error)
 }
-
 // Handler serves the plugin-owned Management API routes.
 type Handler struct {
 	backend Backend
@@ -186,6 +202,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveForget(w, r)
 	case PathGenerate:
 		h.serveGenerate(w, r)
+	case PathFailures:
+		h.serveFailures(w, r)
 	default:
 		writeJSON(w, http.StatusNotFound, errorBody("not_found", "unknown plugin route"))
 	}
@@ -216,11 +234,11 @@ func (h *Handler) serveSettings(w http.ResponseWriter, r *http.Request) {
 		if !decodeBody(w, r, &update) {
 			return
 		}
-		if update.UsageEnabled == nil {
-			writeJSON(w, http.StatusBadRequest, errorBody("invalid_request", "usage_enabled is required"))
+		if update.UsageEnabled == nil && update.RetentionDays == nil {
+			writeJSON(w, http.StatusBadRequest, errorBody("invalid_request", "usage_enabled or retention_days is required"))
 			return
 		}
-		if h.fail(w, h.backend.UpdateSettings(r.Context(), *update.UsageEnabled)) {
+		if h.fail(w, h.backend.UpdateSettings(r.Context(), update)) {
 			return
 		}
 		writeJSON(w, http.StatusOK, statusBody())
@@ -244,6 +262,22 @@ func (h *Handler) serveResolve(w http.ResponseWriter, r *http.Request) {
 	}
 	if result.Items == nil {
 		result.Items = []KeyEntry{}
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) serveFailures(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, http.MethodPost)
+		return
+	}
+	var request FailuresRequest
+	if !decodeBody(w, r, &request) {
+		return
+	}
+	result, err := h.backend.Failures(r.Context(), request)
+	if h.fail(w, err) {
+		return
 	}
 	writeJSON(w, http.StatusOK, result)
 }

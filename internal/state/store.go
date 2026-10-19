@@ -22,11 +22,21 @@ const SchemaVersion = 1
 type AppConfig struct {
 	// UsageEnabled controls whether usage records are aggregated.
 	UsageEnabled bool `json:"usage_enabled"`
+	// RetentionDays controls how many days of data to retain (1-365, default 30).
+	RetentionDays int `json:"retention_days"`
 }
 
+// DefaultRetentionDays is the default data retention period in days.
+const DefaultRetentionDays = 30
+
+// MinRetentionDays and MaxRetentionDays define the allowed retention range.
+const (
+	MinRetentionDays = 1
+	MaxRetentionDays = 365
+)
 // DefaultAppConfig returns the canonical business defaults.
 func DefaultAppConfig() AppConfig {
-	return AppConfig{UsageEnabled: true}
+	return AppConfig{UsageEnabled: true, RetentionDays: DefaultRetentionDays}
 }
 
 // Document is the persisted plugin state. It only ever describes keys the host
@@ -101,6 +111,11 @@ func (s *Store) SetAppConfig(cfg AppConfig) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if cfg.RetentionDays < MinRetentionDays {
+		cfg.RetentionDays = DefaultRetentionDays
+	} else if cfg.RetentionDays > MaxRetentionDays {
+		cfg.RetentionDays = MaxRetentionDays
+	}
 	s.doc.AppConfig = cfg
 }
 
@@ -266,7 +281,10 @@ func applyDefaults(doc Document, raw []byte) Document {
 		return doc
 	}
 	if _, ok := appConfig["usage_enabled"]; !ok {
-		doc.AppConfig = DefaultAppConfig()
+		doc.AppConfig.UsageEnabled = true
+	}
+	if doc.AppConfig.RetentionDays < MinRetentionDays || doc.AppConfig.RetentionDays > MaxRetentionDays {
+		doc.AppConfig.RetentionDays = DefaultRetentionDays
 	}
 	return doc
 }

@@ -75,9 +75,11 @@ type Record struct {
 	Hash string
 	// Model classifies the request; an empty model is grouped as UnknownModel.
 	Model  string
-	Failed bool
-	Detail Detail
-	At     time.Time
+	Failed         bool
+	FailureStatus  int
+	FailureMessage string
+	Detail         Detail
+	At             time.Time
 }
 
 // UnknownModel groups records that carried no model name.

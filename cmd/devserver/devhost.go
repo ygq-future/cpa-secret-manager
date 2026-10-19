@@ -319,7 +319,20 @@ func (h *devHost) handleSimulateUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	failed := query.Get("failed") == "true"
-
+	statusCode := intQuery(query.Get("status_code"), 0)
+	errorBody := query.Get("error_body")
+	if errorBody == "" {
+		errorBody = query.Get("message")
+	}
+	if !failed && statusCode >= 400 {
+		failed = true
+	}
+	if failed && statusCode == 0 {
+		statusCode = 500
+	}
+	if failed && errorBody == "" {
+		errorBody = "Simulated upstream failure"
+	}
 	for range count {
 		record := map[string]any{
 			"Provider":    "openai",
@@ -335,6 +348,12 @@ func (h *devHost) handleSimulateUsage(w http.ResponseWriter, r *http.Request) {
 				"CacheReadTokens": intQuery(query.Get("cache_read"), 0),
 				"TotalTokens":     intQuery(query.Get("total"), 360),
 			},
+		}
+		if failed {
+			record["Failure"] = map[string]any{
+				"StatusCode": statusCode,
+				"Body":       errorBody,
+			}
 		}
 		raw, err := json.Marshal(record)
 		if err != nil {

@@ -6,12 +6,14 @@ package runtime
 import (
 	"context"
 	"net/http"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"cpa-secret-manager/internal/config"
+	"cpa-secret-manager/internal/errorslog"
 	"cpa-secret-manager/internal/keys"
 	"cpa-secret-manager/internal/management"
 	"cpa-secret-manager/internal/remarks"
@@ -40,6 +42,7 @@ type Runtime struct {
 	mu             sync.RWMutex
 	cfg            config.Config
 	store          *state.Store
+	errorsStore    *errorslog.Store
 	stateErr       error
 	configWarnings []string
 	usageWarning   string
@@ -130,9 +133,15 @@ func (r *Runtime) Settings(_ context.Context) (management.Settings, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	settings := management.Settings{UsageEnabled: true, UsageWarning: r.usageWarning}
+	settings := management.Settings{
+		UsageEnabled:  true,
+		RetentionDays: state.DefaultRetentionDays,
+		UsageWarning:  r.usageWarning,
+	}
 	if r.store != nil {
-		settings.UsageEnabled = r.store.AppConfig().UsageEnabled
+		cfg := r.store.AppConfig()
+		settings.UsageEnabled = cfg.UsageEnabled
+		settings.RetentionDays = cfg.RetentionDays
 		settings.StatePath = r.store.Path()
 	}
 	if len(r.configWarnings) > 0 {
@@ -145,7 +154,7 @@ func (r *Runtime) Settings(_ context.Context) (management.Settings, error) {
 }
 
 // UpdateSettings implements management.Backend.
-func (r *Runtime) UpdateSettings(_ context.Context, usageEnabled bool) error {
+func (r *Runtime) UpdateSettings(_ context.Context, update management.SettingsUpdate) error {
 	r.runMu.Lock()
 	defer r.runMu.Unlock()
 
@@ -156,8 +165,54 @@ func (r *Runtime) UpdateSettings(_ context.Context, usageEnabled bool) error {
 	if closed || store == nil {
 		return ErrShutdown
 	}
-	store.SetAppConfig(state.AppConfig{UsageEnabled: usageEnabled})
+	current := store.AppConfig()
+	if update.UsageEnabled != nil {
+		current.UsageEnabled = *update.UsageEnabled
+	}
+	if update.RetentionDays != nil {
+		current.RetentionDays = *update.RetentionDays
+	}
+	store.SetAppConfig(current)
 	return store.SaveAtomic()
+}
+
+// Failures implements management.Backend.
+func (r *Runtime) Failures(_ context.Context, req management.FailuresRequest) (management.FailuresResult, error) {
+	r.mu.RLock()
+	errorsStore := r.errorsStore
+	closed := r.closed
+	r.mu.RUnlock()
+	if closed || errorsStore == nil {
+		return management.FailuresResult{}, nil
+	}
+
+	var start, end time.Time
+	if strings.TrimSpace(req.Start) != "" {
+		if parsed, err := time.Parse(time.RFC3339, req.Start); err == nil {
+			start = parsed.UTC()
+		}
+	}
+	if strings.TrimSpace(req.End) != "" {
+		if parsed, err := time.Parse(time.RFC3339, req.End); err == nil {
+			end = parsed.UTC()
+		}
+	}
+
+	if strings.TrimSpace(req.Hash) != "" {
+		return management.FailuresResult{
+			Items: errorsStore.Query(req.Hash, start, end),
+		}, nil
+	}
+
+	all := errorsStore.QueryAll(start, end)
+	var total []errorslog.ErrorEntry
+	for _, list := range all {
+		total = append(total, list...)
+	}
+	sort.Slice(total, func(i, j int) bool {
+		return total[i].Time.After(total[j].Time)
+	})
+	return management.FailuresResult{Items: total}, nil
 }
 
 // Resolve implements management.Backend: it maps the submitted proxy key list
@@ -264,6 +319,9 @@ func (r *Runtime) Forget(_ context.Context, hashes []string) (int, error) {
 	for _, hash := range pending {
 		store.DeleteRemark(hash)
 		r.aggregator.Remove(hash)
+		if r.errorsStore != nil {
+			r.errorsStore.Forget(hash)
+		}
 	}
 	if err := r.persistStateLocked(store); err != nil {
 		return 0, err
@@ -330,6 +388,14 @@ func (r *Runtime) ObserveUsage(record usage.Record) {
 		record.At = r.clock.Now().UTC()
 	}
 	r.aggregator.Observe(record)
+	if r.errorsStore != nil && record.Failed && record.Hash != "" {
+		r.errorsStore.Record(record.Hash, errorslog.ErrorEntry{
+			Time:       record.At,
+			Model:      record.Model,
+			StatusCode: record.FailureStatus,
+			Message:    record.FailureMessage,
+		})
+	}
 }
 
 // FlushUsage persists pending usage counters when they changed since the last
@@ -380,10 +446,27 @@ func (r *Runtime) loadState(path string) {
 	if store != nil {
 		r.aggregator.Seed(store.Usage())
 	}
+	var errorsStore *errorslog.Store
+	if strings.TrimSpace(path) != "" {
+		errorsStore, _ = errorslog.Load(deriveErrorsPath(path))
+	}
 	r.mu.Lock()
 	r.store = store
+	r.errorsStore = errorsStore
 	r.stateErr = err
 	r.mu.Unlock()
+}
+
+func deriveErrorsPath(statePath string) string {
+	trimmed := strings.TrimSpace(statePath)
+	if trimmed == "" {
+		return ""
+	}
+	ext := filepath.Ext(trimmed)
+	if ext != "" {
+		return strings.TrimSuffix(trimmed, ext) + "-errors" + ext
+	}
+	return trimmed + "-errors.json"
 }
 
 func (r *Runtime) registrationResult() RegisterResult {
@@ -463,6 +546,17 @@ func (r *Runtime) persistStateLocked(store *state.Store) error {
 	}
 	r.aggregator.MarkClean()
 	r.setUsageWarning("")
+	if r.errorsStore != nil {
+		retentionDays := store.AppConfig().RetentionDays
+		if retentionDays < state.MinRetentionDays {
+			retentionDays = state.DefaultRetentionDays
+		}
+		cutoff := r.clock.Now().UTC().AddDate(0, 0, -retentionDays)
+		r.errorsStore.Prune(cutoff)
+		if r.errorsStore.Dirty() {
+			_ = r.errorsStore.Save()
+		}
+	}
 	return nil
 }
 

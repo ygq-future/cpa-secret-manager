@@ -408,3 +408,10 @@ func extractDictionaries(t *testing.T, script string) map[string]map[string]bool
 	}
 	return out
 }
+
+func TestPage_RenderKeysCleansBodyBeforeAppend(t *testing.T) {
+	script := extractPageScript(t)
+	if !strings.Contains(script, "body.textContent = '';") {
+		t.Fatal("renderKeys must clear body.textContent before appending rows to prevent duplicate items on refresh")
+	}
+}

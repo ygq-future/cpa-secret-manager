@@ -110,3 +110,24 @@ func TestSnapshot_IsIsolatedFromLaterMutations(t *testing.T) {
 		t.Fatal("snapshot changed after the store was mutated")
 	}
 }
+
+func TestStore_RetentionDaysBounds(t *testing.T) {
+	store := NewDocument()
+	if store.AppConfig.RetentionDays != DefaultRetentionDays {
+		t.Fatalf("default retention days = %d, want %d", store.AppConfig.RetentionDays, DefaultRetentionDays)
+	}
+
+	s, _ := Load(filepath.Join(t.TempDir(), "state.json"))
+	s.SetAppConfig(AppConfig{UsageEnabled: true, RetentionDays: 0})
+	if s.AppConfig().RetentionDays != DefaultRetentionDays {
+		t.Fatalf("retention days 0 should clamp to default, got %d", s.AppConfig().RetentionDays)
+	}
+	s.SetAppConfig(AppConfig{UsageEnabled: true, RetentionDays: 999})
+	if s.AppConfig().RetentionDays != MaxRetentionDays {
+		t.Fatalf("retention days 999 should clamp to max %d, got %d", MaxRetentionDays, s.AppConfig().RetentionDays)
+	}
+	s.SetAppConfig(AppConfig{UsageEnabled: true, RetentionDays: 15})
+	if s.AppConfig().RetentionDays != 15 {
+		t.Fatalf("retention days 15 should be kept, got %d", s.AppConfig().RetentionDays)
+	}
+}

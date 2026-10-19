@@ -34,7 +34,7 @@ var RESOLVE_PATH = PLUGIN_BASE + '/resolve';
 var FORGET_PATH = PLUGIN_BASE + '/forget';
 var REMARKS_PATH = PLUGIN_BASE + '/remarks';
 var GENERATE_PATH = PLUGIN_BASE + '/keys/generate';
-
+var FAILURES_PATH = PLUGIN_BASE + '/failures';
 var state = {
   managementKey: '',
   keys: [],
@@ -54,7 +54,8 @@ var state = {
   toastTimer: 0,
   confirmHandler: null,
   lastKeysSignature: null,
-  themeObserver: null
+  themeObserver: null,
+  dateRange: null
 };
 
 function byId(id) {
@@ -752,6 +753,21 @@ function bindGlobalEvents() {
   bindClick('failures-close', closeFailuresModal);
   bindClick('failures-open-logs', openHostLogs);
   bindBackdrop('failures-modal');
+  bindClick('date-range-btn', openDateRangeModal);
+  bindClick('date-range-cancel', closeDateRangeModal);
+  bindClick('date-range-reset', resetDateRangeToday);
+  bindClick('date-range-confirm', confirmDateRange);
+  bindBackdrop('date-range-modal');
+
+  bindClick('settings-retention-save', saveRetentionDays);
+  var retInput = byId('settings-retention-input');
+  if (retInput) {
+    retInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        saveRetentionDays();
+      }
+    });
+  }
 
   if (filter) {
     filter.addEventListener('input', function () {

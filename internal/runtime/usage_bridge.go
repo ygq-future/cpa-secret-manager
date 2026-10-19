@@ -3,6 +3,7 @@ package runtime
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"cpa-secret-manager/internal/remarks"
@@ -34,10 +35,22 @@ func decodeUsageRecord(raw []byte) (usage.Record, error) {
 	if model == "" {
 		model = pickString(fields, "Alias", "alias")
 	}
+	var failureFields map[string]json.RawMessage
+	if rawFailure := pickField(fields, "Failure", "failure"); len(rawFailure) > 0 {
+		_ = json.Unmarshal(rawFailure, &failureFields)
+	}
+	statusCode := int(pickInt64(failureFields, "StatusCode", "status_code"))
+	failureMsg := cleanFailureMessage(pickString(failureFields, "Body", "body", "Message", "message"))
+	failed := pickBool(fields, "Failed", "failed")
+	if !failed && statusCode >= 400 {
+		failed = true
+	}
 	record := usage.Record{
-		Model:  model,
-		Failed: pickBool(fields, "Failed", "failed"),
-		Detail: decodeUsageDetail(pickField(fields, "Detail", "detail")),
+		Model:          model,
+		Failed:         failed,
+		FailureStatus:  statusCode,
+		FailureMessage: failureMsg,
+		Detail:         decodeUsageDetail(pickField(fields, "Detail", "detail")),
 	}
 	if at := pickTime(fields, "RequestedAt", "requested_at"); !at.IsZero() {
 		record.At = at.UTC()
@@ -106,4 +119,18 @@ func pickTime(fields map[string]json.RawMessage, names ...string) time.Time {
 		_ = json.Unmarshal(raw, &value)
 	}
 	return value
+}
+
+const maxFailureMessageLength = 512
+
+func cleanFailureMessage(msg string) string {
+	msg = strings.TrimSpace(msg)
+	if len(msg) == 0 {
+		return ""
+	}
+	runes := []rune(msg)
+	if len(runes) > maxFailureMessageLength {
+		return string(runes[:maxFailureMessageLength]) + "…"
+	}
+	return msg
 }

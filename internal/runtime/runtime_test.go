@@ -238,7 +238,8 @@ func TestShutdown_PersistsOnceAndRejectsFurtherWrites(t *testing.T) {
 	if err := rt.Shutdown(context.Background()); err != nil {
 		t.Fatalf("second Shutdown() error = %v", err)
 	}
-	if err := rt.UpdateSettings(context.Background(), false); err != ErrShutdown {
+	disabled := false
+	if err := rt.UpdateSettings(context.Background(), management.SettingsUpdate{UsageEnabled: &disabled}); err != ErrShutdown {
 		t.Fatalf("UpdateSettings() error = %v, want ErrShutdown", err)
 	}
 }
@@ -626,6 +627,7 @@ func TestHandle_ManagementRegister_DeclaresAllRoutes(t *testing.T) {
 		"PUT " + management.RouteRemarks:   "remarks",
 		"POST " + management.RouteForget:   "forget",
 		"POST " + management.RouteGenerate: "generate",
+		"POST " + management.RouteFailures: "failures",
 	}
 
 	declared := make(map[string]bool)
@@ -637,5 +639,55 @@ func TestHandle_ManagementRegister_DeclaresAllRoutes(t *testing.T) {
 		if !declared[key] {
 			t.Errorf("missing route for %s: %s", desc, key)
 		}
+	}
+}
+
+func TestRuntime_ErrorLogRecordingAndQuery(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	rt := registerRuntime(t, statePath)
+
+	// Push a failure usage record
+	failureRecord := []byte(`{
+		"APIKey": "sk-testkey",
+		"Model": "gpt-5.6",
+		"Failed": true,
+		"RequestedAt": "2026-10-19T10:00:00Z",
+		"Failure": {
+			"StatusCode": 429,
+			"Body": "rate limit exceeded"
+		}
+	}`)
+	rt.Handle(context.Background(), MethodUsageHandle, failureRecord)
+
+	// Query failures
+	keyHash := remarks.Index("sk-testkey")
+	res, err := rt.Failures(context.Background(), management.FailuresRequest{Hash: keyHash})
+	if err != nil {
+		t.Fatalf("Failures() error = %v", err)
+	}
+	if len(res.Items) != 1 {
+		t.Fatalf("expected 1 failure item, got %d", len(res.Items))
+	}
+	if res.Items[0].StatusCode != 429 || res.Items[0].Message != "rate limit exceeded" {
+		t.Fatalf("unexpected failure entry: %+v", res.Items[0])
+	}
+
+	// Flush and verify errors file exists
+	rt.FlushUsage()
+	errorsPath := filepath.Join(filepath.Dir(statePath), "state-errors.json")
+	if _, err := os.Stat(errorsPath); err != nil {
+		t.Fatalf("expected errors file at %s: %v", errorsPath, err)
+	}
+
+	// Forget the key
+	if _, err := rt.Forget(context.Background(), []string{keyHash}); err != nil {
+		t.Fatalf("Forget() error = %v", err)
+	}
+	resAfter, err := rt.Failures(context.Background(), management.FailuresRequest{Hash: keyHash})
+	if err != nil {
+		t.Fatalf("Failures() after Forget error = %v", err)
+	}
+	if len(resAfter.Items) != 0 {
+		t.Fatalf("expected 0 failure items after forget, got %d", len(resAfter.Items))
 	}
 }

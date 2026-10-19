@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -380,4 +381,32 @@ func mustVersion(t *testing.T) string {
 		t.Fatal("could not read the version badge from the page")
 	}
 	return version
+}
+
+func TestDevHost_FailureInjectionAndQuery(t *testing.T) {
+	_, server := newTestHost(t)
+
+	if status, _ := call(t, server, http.MethodPut, "/v0/management/api-keys", `["sk-failed-key"]`, true); status != http.StatusOK {
+		t.Fatal("failed to prepare key")
+	}
+
+	// Simulate a failure with status_code=429 and error_body
+	url := "/dev/simulate-usage?key=sk-failed-key&model=gpt-5.6&failed=true&status_code=429&error_body=rate+limit+exceeded"
+	if status, body := call(t, server, http.MethodPost, url, "", true); status != http.StatusOK {
+		t.Fatalf("simulate failure status = %d: %s", status, body)
+	}
+
+	keyHash := remarks.Index("sk-failed-key")
+	reqBody := fmt.Sprintf(`{"hash":%q}`, keyHash)
+	status, body := call(t, server, http.MethodPost, "/v0/management/plugins/cpa-secret-manager/failures", reqBody, true)
+	if status != http.StatusOK {
+		t.Fatalf("failures status = %d: %s", status, body)
+	}
+	res := decode[management.FailuresResult](t, body)
+	if len(res.Items) != 1 {
+		t.Fatalf("expected 1 failure item, got %d", len(res.Items))
+	}
+	if res.Items[0].StatusCode != 429 || res.Items[0].Message != "rate limit exceeded" {
+		t.Fatalf("unexpected failure item: %+v", res.Items[0])
+	}
 }

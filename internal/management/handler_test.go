@@ -7,22 +7,25 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"cpa-secret-manager/internal/errorslog"
 )
 
 type stubBackend struct {
 	settings Settings
-	updated  *bool
+	updated  *SettingsUpdate
 	remark   *RemarkUpdate
 	key      string
 	forgot   []string
+	failures []errorslog.ErrorEntry
 }
 
 func (s *stubBackend) Settings(context.Context) (Settings, error) {
 	return s.settings, nil
 }
 
-func (s *stubBackend) UpdateSettings(_ context.Context, usageEnabled bool) error {
-	s.updated = &usageEnabled
+func (s *stubBackend) UpdateSettings(_ context.Context, update SettingsUpdate) error {
+	s.updated = &update
 	return nil
 }
 
@@ -46,6 +49,10 @@ func (s *stubBackend) SetRemark(_ context.Context, key string, remark string) er
 
 func (s *stubBackend) GenerateKey(context.Context) (string, error) {
 	return s.key, nil
+}
+
+func (s *stubBackend) Failures(context.Context, FailuresRequest) (FailuresResult, error) {
+	return FailuresResult{Items: s.failures}, nil
 }
 
 func TestNormalizePath_ReducesHostPrefixes(t *testing.T) {
@@ -86,7 +93,7 @@ func TestHandler_SettingsRoundTrip(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("PUT status = %d, want 200", recorder.Code)
 	}
-	if backend.updated == nil || *backend.updated {
+	if backend.updated == nil || backend.updated.UsageEnabled == nil || *backend.updated.UsageEnabled {
 		t.Fatalf("backend update = %v, want false", backend.updated)
 	}
 }
@@ -201,6 +208,29 @@ func TestHandler_MapsBackendValidationToBadRequest(t *testing.T) {
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPut, RouteRemarks, strings.NewReader(`{"key":"sk-a","remark":"x"}`)))
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 for a rejected remark", recorder.Code)
+	}
+}
+
+func TestHandler_FailuresQueriesErrorLogs(t *testing.T) {
+	backend := &stubBackend{
+		failures: []errorslog.ErrorEntry{
+			{Model: "gpt-5.6", StatusCode: 429, Message: "rate limit"},
+		},
+	}
+	handler := NewHandler(backend)
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, RouteFailures, strings.NewReader(`{"hash":"h1"}`))
+	handler.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	var res FailuresResult
+	if err := json.Unmarshal(recorder.Body.Bytes(), &res); err != nil {
+		t.Fatalf("unmarshal failures result: %v", err)
+	}
+	if len(res.Items) != 1 || res.Items[0].StatusCode != 429 {
+		t.Fatalf("unexpected failures result: %+v", res)
 	}
 }
 

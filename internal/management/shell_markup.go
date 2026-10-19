@@ -111,11 +111,57 @@ const shellModals = `  </main>
 
 <div id="failures-modal" class="modal-backdrop">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="failures-title">
-    <h2 id="failures-title" data-i18n="failures.title">Failure records & diagnostics</h2>
+    <div class="modal-header-row">
+      <h2 id="failures-title" data-i18n="failures.title">Failure records & diagnostics</h2>
+      <span id="failures-range-tag" class="failures-range-tag"></span>
+    </div>
     <div id="failures-content"></div>
     <div class="modal-actions">
       <button id="failures-close" class="btn btn-secondary" type="button" data-i18n="shell.cancel">Close</button>
       <button id="failures-open-logs" class="btn btn-primary" type="button" data-i18n="failures.open_logs">Open Host Logs</button>
+    </div>
+  </div>
+</div>
+
+<div id="date-range-modal" class="modal-backdrop">
+  <div class="date-range-popover" role="dialog" aria-modal="true" aria-labelledby="date-range-title">
+    <div class="date-dialog-body">
+      <div class="date-dialog-head">
+        <div class="date-dialog-heading">
+          <h2 id="date-range-title" class="date-dialog-title" data-i18n="range.calendar_title">Select date range</h2>
+          <div id="date-selection-status" class="date-selection-status"></div>
+        </div>
+        <div class="date-presets">
+          <button class="btn btn-preset" type="button" data-preset="last_5_hours" data-i18n="range.last_5_hours">Last 5 hours</button>
+          <button class="btn btn-preset" type="button" data-preset="last_7_days" data-i18n="range.last_7_days">Last 7 days</button>
+          <button class="btn btn-preset" type="button" data-preset="last_30_days" data-i18n="range.last_30_days">Last 30 days</button>
+          <button class="btn btn-preset" type="button" data-preset="this_month" data-i18n="range.this_month">This month</button>
+        </div>
+      </div>
+      <div class="calendar-panels">
+        <div class="calendar-panel" id="calendar-left"></div>
+        <div class="calendar-panel" id="calendar-right"></div>
+      </div>
+      <div class="time-pickers-row">
+        <div class="time-picker-col">
+          <label class="time-picker-label" data-i18n="range.start_time">Start time</label>
+          <div class="time-input-wrap">
+            <input type="text" id="time-start" class="time-input" value="00:00:00" placeholder="00:00:00" maxlength="8">
+          </div>
+        </div>
+        <div class="time-picker-col">
+          <label class="time-picker-label" data-i18n="range.end_time">End time</label>
+          <div class="time-input-wrap">
+            <input type="text" id="time-end" class="time-input" value="23:59:59" placeholder="23:59:59" maxlength="8">
+          </div>
+        </div>
+      </div>
+      <div class="date-dialog-hint" data-i18n="range.hint">Includes start time, excludes end time</div>
+      <div class="date-dialog-footer">
+        <button id="date-range-cancel" class="btn btn-secondary" type="button" data-i18n="shell.cancel">Cancel</button>
+        <button id="date-range-reset" class="btn btn-secondary" type="button" data-i18n="range.reset_today">Reset to today</button>
+        <button id="date-range-confirm" class="btn btn-primary" type="button" data-i18n="range.confirm">Confirm</button>
+      </div>
     </div>
   </div>
 </div>

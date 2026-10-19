@@ -473,19 +473,22 @@ textarea {
    make Chromium fall back to the native bar, which on Windows paints stepper
    arrows at both ends. Only the WebKit pseudo-elements are used, and every
    button variant is disabled explicitly. */
+*::-webkit-scrollbar,
 .table-wrap::-webkit-scrollbar,
 .scroll-area::-webkit-scrollbar,
 .modal::-webkit-scrollbar,
 textarea::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 
+*::-webkit-scrollbar-track,
 .table-wrap::-webkit-scrollbar-track,
 .scroll-area::-webkit-scrollbar-track,
 .modal::-webkit-scrollbar-track,
 textarea::-webkit-scrollbar-track { background: transparent; }
 
+*::-webkit-scrollbar-thumb,
 .table-wrap::-webkit-scrollbar-thumb,
 .scroll-area::-webkit-scrollbar-thumb,
 .modal::-webkit-scrollbar-thumb,
@@ -496,6 +499,16 @@ textarea::-webkit-scrollbar-thumb {
   background-clip: content-box;
 }
 
+*::-webkit-scrollbar-thumb:hover,
+.table-wrap::-webkit-scrollbar-thumb:hover,
+.scroll-area::-webkit-scrollbar-thumb:hover,
+.modal::-webkit-scrollbar-thumb:hover,
+textarea::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-button,
 .table-wrap::-webkit-scrollbar-button,
 .scroll-area::-webkit-scrollbar-button,
 .table-wrap::-webkit-scrollbar-button:vertical:start:decrement,
@@ -511,15 +524,14 @@ textarea::-webkit-scrollbar-thumb {
   height: 0;
 }
 
+*::-webkit-scrollbar-corner,
 .table-wrap::-webkit-scrollbar-corner,
 .scroll-area::-webkit-scrollbar-corner,
 .modal::-webkit-scrollbar-corner,
 textarea::-webkit-scrollbar-corner { background: transparent; }
 
-/* Firefox has no WebKit scrollbar pseudo-elements; the standard properties are
-   scoped to it so they cannot switch Chromium back to its native scrollbar
-   (which paints stepper arrows on Windows). */
 @supports (-moz-appearance: none) {
+  *,
   .table-wrap,
   .scroll-area,
   .modal,
@@ -1015,5 +1027,412 @@ input[readonly] {
   font-size: 12px;
   color: var(--text-tertiary);
   line-height: 1.5;
+}
+
+.date-range-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 140px;
+  font-variant-numeric: tabular-nums;
+}
+
+.date-range-popover {
+  width: min(740px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: modalIn 180ms cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+.date-dialog-body {
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+.date-dialog-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.date-dialog-title {
+  font-size: 17px;
+  font-weight: 650;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.date-selection-status {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  margin-top: 4px;
+}
+
+.date-presets {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.btn-preset {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-preset:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.btn-preset.active {
+  background: var(--accent-blue);
+  border-color: var(--accent-blue);
+  color: #fff;
+}
+
+.calendar-panels {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 16px;
+}
+
+@media (max-width: 640px) {
+  .calendar-panels {
+    grid-template-columns: 1fr;
+  }
+}
+
+.calendar-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.calendar-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  text-align: center;
+}
+
+.calendar-week {
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  padding: 4px 0;
+  user-select: none;
+}
+
+.calendar-day {
+  height: 32px;
+  line-height: 32px;
+  font-size: 12.5px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text-primary);
+  user-select: none;
+  transition: background 0.12s ease;
+}
+
+.calendar-day:hover:not(.empty) {
+  background: var(--bg-hover);
+}
+
+.calendar-day.empty {
+  cursor: default;
+  opacity: 0;
+}
+
+.calendar-day.range-start,
+.calendar-day.range-end {
+  background: var(--accent-blue) !important;
+  color: #fff !important;
+  font-weight: 600;
+}
+
+.calendar-day.in-range {
+  background: rgba(99, 102, 241, 0.18);
+  border-radius: 0;
+}
+
+.time-pickers-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.time-picker-col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.time-picker-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.time-input {
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  font-size: 13px;
+  height: 34px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.date-dialog-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.date-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+.modal-header-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.modal-header-row h2 {
+  margin: 0;
+}
+
+.failures-range-tag {
+  font-size: 12.5px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+#failures-modal .modal {
+  width: min(720px, calc(100vw - 32px));
+  max-height: 88vh;
+  overflow: visible;
+}
+
+.failures-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: nowrap;
+}
+
+.custom-dropdown {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 280px;
+}
+
+.custom-dropdown-btn {
+  width: 100%;
+  height: 32px;
+  padding: 5px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12.5px;
+  font-family: inherit;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  user-select: none;
+}
+
+.custom-dropdown-btn:hover {
+  border-color: var(--text-secondary);
+}
+
+.custom-dropdown.open .custom-dropdown-btn,
+.custom-dropdown-btn:focus-visible {
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  outline: none;
+}
+
+.custom-dropdown-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.custom-dropdown-arrow {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  transition: transform 0.15s ease;
+}
+
+.custom-dropdown.open .custom-dropdown-arrow {
+  transform: rotate(180deg);
+}
+
+.custom-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 100%;
+  width: max-content;
+  max-width: 380px;
+  z-index: 100;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.55);
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  box-sizing: border-box;
+}
+
+.custom-dropdown-option {
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: 18px;
+  min-height: 34px;
+  box-sizing: border-box;
+  border-radius: 4px;
+  color: var(--text-primary);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: none;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.custom-dropdown-option:hover {
+  background: var(--bg-hover);
+}
+
+.custom-dropdown-option.selected {
+  background: rgba(99, 102, 241, 0.15);
+  color: var(--accent-blue);
+  font-weight: 600;
+}
+.failures-list-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+  max-height: 420px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.failure-item {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: background 0.12s ease;
+}
+
+.failure-item:hover {
+  background: var(--bg-hover);
+}
+
+.failure-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.failure-meta-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.failure-time {
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.failure-model-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+.failure-status-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.failure-body {
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text-primary);
+  word-break: break-all;
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  max-height: 80px;
+  overflow-y: auto;
 }
 `

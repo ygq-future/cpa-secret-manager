@@ -22,6 +22,17 @@ var settingsFeature = pageFeature{
                 </label>
               </div>
             </div>
+            <div class="switch-row" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border-color);">
+              <div class="switch-text">
+                <span class="switch-label" data-i18n="settings.retention_title">Data retention</span>
+                <span class="hint" data-i18n="settings.retention_hint">Retention period for usage and error data in days (1-365). Older records are pruned.</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <input id="settings-retention-input" type="number" min="1" max="365" style="width: 80px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary); font-size: 14px; text-align: center;">
+                <span style="font-size: 13px; color: var(--text-secondary);" data-i18n="settings.days">days</span>
+                <button id="settings-retention-save" class="btn btn-secondary" type="button" data-i18n="settings.save">Save</button>
+              </div>
+            </div>
           </div>
         </div>
         <div class="card">
@@ -81,6 +92,11 @@ function renderSettings() {
     keyStatus.textContent = state.managementKey ? t('settings.key_loaded') : t('settings.key_missing');
   }
 
+
+  var retInput = byId('settings-retention-input');
+  if (retInput && state.settings && state.settings.retention_days) {
+    retInput.value = state.settings.retention_days;
+  }
   var messages = [];
   if (state.settings && state.settings.state_warning) {
     messages.push(t('settings.state_warning') + ': ' + state.settings.state_warning);
@@ -111,6 +127,27 @@ function toggleUsageEnabled() {
     .then(function () {
       showToast(t('settings.saved'), 'success');
       return refreshAll({ silent: true });
+    })
+    .catch(function (error) {
+      showToast(error.message, 'error');
+      renderSettings();
+    });
+}
+
+function saveRetentionDays() {
+  var input = byId('settings-retention-input');
+  if (!input) return;
+  var val = parseInt(input.value, 10);
+  if (isNaN(val) || val < 1 || val > 365) {
+    showToast(t('settings.retention_invalid'), 'error');
+    return;
+  }
+  apiFetch(SETTINGS_PATH, { method: 'PUT', body: JSON.stringify({ retention_days: val }) })
+    .then(function () {
+      return loadSettings();
+    })
+    .then(function () {
+      showToast(t('settings.saved'), 'success');
     })
     .catch(function (error) {
       showToast(error.message, 'error');
