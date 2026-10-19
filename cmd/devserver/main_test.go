@@ -410,3 +410,162 @@ func TestDevHost_FailureInjectionAndQuery(t *testing.T) {
 		t.Fatalf("unexpected failure item: %+v", res.Items[0])
 	}
 }
+
+func TestDevHost_QuotaEnforcementAndInterception(t *testing.T) {
+	_, server := newTestHost(t)
+
+	apiKey := "sk-quota-dev"
+	keyHash := remarks.Index(apiKey)
+
+	if status, _ := call(t, server, http.MethodPut, "/v0/management/api-keys", `["`+apiKey+`"]`, true); status != http.StatusOK {
+		t.Fatal("failed to prepare key")
+	}
+
+	// 1. Initial intercept -> allowed
+	status, body := call(t, server, http.MethodPost, "/dev/simulate-intercept?key="+apiKey, "", true)
+	if status != http.StatusOK {
+		t.Fatalf("simulate-intercept status = %d: %s", status, body)
+	}
+	res := decode[struct {
+		Terminate bool `json:"terminate"`
+	}](t, body)
+	if res.Terminate {
+		t.Fatal("expected terminate = false before quota set")
+	}
+
+	// 2. Set quota: limit 100 tokens daily
+	quotaPayload := fmt.Sprintf(`{"hash":%q,"enabled":true,"strategy":"token","window":"daily","limit_value":100}`, keyHash)
+	if status, body := call(t, server, http.MethodPut, "/v0/management/plugins/cpa-secret-manager/quota", quotaPayload, true); status != http.StatusOK {
+		t.Fatalf("set quota status = %d: %s", status, body)
+	}
+
+	// 3. Query quota
+	if status, body := call(t, server, http.MethodGet, "/v0/management/plugins/cpa-secret-manager/quota?hash="+keyHash, "", true); status != http.StatusOK {
+		t.Fatalf("get quota status = %d: %s", status, body)
+	} else {
+		qSummary := decode[management.QuotaSummary](t, body)
+		if !qSummary.Enabled || qSummary.LimitValue != 100 {
+			t.Fatalf("quota summary mismatch: %+v", qSummary)
+		}
+	}
+
+	// 4. Intercept under quota -> still allowed
+	status, body = call(t, server, http.MethodPost, "/dev/simulate-intercept?key="+apiKey, "", true)
+	if status != http.StatusOK {
+		t.Fatalf("simulate-intercept status = %d: %s", status, body)
+	}
+	res = decode[struct {
+		Terminate bool `json:"terminate"`
+	}](t, body)
+	if res.Terminate {
+		t.Fatal("expected terminate = false under quota")
+	}
+
+	// 5. Inject usage: 150 tokens
+	if status, body := call(t, server, http.MethodPost,
+		"/dev/simulate-usage?key="+apiKey+"&model=gpt-5.6&count=1&total=150", "", true); status != http.StatusOK {
+		t.Fatalf("simulate usage status = %d: %s", status, body)
+	}
+
+	// 6. Intercept after usage -> rejected with HTTP 403 (NOT 429!)
+	status, body = call(t, server, http.MethodPost, "/dev/simulate-intercept?key="+apiKey, "", true)
+	if status != http.StatusOK {
+		t.Fatalf("simulate-intercept status = %d: %s", status, body)
+	}
+	rejected := decode[struct {
+		Terminate    bool   `json:"terminate"`
+		StatusCode   int    `json:"status_code"`
+		ResponseBody string `json:"response_body"`
+	}](t, body)
+	if !rejected.Terminate {
+		t.Fatal("expected terminate = true when quota exceeded")
+	}
+	if rejected.StatusCode != http.StatusForbidden {
+		t.Fatalf("status code = %d, want 403 Forbidden (must NOT be 429)", rejected.StatusCode)
+	}
+	if !strings.Contains(rejected.ResponseBody, "quota_exceeded") || !strings.Contains(rejected.ResponseBody, "insufficient_quota") {
+		t.Fatalf("response body = %q, want quota_exceeded / insufficient_quota", rejected.ResponseBody)
+	}
+
+	// 7. Verify Resolve includes quota and marks Exceeded = true
+	status, body = call(t, server, http.MethodPost, "/v0/management/plugins/cpa-secret-manager/resolve", `{"keys":["`+apiKey+`"]}`, true)
+	if status != http.StatusOK {
+		t.Fatalf("resolve status = %d: %s", status, body)
+	}
+	resolved := decode[management.ResolveResult](t, body)
+	if len(resolved.Items) != 1 || resolved.Items[0].Quota == nil {
+		t.Fatalf("resolve item missing quota: %+v", resolved)
+	}
+	if !resolved.Items[0].Quota.Exceeded || resolved.Items[0].Quota.UsedValue != 150 {
+		t.Fatalf("quota state mismatch: %+v", resolved.Items[0].Quota)
+	}
+
+	// 8. Delete quota -> allowed again
+	if status, body := call(t, server, http.MethodDelete, "/v0/management/plugins/cpa-secret-manager/quota?hash="+keyHash, "", true); status != http.StatusOK {
+		t.Fatalf("delete quota status = %d: %s", status, body)
+	}
+	status, body = call(t, server, http.MethodPost, "/dev/simulate-intercept?key="+apiKey, "", true)
+	if status != http.StatusOK {
+		t.Fatalf("simulate-intercept status = %d: %s", status, body)
+	}
+	res = decode[struct {
+		Terminate bool `json:"terminate"`
+	}](t, body)
+	if res.Terminate {
+		t.Fatal("expected terminate = false after quota deleted")
+	}
+}
+
+func TestDevHost_V1ModelsAndModelRestrictions(t *testing.T) {
+	_, server := newTestHost(t)
+
+	// 1. Verify GET /v1/models returns model catalog
+	status, body := call(t, server, http.MethodGet, "/v1/models", "", false)
+	if status != http.StatusOK {
+		t.Fatalf("GET /v1/models status = %d: %s", status, body)
+	}
+	var modelResp struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	_ = json.Unmarshal(body, &modelResp)
+	if len(modelResp.Data) == 0 {
+		t.Fatal("expected at least 1 model in catalog")
+	}
+
+	// 2. Prepare key with allowed_models = ["gpt-5.6"]
+	apiKey := "sk-model-restrict"
+	keyHash := remarks.Index(apiKey)
+	_, _ = call(t, server, http.MethodPut, "/v0/management/api-keys", `["`+apiKey+`"]`, true)
+
+	quotaPayload := fmt.Sprintf(`{"hash":%q,"enabled":true,"strategy":"token","window":"daily","limit_value":10000,"allowed_models":["gpt-5.6"]}`, keyHash)
+	if status, body := call(t, server, http.MethodPut, "/v0/management/plugins/cpa-secret-manager/quota", quotaPayload, true); status != http.StatusOK {
+		t.Fatalf("set quota status = %d: %s", status, body)
+	}
+
+	// 3. Request allowed model -> permitted
+	status, body = call(t, server, http.MethodPost, "/dev/simulate-intercept?key="+apiKey+"&model=gpt-5.6", "", true)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d: %s", status, body)
+	}
+	res := decode[struct {
+		Terminate bool `json:"terminate"`
+	}](t, body)
+	if res.Terminate {
+		t.Fatal("expected terminate = false for allowed model")
+	}
+
+	// 4. Request unallowed model -> rejected with 403
+	status, body = call(t, server, http.MethodPost, "/dev/simulate-intercept?key="+apiKey+"&model=claude-3-7-sonnet", "", true)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d: %s", status, body)
+	}
+	rejected := decode[struct {
+		Terminate  bool `json:"terminate"`
+		StatusCode int  `json:"status_code"`
+	}](t, body)
+	if !rejected.Terminate || rejected.StatusCode != http.StatusForbidden {
+		t.Fatalf("rejected = %+v, want Terminate=true, StatusCode=403", rejected)
+	}
+}

@@ -28,36 +28,37 @@ var keysFeature = pageFeature{
       </div>
       <div class="card">
         <div class="toolbar">
-          <label class="search">
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.6-3.6"></path></svg>
+          <div class="search">
+            {{ICON:search}}
             <input id="keys-filter" type="search" autocomplete="off" data-i18n-placeholder="keys.filter" data-i18n-aria-label="keys.filter">
-          </label>
+            <button id="keys-clear" class="search-clear" type="button" hidden data-i18n-title="keys.filter_clear" data-i18n-aria-label="keys.filter_clear">{{ICON:close}}</button>
+          </div>
           <div class="toolbar-actions">
             <button id="date-range-btn" class="btn btn-secondary date-range-btn" type="button" data-i18n-title="range.calendar_title">
-              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"></rect><line x1="16" x2="16" y1="2" y2="6"></line><line x1="8" x2="8" y1="2" y2="6"></line><line x1="3" x2="21" y1="10" y2="10"></line></svg>
+              {{ICON:calendar}}
               <span id="date-range-label"></span>
             </button>
             <button id="keys-unit" class="btn btn-secondary" type="button" data-i18n-title="keys.unit_title">
-              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"></path></svg>
+              {{ICON:unit}}
               <span id="keys-unit-label"></span>
             </button>
             <span id="keys-count" class="count-pill"></span>
             <button id="keys-add" class="btn btn-primary" type="button">
-              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+              {{ICON:plus}}
               <span data-i18n="keys.add">Add key</span>
             </button>
           </div>
         </div>
         <div id="keys-table-wrap" class="table-wrap">
           <div id="keys-loading" class="table-loading" aria-hidden="true">
-            <div class="table-loading-spinner"></div>
+            <div class="spinner"></div>
             <span class="table-loading-text" data-i18n="shell.loading">Loading…</span>
           </div>
           <table class="data-table">
             <thead>
               <tr>
                 <th data-i18n="keys.column.key">Key</th>
-                <th data-i18n="keys.column.remark">Remark</th>
+                <th class="col-remark" data-i18n="keys.column.remark">Remark</th>
                 <th class="num" data-i18n="keys.column.requests">Requests</th>
                 <th class="num" data-i18n="keys.column.failed">Failed</th>
                 <th class="num" data-i18n="keys.column.input">Input</th>
@@ -79,22 +80,8 @@ var keysFeature = pageFeature{
   min-height: 200px;
 }
 
-.table-loading {
-  position: absolute;
-  inset: 0;
-  z-index: 10;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  background: var(--bg-card);
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-  transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1), visibility 0.2s ease;
-}
-
+/* The mask is the shared .table-loading component; the keys panel only owns the
+   state that reveals it. */
 #keys-table-wrap.is-loading .table-loading {
   opacity: 0.88;
   visibility: visible;
@@ -106,31 +93,6 @@ var keysFeature = pageFeature{
   user-select: none;
   opacity: 0.35;
   transition: opacity 0.2s ease;
-}
-
-.table-loading-spinner {
-  width: 30px;
-  height: 30px;
-  border: 3px solid var(--border-color);
-  border-top-color: var(--accent-blue);
-  border-radius: 50%;
-  animation: tableSpin 0.75s linear infinite;
-}
-
-@keyframes tableSpin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-.table-loading-text {
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 550;
-  letter-spacing: 0.02em;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .table-loading-spinner { animation: none; }
 }
 
 .key-cell {
@@ -310,6 +272,14 @@ function refreshAll(options) {
     return Promise.resolve();
   }
   state.busy = true;
+  // Loading feedback covers the first paint and every explicit refresh; the
+  // background poll stays silent, otherwise the table mask would blink every
+  // 15 seconds.
+  var showLoading = !settings.silent || state.lastKeysSignature === null;
+  if (showLoading) {
+    setKeysLoading(true);
+    setRefreshLoading(true);
+  }
   if (!settings.silent) {
     setStatus(t('shell.loading'), false);
   }
@@ -330,6 +300,10 @@ function refreshAll(options) {
     })
     .then(function () {
       state.busy = false;
+      if (showLoading) {
+        setKeysLoading(false);
+        setRefreshLoading(false);
+      }
       var pending = state.pendingRefresh;
       state.pendingRefresh = null;
       if (pending) {
@@ -393,6 +367,26 @@ function readFilter() {
   return filter ? filter.value.trim().toLowerCase() : '';
 }
 
+// updateFilterClear mirrors the filter state on the search component: the page
+// draws its own clear affordance instead of the native Chromium search cross.
+function updateFilterClear() {
+  var filter = byId('keys-filter');
+  var clear = byId('keys-clear');
+  if (!clear) {
+    return;
+  }
+  clear.hidden = !filter || filter.value === '';
+}
+
+function clearKeyFilter() {
+  var filter = byId('keys-filter');
+  if (filter) {
+    filter.value = '';
+    filter.focus();
+  }
+  renderKeys();
+}
+
 // TOKEN_UNITS cycles the display of every token counter: exact numbers, then
 // K/M/B. Request and failure counters stay exact - they are counts, not tokens.
 var TOKEN_UNITS = ['', 'K', 'M', 'B'];
@@ -445,10 +439,11 @@ function renderStats() {
 
   var failedCard = byId('stat-failed-card');
   if (failedCard) {
-    failedCard.classList.toggle('is-danger', failed > 0);
-    failedCard.style.cursor = failed > 0 ? 'pointer' : 'default';
-    failedCard.title = failed > 0 ? t('failures.view_details') : '';
-    failedCard.onclick = failed > 0 ? function () { openFailuresModal(-1); } : null;
+    var hasFailures = failed > 0;
+    failedCard.classList.toggle('is-danger', hasFailures);
+    failedCard.classList.toggle('is-actionable', hasFailures);
+    failedCard.title = hasFailures ? t('failures.view_details') : '';
+    failedCard.onclick = hasFailures ? function () { openFailuresModal(-1); } : null;
   }
 }
 
@@ -495,38 +490,47 @@ function renderKeys() {
   if (unitLabel) {
     unitLabel.textContent = tokenUnitLabel();
   }
+  updateFilterClear();
   renderStats();
 }
 
-// iconMarkup returns one inline SVG from the page's own glyph set. Callers pass
-// only literals, so no page data ever reaches innerHTML.
-function iconMarkup(name, className) {
-  var glyphs = {
-    'copy': '<rect x="9" y="9" width="12" height="12" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>',
-    'check': '<polyline points="20 6 9 17 4 12"></polyline>',
-    'edit': '<path d="M12 20h9"></path><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path>',
-    'trash': '<polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>',
-    'chevron': '<polyline points="6 9 12 15 18 9"></polyline>'
-  };
-  var body = glyphs[name];
-  if (!body) {
-    return null;
-  }
-  var wrapper = document.createElement('span');
-  var cssClass = className ? 'icon ' + className : 'icon';
-  wrapper.innerHTML = '<svg class="' + cssClass + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + body + '</svg>';
-  return wrapper.firstChild;
+// quotaBadgeTitle spells out the three parts of a quota badge: the usage of the
+// current window, the limit and the reset instant. Both numbers go through
+// formatTokenValue, which degrades the unit to the value, so a 1K usage against a
+// 1M limit reads "1K", never "0M".
+function quotaBadgeTitle(quota) {
+  return tf('keys.quota_badge_title', {
+    used: formatTokenValue(quota.used_value),
+    limit: formatTokenValue(quota.limit_value),
+    reset: formatTimestamp(quota.reset_at)
+  });
 }
 
-function buildIconButton(className, iconName, label, handler) {
-  var button = document.createElement('button');
-  button.className = 'btn-icon' + (className ? ' ' + className : '');
-  button.type = 'button';
-  button.title = label;
-  button.setAttribute('aria-label', label);
-  button.appendChild(iconMarkup(iconName, ''));
-  button.addEventListener('click', handler);
-  return button;
+// buildQuotaBadge renders the quota tag: a gauge glyph plus "used / limit". Both
+// numbers go through formatTokenValue, which degrades the unit to the value, so a
+// 1K usage against a 1M limit reads "1K", never "0M".
+function buildQuotaBadge(quota) {
+  var badge = document.createElement('span');
+  badge.className = 'badge-quota';
+  badge.title = quotaBadgeTitle(quota);
+  badge.appendChild(iconMarkup('quota', ''));
+  var text = document.createElement('span');
+  text.textContent = formatTokenValue(quota.used_value) + ' / ' + formatTokenValue(quota.limit_value);
+  badge.appendChild(text);
+  return badge;
+}
+
+// buildQuotaResetBadge renders the reset tag: a clock glyph plus the countdown to
+// the window reset; the tooltip carries the exact local instant.
+function buildQuotaResetBadge(quota) {
+  var badge = document.createElement('span');
+  badge.className = 'badge-reset';
+  badge.title = tf('keys.quota_reset_title', { time: formatTimestamp(quota.reset_at) });
+  badge.appendChild(iconMarkup('clock', ''));
+  var text = document.createElement('span');
+  text.textContent = formatRemaining(quota.reset_at);
+  badge.appendChild(text);
+  return badge;
 }
 
 function buildKeyRow(index, value, remark, usage) {
@@ -557,18 +561,51 @@ function buildKeyRow(index, value, remark, usage) {
 
   var remarkCell = document.createElement('td');
   remarkCell.className = 'remark';
+  // One row of tags, so every tag shares the row's centre line and height.
+  var tagRow = document.createElement('div');
+  tagRow.className = 'tag-row';
   if (remark) {
     var remarkBadge = document.createElement('span');
     remarkBadge.className = 'badge badge-remark';
-    remarkBadge.textContent = remark;
     remarkBadge.title = remark;
-    remarkCell.appendChild(remarkBadge);
+    var remarkText = document.createElement('span');
+    remarkText.textContent = remark;
+    remarkBadge.appendChild(remarkText);
+    tagRow.appendChild(remarkBadge);
   } else {
     var emptyRemark = document.createElement('span');
     emptyRemark.className = 'muted';
     emptyRemark.textContent = '—';
-    remarkCell.appendChild(emptyRemark);
+    tagRow.appendChild(emptyRemark);
   }
+  var entryItem = state.entries[index] || {};
+  var entryQuota = entryItem.quota;
+  if (entryQuota && entryQuota.enabled) {
+    if (entryQuota.exceeded) {
+      var exBadge = document.createElement('span');
+      exBadge.className = 'badge-quota is-exceeded';
+      exBadge.title = quotaBadgeTitle(entryQuota);
+      var exText = document.createElement('span');
+      exText.textContent = t('keys.quota_exceeded');
+      exBadge.appendChild(exText);
+      tagRow.appendChild(exBadge);
+    } else if (entryQuota.limit_value > 0) {
+      tagRow.appendChild(buildQuotaBadge(entryQuota));
+    }
+    if (entryQuota.reset_at) {
+      tagRow.appendChild(buildQuotaResetBadge(entryQuota));
+    }
+    if (Array.isArray(entryQuota.allowed_models) && entryQuota.allowed_models.length > 0) {
+      var mBadge = document.createElement('span');
+      mBadge.className = 'badge-models';
+      mBadge.title = entryQuota.allowed_models.join(', ');
+      var mText = document.createElement('span');
+      mText.textContent = tf('keys.quota_models_badge', { count: entryQuota.allowed_models.length });
+      mBadge.appendChild(mText);
+      tagRow.appendChild(mBadge);
+    }
+  }
+  remarkCell.appendChild(tagRow);
   row.appendChild(remarkCell);
 
   row.appendChild(buildNumberCell(usage ? usage.requests : 0, !usage));
@@ -801,12 +838,9 @@ function buildEmptyRow(message) {
 function fallbackCopyText(value) {
   try {
     var area = document.createElement('textarea');
+    area.className = 'copy-shuttle';
     area.value = value;
     area.setAttribute('readonly', '');
-    area.style.position = 'fixed';
-    area.style.left = '-9999px';
-    area.style.top = '-9999px';
-    area.style.opacity = '0';
     document.body.appendChild(area);
     area.focus();
     area.select();
@@ -889,6 +923,324 @@ function setKeyFormMode(mode) {
   }
 }
 
+function loadAvailableModels() {
+  if (state.availableModels && state.availableModels.length > 0) {
+    return Promise.resolve(state.availableModels);
+  }
+  return apiFetch(V1_MODELS_PATH)
+    .then(function (payload) {
+      var list = [];
+      if (payload && Array.isArray(payload.data)) {
+        list = payload.data.map(function (item) { return item.id; });
+      }
+      return list;
+    })
+    .catch(function () {
+      return apiFetch(MODELS_PATH).then(function (payload) {
+        return payload && Array.isArray(payload.models) ? payload.models : [];
+      }).catch(function () {
+        return [];
+      });
+    })
+    .then(function (models) {
+      var set = {};
+      for (var i = 0; i < models.length; i++) {
+        if (models[i]) set[models[i]] = true;
+      }
+      for (var j = 0; j < state.entries.length; j++) {
+        var u = state.entries[j] && state.entries[j].usage;
+        if (u && Array.isArray(u.models)) {
+          for (var k = 0; k < u.models.length; k++) {
+            if (u.models[k] && u.models[k].model) set[u.models[k].model] = true;
+          }
+        }
+      }
+      var res = Object.keys(set).sort();
+      state.availableModels = res;
+      return res;
+    });
+}
+
+// modelChipGrid is the shared chip grid of the key form. The selection is read
+// from the component instead of from the DOM, so no feature re-implements the
+// chip markup.
+var modelChipGrid = null;
+var modelChipToken = 0;
+
+function renderModelsSelection(allowedModels) {
+  var container = byId('key-form-models-container');
+  if (!container) {
+    return;
+  }
+  var token = ++modelChipToken;
+  var allowed = Array.isArray(allowedModels) ? allowedModels : [];
+  loadAvailableModels().then(function (models) {
+    // A slower earlier load must never overwrite the selection of a newer dialog.
+    if (token !== modelChipToken) {
+      return;
+    }
+    modelChipGrid = mountChipGrid({
+      container: container,
+      items: (models || []).map(function (name) {
+        return { value: name, label: name };
+      }),
+      selected: allowed
+    });
+  });
+}
+
+function readSelectedModels() {
+  return modelChipGrid ? modelChipGrid.getSelected() : [];
+}
+
+// The quota form uses three shared components: two listboxes and the chip grid.
+// They are mounted once, then driven through their own API.
+var quotaWindowSelect = null;
+var quotaUnitSelect = null;
+var quotaDurationSelect = null;
+
+var QUOTA_WINDOW_OPTIONS = [
+  { value: 'daily', i18n: 'key_form.quota_window_daily' },
+  { value: 'weekly', i18n: 'key_form.quota_window_weekly' },
+  { value: 'monthly', i18n: 'key_form.quota_window_monthly' },
+  { value: 'duration', i18n: 'key_form.quota_window_duration' }
+];
+
+var QUOTA_UNIT_OPTIONS = [
+  { value: '1', i18n: 'key_form.quota_unit_tokens' },
+  { value: '1000', label: 'K' },
+  { value: '1000000', label: 'M' },
+  { value: '1000000000', label: 'B' }
+];
+
+var QUOTA_DURATION_UNITS = [
+  { value: '1', i18n: 'key_form.quota_duration_unit_sec' },
+  { value: '60', i18n: 'key_form.quota_duration_unit_min' },
+  { value: '3600', i18n: 'key_form.quota_duration_unit_hour' },
+  { value: '86400', i18n: 'key_form.quota_duration_unit_day' }
+];
+
+function initQuotaForm() {
+  quotaWindowSelect = mountSelect({
+    container: byId('key-form-quota-window'),
+    options: QUOTA_WINDOW_OPTIONS,
+    value: 'daily',
+    labelledBy: 'key-form-quota-window-label',
+    onChange: updateQuotaDurationField
+  });
+  quotaUnitSelect = mountSelect({
+    container: byId('key-form-quota-limit-unit'),
+    options: QUOTA_UNIT_OPTIONS,
+    value: '1000000',
+    titleKey: 'key_form.quota_unit_title',
+    onChange: syncQuotaInput
+  });
+  quotaDurationSelect = mountSelect({
+    container: byId('key-form-quota-duration-unit'),
+    options: QUOTA_DURATION_UNITS,
+    value: '3600',
+    titleKey: 'key_form.quota_duration_title',
+    onChange: syncQuotaDuration
+  });
+}
+
+function updateQuotaDurationField() {
+  var field = byId('key-form-quota-duration-field');
+  if (field && quotaWindowSelect) {
+    field.hidden = quotaWindowSelect.getValue() !== 'duration';
+  }
+}
+
+function setQuotaStatusBanner(quota) {
+  var status = byId('key-form-quota-status');
+  if (!status) {
+    return;
+  }
+  if (!quota || !quota.enabled) {
+    status.hidden = true;
+    status.textContent = '';
+    return;
+  }
+  status.hidden = false;
+  status.className = 'quota-status-banner' + (quota.exceeded ? ' is-exceeded' : '');
+  status.textContent = tf('key_form.quota_current_status', {
+    used: formatTokenValue(quota.used_value),
+    limit: formatTokenValue(quota.limit_value),
+    reset: formatTimestamp(quota.reset_at)
+  });
+}
+
+function resetQuotaForm() {
+  var enabled = byId('key-form-quota-enabled');
+  if (enabled) {
+    enabled.checked = false;
+  }
+  var fields = byId('key-form-quota-fields');
+  if (fields) {
+    fields.hidden = true;
+  }
+  if (quotaWindowSelect) {
+    quotaWindowSelect.setValue('daily');
+  }
+  updateQuotaDurationField();
+  setQuotaDurationValues(3600);
+  setQuotaInputValues(0);
+  setQuotaStatusBanner(null);
+  renderModelsSelection([]);
+}
+
+function applyQuotaForm(quota) {
+  if (!quota || !quota.enabled) {
+    resetQuotaForm();
+    return;
+  }
+  var enabled = byId('key-form-quota-enabled');
+  if (enabled) {
+    enabled.checked = true;
+  }
+  var fields = byId('key-form-quota-fields');
+  if (fields) {
+    fields.hidden = false;
+  }
+  if (quotaWindowSelect) {
+    quotaWindowSelect.setValue(quota.window || 'daily');
+  }
+  updateQuotaDurationField();
+  setQuotaDurationValues(quota.duration_sec || 3600);
+  setQuotaInputValues(quota.limit_value || 0);
+  setQuotaStatusBanner(quota);
+  renderModelsSelection(quota.allowed_models || []);
+}
+
+// The duration field mirrors the token limit field: a value plus a unit listbox.
+// The wire value stays seconds.
+function syncQuotaDuration() {
+  var valueInput = byId('key-form-quota-duration');
+  var hiddenInput = byId('key-form-quota-duration-sec');
+  if (!valueInput || !hiddenInput || !quotaDurationSelect) return;
+
+  var value = parseInt(valueInput.value, 10);
+  var multiplier = parseInt(quotaDurationSelect.getValue(), 10) || 1;
+  var seconds = isFinite(value) && value > 0 ? Math.round(value * multiplier) : 0;
+  hiddenInput.value = String(seconds);
+}
+
+function setQuotaDurationValues(seconds) {
+  var valueInput = byId('key-form-quota-duration');
+  var hiddenInput = byId('key-form-quota-duration-sec');
+  if (!valueInput || !hiddenInput) return;
+
+  var total = parseInt(seconds, 10) || 0;
+  if (total <= 0) {
+    total = 3600;
+  }
+  hiddenInput.value = String(total);
+  var unit = '3600';
+  var value = '1';
+  if (total % 86400 === 0) {
+    unit = '86400';
+    value = String(total / 86400);
+  } else if (total % 3600 === 0) {
+    unit = '3600';
+    value = String(total / 3600);
+  } else if (total % 60 === 0) {
+    unit = '60';
+    value = String(total / 60);
+  } else {
+    unit = '1';
+    value = String(total);
+  }
+  valueInput.value = value;
+  if (quotaDurationSelect) {
+    quotaDurationSelect.setValue(unit);
+  }
+  syncQuotaDuration();
+}
+
+function syncQuotaInput() {
+  var valInput = byId('key-form-quota-limit-val');
+  var hiddenInput = byId('key-form-quota-limit');
+  var hint = byId('key-form-quota-calc-hint');
+  if (!valInput || !hiddenInput || !quotaUnitSelect) return;
+
+  var num = parseFloat(valInput.value);
+  if (!isFinite(num) || num <= 0) {
+    hiddenInput.value = '0';
+    if (hint) {
+      hint.textContent = t('key_form.quota_limit_hint');
+    }
+    return;
+  }
+  var multiplier = parseInt(quotaUnitSelect.getValue(), 10) || 1;
+  var total = Math.round(num * multiplier);
+  hiddenInput.value = String(total);
+  if (hint) {
+    hint.textContent = tf('key_form.quota_limit_calc', {
+      total: formatNumber(total),
+      scaled: formatTokenValue(total)
+    });
+  }
+}
+
+function setQuotaInputValues(tokens) {
+  var valInput = byId('key-form-quota-limit-val');
+  var hiddenInput = byId('key-form-quota-limit');
+  if (!valInput || !hiddenInput) return;
+
+  var total = parseInt(tokens, 10) || 0;
+  hiddenInput.value = String(total);
+  var unit = '1000000';
+  var value = '';
+  if (total > 0) {
+    if (total >= 1000000000 && total % 1000000000 === 0) {
+      unit = '1000000000';
+      value = String(total / 1000000000);
+    } else if (total >= 1000000 && total % 1000000 === 0) {
+      unit = '1000000';
+      value = String(total / 1000000);
+    } else if (total >= 1000 && total % 1000 === 0) {
+      unit = '1000';
+      value = String(total / 1000);
+    } else {
+      unit = '1';
+      value = String(total);
+    }
+  }
+  valInput.value = value;
+  if (quotaUnitSelect) {
+    quotaUnitSelect.setValue(unit);
+  }
+  syncQuotaInput();
+}
+
+function saveQuotaForm(targetKey) {
+  var qEnabled = byId('key-form-quota-enabled');
+  var enabled = qEnabled ? qEnabled.checked : false;
+  var windowType = quotaWindowSelect ? quotaWindowSelect.getValue() : 'daily';
+  var qDuration = byId('key-form-quota-duration-sec');
+  var durationSec = qDuration ? parseInt(qDuration.value, 10) || 3600 : 3600;
+  var qLimit = byId('key-form-quota-limit');
+  var limitValue = qLimit ? parseInt(qLimit.value, 10) || 0 : 0;
+  var selectedModels = readSelectedModels();
+
+  if (enabled) {
+    var payload = {
+      key: targetKey,
+      enabled: true,
+      strategy: 'token',
+      window: windowType,
+      duration_sec: durationSec,
+      limit_value: limitValue,
+      allowed_models: selectedModels
+    };
+    return apiFetch(QUOTA_PATH, { method: 'PUT', body: JSON.stringify(payload) });
+  }
+
+  return apiFetch(QUOTA_PATH + '?key=' + encodeURIComponent(targetKey), { method: 'DELETE' }).catch(function () {
+    return null;
+  });
+}
+
 function openAddKeyForm() {
   state.editingKey = '';
   setKeyFormMode('add');
@@ -905,6 +1257,7 @@ function openAddKeyForm() {
   if (remark) {
     remark.value = '';
   }
+  resetQuotaForm();
   var generate = byId('key-form-generate');
   if (generate) {
     generate.disabled = false;
@@ -931,12 +1284,12 @@ function openEditKeyForm(index) {
   if (remark) {
     remark.value = typeof entry.remark === 'string' ? entry.remark : '';
   }
+  applyQuotaForm(entry.quota);
   openModal('key-form-modal');
   if (remark) {
     remark.focus();
   }
 }
-
 function closeKeyForm() {
   state.editingKey = '';
   closeModal('key-form-modal');
@@ -978,12 +1331,14 @@ function saveKeyForm() {
   var remark = remarkInput ? remarkInput.value.trim() : '';
 
   if (state.editingKey) {
-    // Editing never touches the key list: the host owns the key, the plugin
-    // owns the remark.
+    var targetKey = state.editingKey;
     setKeyFormSaving(true);
     closeKeyForm();
     setKeysLoading(true);
-    saveRemark(state.editingKey, remark)
+    saveRemark(targetKey, remark)
+      .then(function () {
+        return saveQuotaForm(targetKey);
+      })
       .then(function () {
         showToast(t('keys.updated'), 'success');
         return refreshAll({ silent: true });
@@ -1021,6 +1376,9 @@ function saveKeyForm() {
   persistKeys(next)
     .then(function () {
       return saveRemark(value, remark);
+    })
+    .then(function () {
+      return saveQuotaForm(value);
     })
     .then(function () {
       showToast(t('keys.added'), 'success');
@@ -1164,15 +1522,9 @@ function updateDateSelectionStatus() {
 }
 
 function updatePresetButtons() {
-  var buttons = document.querySelectorAll('.btn-preset');
+  var buttons = document.querySelectorAll('.pill[data-preset]');
   for (var i = 0; i < buttons.length; i++) {
-    var p = buttons[i].getAttribute('data-preset');
-    buttons[i].classList.toggle('active', p === draftMode);
-    if (!buttons[i].onclick) {
-      buttons[i].onclick = (function (preset) {
-        return function () { applyDateRangePreset(preset); };
-      })(p);
-    }
+    buttons[i].classList.toggle('is-active', buttons[i].getAttribute('data-preset') === draftMode);
   }
 }
 
@@ -1281,9 +1633,10 @@ function renderSingleCalendar(container, monthDate, showPrev, showNext) {
 
   var prevBtn = document.createElement('button');
   prevBtn.type = 'button';
-  prevBtn.className = 'btn-icon';
-  prevBtn.innerHTML = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>';
-  prevBtn.style.visibility = showPrev ? 'visible' : 'hidden';
+  prevBtn.className = 'btn-icon' + (showPrev ? '' : ' is-invisible');
+  prevBtn.title = t('range.previous_month');
+  prevBtn.setAttribute('aria-label', t('range.previous_month'));
+  prevBtn.appendChild(iconMarkup('prev', ''));
   prevBtn.onclick = function (e) {
     e.stopPropagation();
     calendarBaseMonth = new Date(calendarBaseMonth.getFullYear(), calendarBaseMonth.getMonth() - 1, 1);
@@ -1292,9 +1645,10 @@ function renderSingleCalendar(container, monthDate, showPrev, showNext) {
 
   var nextBtn = document.createElement('button');
   nextBtn.type = 'button';
-  nextBtn.className = 'btn-icon';
-  nextBtn.innerHTML = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>';
-  nextBtn.style.visibility = showNext ? 'visible' : 'hidden';
+  nextBtn.className = 'btn-icon' + (showNext ? '' : ' is-invisible');
+  nextBtn.title = t('range.next_month');
+  nextBtn.setAttribute('aria-label', t('range.next_month'));
+  nextBtn.appendChild(iconMarkup('next', ''));
   nextBtn.onclick = function (e) {
     e.stopPropagation();
     calendarBaseMonth = new Date(calendarBaseMonth.getFullYear(), calendarBaseMonth.getMonth() + 1, 1);
@@ -1384,6 +1738,8 @@ function handleDateClick(selectedDate) {
   renderDateCalendars();
 }
 
+// The failure viewer is rebuilt on every open. Its two filters are shared
+// listboxes, its records are plain components.
 function openFailuresModal(index) {
   var container = byId('failures-content');
   if (!container) return;
@@ -1400,7 +1756,7 @@ function openFailuresModal(index) {
   if (rangeTag) {
     rangeTag.textContent = t('failures.in_range') + ': ' + (state.dateRange ? state.dateRange.label : '');
   }
-  // Filter bar with custom dropdowns
+
   var filterBar = document.createElement('div');
   filterBar.className = 'failures-filter-bar';
 
@@ -1416,39 +1772,49 @@ function openFailuresModal(index) {
     }
   }
 
-  var keyDropdown = createCustomDropdown(keyOptions, initialHash, function (val) {
-    loadFailures(val);
-  });
-
-  var modelDropdown = createCustomDropdown([{ value: '', label: t('failures.all_models') }], '', function () {
-    renderItems();
-  });
-
-  filterBar.appendChild(keyDropdown.element);
-  filterBar.appendChild(modelDropdown.element);
-  container.appendChild(filterBar);
   var listWrap = document.createElement('div');
   listWrap.className = 'failures-list-wrap';
-  container.appendChild(listWrap);
 
   var currentItems = [];
 
+  var keySelect = mountSelect({
+    container: document.createElement('div'),
+    options: keyOptions,
+    value: initialHash,
+    titleKey: 'failures.filter_key',
+    onChange: function (hash) {
+      loadFailures(hash);
+    }
+  });
+
+  var modelSelect = mountSelect({
+    container: document.createElement('div'),
+    options: [{ value: '', label: t('failures.all_models') }],
+    value: '',
+    titleKey: 'failures.filter_model',
+    onChange: function () {
+      renderItems();
+    }
+  });
+
+  filterBar.appendChild(keySelect.element);
+  filterBar.appendChild(modelSelect.element);
+  container.appendChild(filterBar);
+  container.appendChild(listWrap);
+
   function renderItems() {
     listWrap.textContent = '';
-    var selModel = modelDropdown.getValue();
+    var selectedModel = modelSelect.getValue();
     var filtered = [];
     for (var i = 0; i < currentItems.length; i++) {
-      if (!selModel || currentItems[i].model === selModel) {
+      if (!selectedModel || currentItems[i].model === selectedModel) {
         filtered.push(currentItems[i]);
       }
     }
 
     if (filtered.length === 0) {
       var emptyBox = document.createElement('div');
-      emptyBox.style.padding = '32px 16px';
-      emptyBox.style.textAlign = 'center';
-      emptyBox.style.color = 'var(--text-tertiary)';
-      emptyBox.style.fontSize = '13px';
+      emptyBox.className = 'placeholder-note';
       emptyBox.textContent = t('failures.none');
       listWrap.appendChild(emptyBox);
       return;
@@ -1481,17 +1847,9 @@ function openFailuresModal(index) {
       var statusBadge = document.createElement('span');
       statusBadge.className = 'failure-status-badge';
       if (code >= 500 || code === 429) {
-        statusBadge.style.background = 'rgba(239, 68, 68, 0.15)';
-        statusBadge.style.color = 'var(--accent-red)';
-        statusBadge.style.border = '1px solid rgba(239, 68, 68, 0.3)';
+        statusBadge.classList.add('is-error');
       } else if (code >= 400) {
-        statusBadge.style.background = 'rgba(245, 158, 11, 0.15)';
-        statusBadge.style.color = 'var(--accent-yellow, #f59e0b)';
-        statusBadge.style.border = '1px solid rgba(245, 158, 11, 0.3)';
-      } else {
-        statusBadge.style.background = 'var(--bg-card)';
-        statusBadge.style.color = 'var(--text-secondary)';
-        statusBadge.style.border = '1px solid var(--border-color)';
+        statusBadge.classList.add('is-warning');
       }
       statusBadge.textContent = code > 0 ? 'HTTP ' + code : 'Failed';
       metaLeft.appendChild(statusBadge);
@@ -1499,19 +1857,12 @@ function openFailuresModal(index) {
       meta.appendChild(metaLeft);
 
       if (item.message) {
-        var copyBtn = document.createElement('button');
-        copyBtn.className = 'btn-icon';
-        copyBtn.type = 'button';
-        copyBtn.title = t('failures.copy_msg');
-        copyBtn.innerHTML = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>';
-        copyBtn.onclick = (function (msg) {
-          return function (e) {
-            e.stopPropagation();
-            copyToClipboard(msg);
+        meta.appendChild(buildIconButton('', 'copy', t('failures.copy_msg'), (function (message) {
+          return function () {
+            copyToClipboard(message);
             showToast(t('failures.msg_copied'), 'success');
           };
-        })(item.message);
-        meta.appendChild(copyBtn);
+        })(item.message)));
       }
 
       card.appendChild(meta);
@@ -1530,9 +1881,7 @@ function openFailuresModal(index) {
   function loadFailures(hash) {
     listWrap.textContent = '';
     var loading = document.createElement('div');
-    loading.style.padding = '24px';
-    loading.style.textAlign = 'center';
-    loading.style.color = 'var(--text-secondary)';
+    loading.className = 'placeholder-note is-compact';
     loading.textContent = t('shell.loading');
     listWrap.appendChild(loading);
 
@@ -1547,7 +1896,6 @@ function openFailuresModal(index) {
     .then(function (res) {
       currentItems = (res && res.items) || [];
 
-      // Update model dropdown options
       var modelSet = {};
       for (var i = 0; i < currentItems.length; i++) {
         if (currentItems[i].model) {
@@ -1559,20 +1907,27 @@ function openFailuresModal(index) {
       for (var m = 0; m < models.length; m++) {
         newModelOpts.push({ value: models[m], label: models[m] });
       }
-      modelDropdown.setOptions(newModelOpts);
+      modelSelect.setOptions(newModelOpts);
+      // A model filter that the new result set no longer offers would silently
+      // hide every record; fall back to "all models".
+      for (var n = 0; n < newModelOpts.length; n++) {
+        if (newModelOpts[n].value === modelSelect.getValue()) {
+          return renderItems();
+        }
+      }
+      modelSelect.setValue('');
       renderItems();
     })
     .catch(function (err) {
       listWrap.textContent = '';
       var errBox = document.createElement('div');
-      errBox.style.padding = '20px';
-      errBox.style.color = 'var(--accent-red)';
+      errBox.className = 'placeholder-note is-error';
       errBox.textContent = err.message || 'Failed to load failure logs';
       listWrap.appendChild(errBox);
     });
   }
 
-  loadFailures(keyDropdown.getValue());
+  loadFailures(keySelect.getValue());
 }
 
 function closeFailuresModal() {
@@ -1580,100 +1935,86 @@ function closeFailuresModal() {
 }
 
 
-function createCustomDropdown(options, initialValue, onChange) {
-  var wrap = document.createElement('div');
-  wrap.className = 'custom-dropdown';
+// bindKeysEvents wires the keys panel and the dialogs it owns (the key form, the
+// date range picker and the failure viewer). The shell only calls it.
+function bindKeysEvents() {
+  initQuotaForm();
 
-  var btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'custom-dropdown-btn';
+  bindClick('keys-add', openAddKeyForm);
+  bindClick('keys-unit', cycleTokenUnit);
+  bindClick('keys-clear', clearKeyFilter);
 
-  var label = document.createElement('span');
-  label.className = 'custom-dropdown-label';
-  btn.appendChild(label);
+  var filter = byId('keys-filter');
+  if (filter) {
+    filter.addEventListener('input', function () {
+      renderKeys();
+    });
+  }
 
-  var arrow = document.createElement('span');
-  arrow.className = 'custom-dropdown-arrow';
-  arrow.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:100%;height:100%"><polyline points="6 9 12 15 18 9"></polyline></svg>';
-  btn.appendChild(arrow);
-  wrap.appendChild(btn);
-
-  var menu = document.createElement('div');
-  menu.className = 'custom-dropdown-menu';
-  menu.hidden = true;
-  wrap.appendChild(menu);
-
-  var currentValue = initialValue !== undefined ? initialValue : '';
-  var currentOptions = options || [];
-
-  function renderOptions(newOpts) {
-    if (newOpts) currentOptions = newOpts;
-    menu.textContent = '';
-    var selectedLabel = '';
-    for (var i = 0; i < currentOptions.length; i++) {
-      var opt = currentOptions[i];
-      var optEl = document.createElement('div');
-      optEl.className = 'custom-dropdown-option' + (opt.value === currentValue ? ' selected' : '');
-      optEl.textContent = opt.label;
-      if (opt.value === currentValue) {
-        selectedLabel = opt.label;
-      }
-      optEl.onclick = (function (v) {
-        return function (e) {
-          e.stopPropagation();
-          currentValue = v;
-          renderOptions();
-          close();
-          if (onChange) onChange(v);
-        };
-      })(opt.value);
-      menu.appendChild(optEl);
+  bindClick('key-form-models-all', function () {
+    if (modelChipGrid) {
+      modelChipGrid.setSelected(state.availableModels || []);
     }
-    label.textContent = selectedLabel || (currentOptions[0] ? currentOptions[0].label : '');
-  }
-
-  function open() {
-    var allOpen = document.querySelectorAll('.custom-dropdown.open');
-    for (var i = 0; i < allOpen.length; i++) {
-      allOpen[i].classList.remove('open');
-      var m = allOpen[i].querySelector('.custom-dropdown-menu');
-      if (m) m.hidden = true;
-    }
-    menu.hidden = false;
-    wrap.classList.add('open');
-    menu.scrollTop = 0;
-  }
-
-  function close() {
-    menu.hidden = true;
-    wrap.classList.remove('open');
-  }
-
-  btn.onclick = function (e) {
-    e.stopPropagation();
-    if (menu.hidden) open(); else close();
-  };
-
-  document.addEventListener('click', function (e) {
-    if (!wrap.contains(e.target)) {
-      close();
+  });
+  bindClick('key-form-models-none', function () {
+    if (modelChipGrid) {
+      modelChipGrid.setSelected([]);
     }
   });
 
-  renderOptions();
+  var quotaEnabled = byId('key-form-quota-enabled');
+  if (quotaEnabled) {
+    quotaEnabled.addEventListener('change', function () {
+      var fields = byId('key-form-quota-fields');
+      if (fields) {
+        fields.hidden = !quotaEnabled.checked;
+      }
+    });
+  }
 
-  return {
-    element: wrap,
-    getValue: function () { return currentValue; },
-    setValue: function (val) {
-      currentValue = val;
-      renderOptions();
-    },
-    setOptions: function (opts) {
-      renderOptions(opts);
-    }
-  };
+  var limitValue = byId('key-form-quota-limit-val');
+  if (limitValue) {
+    limitValue.addEventListener('input', syncQuotaInput);
+  }
+
+  var durationValue = byId('key-form-quota-duration');
+  if (durationValue) {
+    durationValue.addEventListener('input', syncQuotaDuration);
+  }
+
+  var presetPills = document.querySelectorAll('.pill[data-val]');
+  for (var index = 0; index < presetPills.length; index++) {
+    presetPills[index].addEventListener('click', function () {
+      var value = this.getAttribute('data-val');
+      var unit = this.getAttribute('data-unit');
+      if (limitValue) {
+        limitValue.value = value === '0' ? '' : value;
+      }
+      if (quotaUnitSelect && unit) {
+        quotaUnitSelect.setValue(unit);
+      }
+      syncQuotaInput();
+    });
+  }
+
+  var presetButtons = document.querySelectorAll('.pill[data-preset]');
+  for (var position = 0; position < presetButtons.length; position++) {
+    presetButtons[position].addEventListener('click', function () {
+      applyDateRangePreset(this.getAttribute('data-preset'));
+    });
+  }
+
+  bindClick('failures-close', closeFailuresModal);
+  bindClick('failures-open-logs', openHostLogs);
+  bindBackdrop('failures-modal');
+
+  bindClick('date-range-btn', openDateRangeModal);
+  bindClick('date-range-cancel', closeDateRangeModal);
+  bindClick('date-range-reset', resetDateRangeToday);
+  bindClick('date-range-confirm', confirmDateRange);
+  bindBackdrop('date-range-modal');
 }
+
 function openHostLogs() {
   closeFailuresModal();
   var hostWin = hostWindow();

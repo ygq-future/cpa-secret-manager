@@ -90,7 +90,9 @@ func (h *devHost) handler() http.Handler {
 	mux.HandleFunc("/", h.handleRoot)
 	mux.HandleFunc("GET /control-panel", h.handleControlPanel)
 	mux.HandleFunc("POST /dev/simulate-usage", h.handleSimulateUsage)
+	mux.HandleFunc("POST /dev/simulate-intercept", h.handleSimulateIntercept)
 	mux.HandleFunc("POST /dev/seed", h.handleSeed)
+	mux.HandleFunc("GET /v1/models", h.handleV1Models)
 	mux.HandleFunc("/v0/management/", h.handleManagement)
 	mux.HandleFunc("/v0/resource/", h.handleResource)
 	return mux
@@ -364,6 +366,46 @@ func (h *devHost) handleSimulateUsage(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "count": count, "model": model})
 }
+func (h *devHost) handleSimulateIntercept(w http.ResponseWriter, r *http.Request) {
+	key := r.URL.Query().Get("key")
+	if key == "" {
+		key = r.Header.Get("Authorization")
+		if strings.HasPrefix(strings.ToLower(key), "bearer ") {
+			key = strings.TrimSpace(key[7:])
+		}
+	}
+	model := r.URL.Query().Get("model")
+	if model == "" {
+		model = "gpt-5.6"
+	}
+	reqPayload, _ := json.Marshal(map[string]any{
+		"headers": map[string][]string{
+			"Authorization": {"Bearer " + key},
+		},
+		"model": model,
+	})
+	raw := h.runtime.Handle(context.Background(), pluginruntime.MethodRequestInterceptBefore, reqPayload)
+	var envelope struct {
+		OK     bool            `json:"ok"`
+		Result json.RawMessage `json:"result"`
+		Error  *struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if !envelope.OK {
+		writeJSON(w, http.StatusInternalServerError, envelope.Error)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(envelope.Result)
+}
+
 
 // handleSeed prepares a demonstrable dataset: proxy keys, remarks and usage.
 func (h *devHost) handleSeed(w http.ResponseWriter, r *http.Request) {
@@ -508,4 +550,28 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_, _ = w.Write(append(body, '\n'))
+}
+
+func (h *devHost) handleV1Models(w http.ResponseWriter, r *http.Request) {
+	models := []string{
+		"gpt-5.6",
+		"gpt-5.5",
+		"claude-3-7-sonnet",
+		"claude-3-5-sonnet",
+		"gemini-2.5-pro",
+		"gemini-2.5-flash",
+		"deepseek-r1",
+	}
+	type modelItem struct {
+		ID     string `json:"id"`
+		Object string `json:"object"`
+	}
+	list := make([]modelItem, 0, len(models))
+	for _, m := range models {
+		list = append(list, modelItem{ID: m, Object: "model"})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"object": "list",
+		"data":   list,
+	})
 }

@@ -11,8 +11,8 @@
 2. **生成算法与官方 1:1 对齐**：`sk-` + 48 位 `[A-Za-z0-9]`，拒绝采样阈值 248（消除取模偏差），与官方管理端 `generateSecureApiKey()` 完全同构；
 3. **用量归因取自客户端密钥**：`usage_plugin` 下发的 `UsageRecord.APIKey` 即客户端代理密钥，按摘要累计请求数、失败数与 token 明细，并按模型分组；**不消费官方用量队列、不依赖任何宿主开关、不做时间窗口/费用/趋势**；
 4. **宿主配置极简无扰**：宿主 `config.yaml` 只承载 `enabled` / `priority`（可选 `state_path`），业务状态落 `data/cpa-secret-manager-cache.json`，`ConfigFields` 保持 `nil`，避免管理端抽屉写回触发宿主重载；
-5. **CPA 深度融合**：嵌入式 Web 管理页纯原生自包含（零外部 CDN），通过同源 iframe 实时抽取宿主 CSS 变量跟随 CPA 主题（含自定义主题），语言跟随宿主 `cli-proxy-language`。
-
+5. **CPA 深度融合**：嵌入式 Web 管理页纯原生自包含（零外部 CDN），通过同源 iframe 实时抽取宿主 CSS 变量跟随 CPA 主题（含自定义主题），语言跟随宿主 `cli-proxy-language`；
+6. **精致现代前端组件设计，杜绝未经美化的原生控件**：严禁直接裸用未经样式美化的浏览器原生组件（如原生单薄小方块 checkbox、带有难看上下微调箭头的原生 input[number]、高反差生硬外框等）；涉及开关（ToggleSwitch）、数值+单位复合输入（InputWithUnit）、标签多选网格（ChipGroup）等通用交互时，**必须统一下沉封装为具备现代设计美学与微动效的自定义可复用组件**，严格遵从 CPA CSS 变量体系与暗色/亮色自适应。
 ---
 
 ## 🛑 严格交互与确认约束 (Strict Interaction Protocol)

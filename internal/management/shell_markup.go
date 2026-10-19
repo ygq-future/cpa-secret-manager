@@ -8,41 +8,44 @@ import (
 
 // shellMarkupTemplate is the page chrome shared by every tab. Handlers are bound
 // by id in the page runtime, never inline, so the page keeps a single script
-// scope. The version badge is injected from the shared version constant.
+// scope. Every glyph comes from the shared icon table and every control from the
+// shared component layer, both resolved from ComponentsCSS/ComponentsScript.
 //
-// The icons are inline SVG: the page ships no external assets, and a glyph next
-// to a label keeps the toolbar readable in both languages.
+// The markup is pre-processed by resolveMarkup: {{ICON:name}} and the component
+// placeholders below are expanded while the page is assembled, so a typo fails
+// loudly instead of shipping an empty control.
 const shellMarkupTemplate = `<div class="app">
   <header class="app-header">
     <div class="topbar">
       <div class="brand">
-        <span class="brand-mark" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4.5"></circle><path d="M10.7 12.3 20 3"></path><path d="M16.5 6.5 20 10"></path></svg></span>
+        <span class="brand-mark" aria-hidden="true">{{ICON:key}}</span>
         <h1 data-i18n="app.title">API Key Manager</h1>
         <span class="version-badge">v{{VERSION}}</span>
       </div>
       <div class="topbar-actions">
         <button id="lang-toggle" class="btn btn-secondary" type="button" data-i18n-title="shell.language_toggle">中文 / EN</button>
         <button id="key-button" class="btn btn-secondary" type="button" data-i18n-title="shell.management_key">
-          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="15.5" r="4.5"></circle><path d="M10.7 12.3 20 3"></path><path d="M16.5 6.5 20 10"></path></svg>
+          {{ICON:key}}
           <span data-i18n="shell.management_key">Management key</span>
         </button>
         <button id="refresh-button" class="btn btn-secondary" type="button" data-i18n-title="shell.refresh">
-          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.5 9a9 9 0 0 1 14.9-3.4L23 10M1 14l4.6 4.4A9 9 0 0 0 20.5 15"></path></svg>
+          {{ICON:refresh}}
+          <span class="spinner" aria-hidden="true"></span>
           <span data-i18n="shell.refresh">Refresh</span>
         </button>
       </div>
     </div>
     <nav class="tabs" id="tabs" role="tablist">
       <button id="tab-keys" class="tab active" type="button" role="tab" aria-selected="true">
-        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="15.5" r="4.5"></circle><path d="M10.7 12.3 20 3"></path><path d="M16.5 6.5 20 10"></path></svg>
+        {{ICON:key}}
         <span data-i18n="tab.keys">Keys</span>
       </button>
       <button id="tab-settings" class="tab" type="button" role="tab" aria-selected="false">
-        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"></path><path d="M1 14h6M9 8h6M17 16h6"></path></svg>
+        {{ICON:sliders}}
         <span data-i18n="tab.settings">Settings</span>
       </button>
       <button id="tab-help" class="tab" type="button" role="tab" aria-selected="false">
-        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-2.9 3-2.9 3"></path><path d="M12 17h.01"></path></svg>
+        {{ICON:help}}
         <span data-i18n="tab.help">Help</span>
       </button>
     </nav>
@@ -50,7 +53,9 @@ const shellMarkupTemplate = `<div class="app">
   <main>
 `
 
-// shellModals closes the page chrome and declares the shared overlays.
+// shellModals closes the page chrome and declares the shared overlays: the
+// management key dialog, the add/edit key dialog, the confirm dialog and the two
+// records dialogs.
 const shellModals = `  </main>
   <p id="status-bar" class="status-bar"></p>
 </div>
@@ -90,6 +95,60 @@ const shellModals = `  </main>
         <textarea id="key-form-remark" maxlength="200" data-i18n-placeholder="key_form.remark_placeholder"></textarea>
         <p class="hint" data-i18n="key_form.remark_hint">Optional; empty clears the remark.</p>
       </div>
+      <div class="quota-card">
+        <div class="switch-row quota-switch-header">
+          <div class="switch-text">
+            <span class="switch-label" data-i18n="key_form.quota_enable">Enable limit rules for this key</span>
+            <span class="hint" data-i18n="key_form.quota_enable_hint">Restrict window tokens and allowed models</span>
+          </div>
+          {{TOGGLE_QUOTA}}
+        </div>
+        <div id="key-form-quota-fields" class="quota-fields" hidden>
+          <div id="key-form-quota-status" class="quota-status-banner" hidden></div>
+          <div class="field-row">
+            <div class="field flex-1">
+              <span class="field-label" id="key-form-quota-window-label" data-i18n="key_form.quota_window">Time window period</span>
+              <div id="key-form-quota-window"></div>
+            </div>
+            <div class="field flex-1" id="key-form-quota-duration-field" hidden>
+              <label for="key-form-quota-duration" data-i18n="key_form.quota_duration_sec">Window duration</label>
+              <div class="input-unit-group">
+                <input id="key-form-quota-duration" class="unit-input" type="number" min="1" step="1" value="3600" inputmode="numeric">
+                <div id="key-form-quota-duration-unit"></div>
+              </div>
+              <input id="key-form-quota-duration-sec" type="hidden" value="3600">
+            </div>
+          </div>
+          <div class="field">
+            <label for="key-form-quota-limit-val" data-i18n="key_form.quota_limit">Token Limit</label>
+            <div class="input-unit-group">
+              <input id="key-form-quota-limit-val" class="unit-input" type="number" min="0" step="any" inputmode="decimal" placeholder="0">
+              <div id="key-form-quota-limit-unit"></div>
+            </div>
+            <input id="key-form-quota-limit" type="hidden" value="0">
+            <div class="action-row">
+              <button type="button" class="pill" data-val="0" data-unit="1" data-i18n="quota.preset_unlimited">Unlimited</button>
+              <button type="button" class="pill" data-val="500" data-unit="1000">500K</button>
+              <button type="button" class="pill" data-val="1" data-unit="1000000">1M</button>
+              <button type="button" class="pill" data-val="5" data-unit="1000000">5M</button>
+              <button type="button" class="pill" data-val="10" data-unit="1000000">10M</button>
+              <button type="button" class="pill" data-val="50" data-unit="1000000">50M</button>
+            </div>
+            <p id="key-form-quota-calc-hint" class="hint" data-i18n="key_form.quota_limit_hint">Max total tokens in current window (0 = unlimited)</p>
+          </div>
+          <div class="field">
+            <div class="row-between">
+              <span class="field-label" data-i18n="key_form.quota_models">Allowed Models</span>
+              <span class="action-row">
+                <button id="key-form-models-all" class="btn-text" type="button" data-i18n="key_form.quota_select_all">Select all</button>
+                <button id="key-form-models-none" class="btn-text" type="button" data-i18n="key_form.quota_clear_all">Clear</button>
+              </span>
+            </div>
+            <p class="hint" data-i18n="key_form.quota_models_hint">Unchecked allows all available models</p>
+            <div id="key-form-models-container"></div>
+          </div>
+        </div>
+      </div>
       <div class="modal-actions">
         <button id="key-form-cancel" class="btn btn-secondary" type="button" data-i18n="shell.cancel">Cancel</button>
         <button id="key-form-save" class="btn btn-primary" type="submit" data-i18n="shell.save">Save</button>
@@ -111,7 +170,7 @@ const shellModals = `  </main>
 
 <div id="failures-modal" class="modal-backdrop">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="failures-title">
-    <div class="modal-header-row">
+    <div class="row-between modal-header-row">
       <h2 id="failures-title" data-i18n="failures.title">Failure records & diagnostics</h2>
       <span id="failures-range-tag" class="failures-range-tag"></span>
     </div>
@@ -131,11 +190,11 @@ const shellModals = `  </main>
           <h2 id="date-range-title" class="date-dialog-title" data-i18n="range.calendar_title">Select date range</h2>
           <div id="date-selection-status" class="date-selection-status"></div>
         </div>
-        <div class="date-presets">
-          <button class="btn btn-preset" type="button" data-preset="last_5_hours" data-i18n="range.last_5_hours">Last 5 hours</button>
-          <button class="btn btn-preset" type="button" data-preset="last_7_days" data-i18n="range.last_7_days">Last 7 days</button>
-          <button class="btn btn-preset" type="button" data-preset="last_30_days" data-i18n="range.last_30_days">Last 30 days</button>
-          <button class="btn btn-preset" type="button" data-preset="this_month" data-i18n="range.this_month">This month</button>
+        <div class="action-row">
+          <button class="pill" type="button" data-preset="last_5_hours" data-i18n="range.last_5_hours">Last 5 hours</button>
+          <button class="pill" type="button" data-preset="last_7_days" data-i18n="range.last_7_days">Last 7 days</button>
+          <button class="pill" type="button" data-preset="last_30_days" data-i18n="range.last_30_days">Last 30 days</button>
+          <button class="pill" type="button" data-preset="this_month" data-i18n="range.this_month">This month</button>
         </div>
       </div>
       <div class="calendar-panels">
@@ -144,16 +203,12 @@ const shellModals = `  </main>
       </div>
       <div class="time-pickers-row">
         <div class="time-picker-col">
-          <label class="time-picker-label" data-i18n="range.start_time">Start time</label>
-          <div class="time-input-wrap">
-            <input type="text" id="time-start" class="time-input" value="00:00:00" placeholder="00:00:00" maxlength="8">
-          </div>
+          <label class="time-picker-label" for="time-start" data-i18n="range.start_time">Start time</label>
+          <input type="text" id="time-start" class="time-input" value="00:00:00" placeholder="00:00:00" maxlength="8">
         </div>
         <div class="time-picker-col">
-          <label class="time-picker-label" data-i18n="range.end_time">End time</label>
-          <div class="time-input-wrap">
-            <input type="text" id="time-end" class="time-input" value="23:59:59" placeholder="23:59:59" maxlength="8">
-          </div>
+          <label class="time-picker-label" for="time-end" data-i18n="range.end_time">End time</label>
+          <input type="text" id="time-end" class="time-input" value="23:59:59" placeholder="23:59:59" maxlength="8">
         </div>
       </div>
       <div class="date-dialog-hint" data-i18n="range.hint">Includes start time, excludes end time</div>
@@ -169,5 +224,6 @@ const shellModals = `  </main>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 `
 
-// shellMarkup is the chrome markup with the version badge resolved.
+// shellMarkup is the chrome markup with the version badge resolved. The
+// component placeholders are expanded while the page is assembled.
 var shellMarkup = strings.Replace(shellMarkupTemplate, "{{VERSION}}", version.PluginVersion, 1)

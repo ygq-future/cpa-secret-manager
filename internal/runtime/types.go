@@ -8,12 +8,13 @@ import (
 
 // Methods exchanged with the CPA host over the C ABI JSON envelope.
 const (
-	MethodPluginRegister     = "plugin.register"
-	MethodPluginReconfigure  = "plugin.reconfigure"
-	MethodPluginShutdown     = "plugin.shutdown"
-	MethodManagementRegister = "management.register"
-	MethodManagementHandle   = "management.handle"
-	MethodUsageHandle        = "usage.handle"
+	MethodPluginRegister         = "plugin.register"
+	MethodPluginReconfigure      = "plugin.reconfigure"
+	MethodPluginShutdown         = "plugin.shutdown"
+	MethodManagementRegister     = "management.register"
+	MethodManagementHandle       = "management.handle"
+	MethodUsageHandle            = "usage.handle"
+	MethodRequestInterceptBefore = "request.intercept_before"
 )
 
 // SchemaVersion is the plugin contract version declared to the host. Keep it
@@ -60,8 +61,9 @@ type RegisterResult struct {
 
 // Capabilities declares the host integration points implemented by the plugin.
 type Capabilities struct {
-	ManagementAPI bool `json:"management_api"`
-	UsagePlugin   bool `json:"usage_plugin"`
+	ManagementAPI      bool `json:"management_api"`
+	UsagePlugin        bool `json:"usage_plugin"`
+	RequestInterceptor bool `json:"request_interceptor"`
 }
 
 // Metadata describes non-sensitive plugin information displayed by the host.

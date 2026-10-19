@@ -30,21 +30,25 @@ func assemblePage() string {
 
 	page.WriteString(pageDocumentStart)
 	page.WriteString(ThemePaletteCSS)
-	page.WriteString(templateStyleShell)
+	page.WriteString(templateStyleBase)
+	page.WriteString(templateStyleComponents)
+	page.WriteString(templateStyleLayout)
+	page.WriteString(templateStyleOverlays)
 	for _, feature := range pageFeatures {
 		page.WriteString(feature.styles)
 	}
 	page.WriteString(templateStyleResponsive)
 	page.WriteString(pageBodyStart)
 
-	page.WriteString(shellMarkup)
+	page.WriteString(resolveMarkup(shellMarkup))
 	for _, feature := range pageFeatures {
-		page.WriteString(feature.markup)
+		page.WriteString(resolveMarkup(feature.markup))
 	}
-	page.WriteString(shellModals)
+	page.WriteString(resolveMarkup(shellModals))
 	page.WriteString(pageScriptStart)
 
 	page.WriteString(templateScriptI18N)
+	page.WriteString(templateScriptComponents)
 	page.WriteString(templateScriptShellCore)
 	for _, feature := range pageFeatures {
 		page.WriteString(feature.scripts)

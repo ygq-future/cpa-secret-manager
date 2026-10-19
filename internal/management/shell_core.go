@@ -35,7 +35,11 @@ var FORGET_PATH = PLUGIN_BASE + '/forget';
 var REMARKS_PATH = PLUGIN_BASE + '/remarks';
 var GENERATE_PATH = PLUGIN_BASE + '/keys/generate';
 var FAILURES_PATH = PLUGIN_BASE + '/failures';
+var QUOTA_PATH = PLUGIN_BASE + '/quota';
+var MODELS_PATH = PLUGIN_BASE + '/models';
+var V1_MODELS_PATH = '/v1/models';
 var state = {
+  availableModels: [],
   managementKey: '',
   keys: [],
   entries: [],
@@ -55,7 +59,9 @@ var state = {
   confirmHandler: null,
   lastKeysSignature: null,
   themeObserver: null,
-  dateRange: null
+  dateRange: null,
+  selects: [],
+  openSelect: null
 };
 
 function byId(id) {
@@ -514,6 +520,7 @@ function applyLanguage() {
   if (toggle) {
     toggle.textContent = state.language === 'zh-CN' ? 'EN' : '中文';
   }
+  refreshComponentLabels();
 }
 
 function toggleLanguage() {
@@ -552,6 +559,7 @@ function openModal(id) {
 }
 
 function closeModal(id) {
+  closeOpenSelect();
   var node = byId(id);
   if (node) {
     node.classList.remove('open');
@@ -599,12 +607,64 @@ function setStatus(message, isError) {
   bar.className = isError ? 'status-bar error-text' : 'status-bar';
 }
 
+// setRefreshLoading marks the refresh button while a refresh owns the table, so
+// the action always has visible feedback instead of only a status line.
+function setRefreshLoading(loading) {
+  var button = byId('refresh-button');
+  if (!button) {
+    return;
+  }
+  button.classList.toggle('is-loading', loading);
+  button.disabled = loading;
+  button.setAttribute('aria-busy', loading ? 'true' : 'false');
+}
+
 function formatNumber(value) {
   var number = typeof value === 'number' ? value : Number(value);
   if (!isFinite(number)) {
     return '0';
   }
   return number.toLocaleString();
+}
+
+// formatTimestamp renders an RFC3339 instant (the host reports UTC) in the
+// viewer's own time zone. Truncating the string would show UTC as if it were
+// local time.
+function formatTimestamp(value) {
+  if (!value) {
+    return '—';
+  }
+  var parsed = new Date(value);
+  if (isNaN(parsed.getTime())) {
+    return '—';
+  }
+  return parsed.toLocaleString();
+}
+
+// formatRemaining renders the distance to an instant as a compact countdown
+// (42s / 5m / 3h / 2d). The exact local reset time belongs in the tooltip.
+function formatRemaining(value) {
+  if (!value) {
+    return '—';
+  }
+  var target = new Date(value).getTime();
+  if (isNaN(target)) {
+    return '—';
+  }
+  var seconds = Math.floor((target - Date.now()) / 1000);
+  if (seconds <= 0) {
+    return '0s';
+  }
+  if (seconds < 60) {
+    return seconds + 's';
+  }
+  if (seconds < 3600) {
+    return Math.floor(seconds / 60) + 'm';
+  }
+  if (seconds < 86400) {
+    return Math.floor(seconds / 3600) + 'h';
+  }
+  return Math.floor(seconds / 86400) + 'd';
 }
 
 function maskKey(value) {
@@ -718,6 +778,7 @@ function bindBackdrop(id) {
 
 function bindGlobalEvents() {
   document.addEventListener('keydown', handleEscape);
+  document.addEventListener('click', closeOpenSelect);
 
   bindClick('lang-toggle', toggleLanguage);
   bindClick('key-button', openKeyModal);
@@ -747,35 +808,9 @@ function bindGlobalEvents() {
   bindClick('confirm-accept', acceptConfirm);
   bindBackdrop('confirm-modal');
 
-  bindClick('keys-add', openAddKeyForm);
-  bindClick('keys-unit', cycleTokenUnit);
-  var filter = byId('keys-filter');
-  bindClick('failures-close', closeFailuresModal);
-  bindClick('failures-open-logs', openHostLogs);
-  bindBackdrop('failures-modal');
-  bindClick('date-range-btn', openDateRangeModal);
-  bindClick('date-range-cancel', closeDateRangeModal);
-  bindClick('date-range-reset', resetDateRangeToday);
-  bindClick('date-range-confirm', confirmDateRange);
-  bindBackdrop('date-range-modal');
-
-  bindClick('settings-retention-save', saveRetentionDays);
-  var retInput = byId('settings-retention-input');
-  if (retInput) {
-    retInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') {
-        saveRetentionDays();
-      }
-    });
-  }
-
-  if (filter) {
-    filter.addEventListener('input', function () {
-      renderKeys();
-    });
-  }
-
-  bindClick('settings-usage-toggle', toggleUsageEnabled);
+  // Each feature owns the wiring of its own panel; the shell only binds chrome.
+  bindKeysEvents();
+  bindSettingsEvents();
 
   if (window.matchMedia) {
     var query = window.matchMedia('(prefers-color-scheme: dark)');

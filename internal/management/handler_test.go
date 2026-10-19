@@ -54,6 +54,20 @@ func (s *stubBackend) GenerateKey(context.Context) (string, error) {
 func (s *stubBackend) Failures(context.Context, FailuresRequest) (FailuresResult, error) {
 	return FailuresResult{Items: s.failures}, nil
 }
+func (s *stubBackend) Quota(context.Context, string) (QuotaSummary, bool, error) {
+	return QuotaSummary{Enabled: true, LimitValue: 1000}, true, nil
+}
+
+func (s *stubBackend) SetQuota(context.Context, QuotaUpdate) error {
+	return nil
+}
+
+func (s *stubBackend) DeleteQuota(context.Context, string) error {
+	return nil
+}
+func (s *stubBackend) Models(context.Context) ([]string, error) {
+	return []string{"gpt-5.6", "claude-3-7-sonnet"}, nil
+}
 
 func TestNormalizePath_ReducesHostPrefixes(t *testing.T) {
 	cases := map[string]string{
@@ -231,6 +245,49 @@ func TestHandler_FailuresQueriesErrorLogs(t *testing.T) {
 	}
 	if len(res.Items) != 1 || res.Items[0].StatusCode != 429 {
 		t.Fatalf("unexpected failures result: %+v", res)
+	}
+}
+func TestHandler_QuotaRoutes(t *testing.T) {
+	backend := &stubBackend{}
+	handler := NewHandler(backend)
+
+	// GET without hash -> 400
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, RouteQuota, nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("GET without hash status = %d, want 400", rec.Code)
+	}
+
+	// GET with hash -> 200
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, RouteQuota+"?hash=h1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET with hash status = %d, want 200", rec.Code)
+	}
+
+	// PUT with valid body -> 200
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, RouteQuota, strings.NewReader(`{"hash":"h1","enabled":true,"limit_value":5000}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT quota status = %d, want 200", rec.Code)
+	}
+
+	// DELETE with hash -> 200
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, RouteQuota+"?hash=h1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("DELETE with hash status = %d, want 200", rec.Code)
+	}
+}
+
+func TestHandler_ModelsRoute(t *testing.T) {
+	backend := &stubBackend{}
+	handler := NewHandler(backend)
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, RouteModels, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET models status = %d, want 200", rec.Code)
 	}
 }
 

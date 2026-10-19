@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -132,6 +133,9 @@ func TestRegister_ReportsMetadataAndCapabilities(t *testing.T) {
 	}
 	if !result.Capabilities.ManagementAPI {
 		t.Fatal("management_api capability = false, want true")
+	}
+	if !result.Capabilities.RequestInterceptor {
+		t.Fatal("request_interceptor capability = false, want true")
 	}
 }
 
@@ -628,6 +632,10 @@ func TestHandle_ManagementRegister_DeclaresAllRoutes(t *testing.T) {
 		"POST " + management.RouteForget:   "forget",
 		"POST " + management.RouteGenerate: "generate",
 		"POST " + management.RouteFailures: "failures",
+		"GET " + management.RouteQuota:     "quota read",
+		"PUT " + management.RouteQuota:     "quota write",
+		"DELETE " + management.RouteQuota:  "quota delete",
+		"GET " + management.RouteModels:     "models read",
 	}
 
 	declared := make(map[string]bool)
@@ -689,5 +697,143 @@ func TestRuntime_ErrorLogRecordingAndQuery(t *testing.T) {
 	}
 	if len(resAfter.Items) != 0 {
 		t.Fatalf("expected 0 failure items after forget, got %d", len(resAfter.Items))
+	}
+}
+
+func TestHandle_RequestInterceptBefore_QuotaEnforcement(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	rt := registerRuntime(t, statePath)
+
+	apiKey := "sk-test-quota-key"
+	keyHash := remarks.Index(apiKey)
+
+	// 1. Initial intercept without quota rule -> allowed
+	reqPayload, _ := json.Marshal(map[string]any{
+		"headers": map[string][]string{
+			"Authorization": {"Bearer " + apiKey},
+		},
+		"model": "gpt-5.6",
+	})
+	env := decodeEnvelope(t, rt.Handle(context.Background(), MethodRequestInterceptBefore, reqPayload))
+	if !env.OK {
+		t.Fatalf("intercept_before failed: %+v", env.Error)
+	}
+	var resp RequestInterceptResponse
+	if err := json.Unmarshal(env.Result, &resp); err != nil {
+		t.Fatalf("unmarshal intercept response: %v", err)
+	}
+	if resp.Terminate {
+		t.Fatal("expected terminate = false before quota rule configured")
+	}
+
+	// 2. Configure quota rule via Management API: 1000 tokens / daily
+	quotaBody := fmt.Sprintf(`{"hash":"%s","enabled":true,"strategy":"token","window":"daily","limit_value":1000}`, keyHash)
+	if status, _ := managementCall(t, rt, http.MethodPut, management.RouteQuota, []byte(quotaBody)); status != http.StatusOK {
+		t.Fatalf("PUT quota status = %d, want 200", status)
+	}
+
+	// 3. Intercept before usage -> still allowed
+	env = decodeEnvelope(t, rt.Handle(context.Background(), MethodRequestInterceptBefore, reqPayload))
+	if !env.OK {
+		t.Fatalf("intercept_before failed: %+v", env.Error)
+	}
+	_ = json.Unmarshal(env.Result, &resp)
+	if resp.Terminate {
+		t.Fatal("expected terminate = false under quota")
+	}
+
+	// 4. Inject usage exceeding limit: 1200 tokens
+	usageRecord := []byte(fmt.Sprintf(`{"APIKey":%q,"Model":"gpt-5.6","detail":{"total_tokens":1200}}`, apiKey))
+	rt.Handle(context.Background(), MethodUsageHandle, usageRecord)
+
+	// 5. Intercept after usage -> rejected with HTTP 403 (NOT 429!)
+	env = decodeEnvelope(t, rt.Handle(context.Background(), MethodRequestInterceptBefore, reqPayload))
+	if !env.OK {
+		t.Fatalf("intercept_before failed: %+v", env.Error)
+	}
+	var rejectedResp RequestInterceptResponse
+	if err := json.Unmarshal(env.Result, &rejectedResp); err != nil {
+		t.Fatalf("unmarshal intercept response: %v", err)
+	}
+	if !rejectedResp.Terminate {
+		t.Fatal("expected terminate = true when quota exceeded")
+	}
+	if rejectedResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status code = %d, want 403 Forbidden (must NOT be 429)", rejectedResp.StatusCode)
+	}
+	if !strings.Contains(rejectedResp.ResponseBody, "quota_exceeded") || !strings.Contains(rejectedResp.ResponseBody, "insufficient_quota") {
+		t.Fatalf("response body missing quota error: %s", rejectedResp.ResponseBody)
+	}
+
+	// 6. Verify Resolve includes quota information
+	resolvePayload := fmt.Sprintf(`{"keys":[%q]}`, apiKey)
+	var resolveResult management.ResolveResult
+	if status, body := managementCall(t, rt, http.MethodPost, management.RouteResolve, []byte(resolvePayload)); status != http.StatusOK {
+		t.Fatalf("resolve status = %d, want 200: %s", status, body)
+	} else if err := json.Unmarshal(body, &resolveResult); err != nil {
+		t.Fatalf("decode resolve result: %v", err)
+	}
+	if len(resolveResult.Items) != 1 || resolveResult.Items[0].Quota == nil {
+		t.Fatalf("resolve items missing quota summary: %+v", resolveResult)
+	}
+	if !resolveResult.Items[0].Quota.Exceeded {
+		t.Fatal("expected quota.Exceeded = true")
+	}
+	if resolveResult.Items[0].Quota.UsedValue != 1200 {
+		t.Fatalf("used value = %d, want 1200", resolveResult.Items[0].Quota.UsedValue)
+	}
+
+	// 7. Delete quota rule via Management API -> allowed again
+	if status, _ := managementCall(t, rt, http.MethodDelete, management.RouteQuota+"?hash="+keyHash, nil); status != http.StatusOK {
+		t.Fatalf("DELETE quota status = %d, want 200", status)
+	}
+	env = decodeEnvelope(t, rt.Handle(context.Background(), MethodRequestInterceptBefore, reqPayload))
+	_ = json.Unmarshal(env.Result, &resp)
+	if resp.Terminate {
+		t.Fatal("expected terminate = false after quota rule deleted")
+	}
+}
+
+func TestHandle_RequestInterceptBefore_AllowedModels(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	rt := registerRuntime(t, statePath)
+
+	apiKey := "sk-test-model-key"
+	keyHash := remarks.Index(apiKey)
+
+	// Configure quota rule with allowed_models = ["gpt-5.6"]
+	quotaBody := fmt.Sprintf(`{"hash":"%s","enabled":true,"strategy":"token","window":"daily","limit_value":100000,"allowed_models":["gpt-5.6"]}`, keyHash)
+	if status, _ := managementCall(t, rt, http.MethodPut, management.RouteQuota, []byte(quotaBody)); status != http.StatusOK {
+		t.Fatalf("PUT quota status = %d, want 200", status)
+	}
+
+	// 1. Request allowed model -> permitted
+	reqAllowed, _ := json.Marshal(map[string]any{
+		"headers": map[string][]string{"Authorization": {"Bearer " + apiKey}},
+		"model":   "gpt-5.6",
+	})
+	env := decodeEnvelope(t, rt.Handle(context.Background(), MethodRequestInterceptBefore, reqAllowed))
+	var resp RequestInterceptResponse
+	_ = json.Unmarshal(env.Result, &resp)
+	if resp.Terminate {
+		t.Fatal("expected terminate = false for whitelisted model")
+	}
+
+	// 2. Request unallowed model -> rejected with 403 (NOT 429!)
+	reqDenied, _ := json.Marshal(map[string]any{
+		"headers": map[string][]string{"Authorization": {"Bearer " + apiKey}},
+		"model":   "claude-3-7-sonnet",
+	})
+	env = decodeEnvelope(t, rt.Handle(context.Background(), MethodRequestInterceptBefore, reqDenied))
+	var respDenied RequestInterceptResponse
+	_ = json.Unmarshal(env.Result, &respDenied)
+	if !respDenied.Terminate {
+		t.Fatal("expected terminate = true for unallowed model")
+	}
+	if respDenied.StatusCode != http.StatusForbidden {
+		t.Fatalf("status code = %d, want 403 Forbidden", respDenied.StatusCode)
+	}
+	if !strings.Contains(respDenied.ResponseBody, "not permitted") {
+		t.Fatalf("response body = %s, want not permitted error", respDenied.ResponseBody)
 	}
 }

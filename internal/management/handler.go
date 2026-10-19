@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"cpa-secret-manager/internal/errorslog"
+	"cpa-secret-manager/internal/quota"
+	"cpa-secret-manager/internal/remarks"
 	"cpa-secret-manager/internal/usage"
 )
 
@@ -42,7 +44,9 @@ const (
 	PathGenerate = "/keys/generate"
 	// PathFailures queries failure error logs by key hash and time range.
 	PathFailures = "/failures"
-	// RouteSettings is the settings route path registered with the host.
+	PathQuota    = "/quota"
+	// PathModels returns known model names.
+	PathModels    = "/models"
 	RouteSettings = legacyBase + PathSettings
 	// RouteResolve is the resolve route path registered with the host.
 	RouteResolve = legacyBase + PathResolve
@@ -54,7 +58,9 @@ const (
 	RouteGenerate = legacyBase + PathGenerate
 	// RouteFailures is the failures route path registered with the host.
 	RouteFailures = legacyBase + PathFailures
-	// maxRequestBody bounds plugin management request bodies.
+	RouteQuota    = legacyBase + PathQuota
+	// RouteModels is the models route registered with the host.
+	RouteModels    = legacyBase + PathModels
 	maxRequestBody = 1 << 20
 )
 
@@ -85,6 +91,7 @@ type FailuresRequest struct {
 type FailuresResult struct {
 	Items []errorslog.ErrorEntry `json:"items"`
 }
+
 // KeyEntry is the per-key payload returned by Resolve. Items are aligned with
 // the submitted key list.
 type KeyEntry struct {
@@ -92,6 +99,35 @@ type KeyEntry struct {
 	Remark string `json:"remark"`
 	// Usage is nil until the key served at least one attributable request.
 	Usage *UsageSummary `json:"usage,omitempty"`
+	// Quota describes the rule and window usage if configured.
+	Quota *QuotaSummary `json:"quota,omitempty"`
+}
+
+// QuotaSummary describes a key's quota configuration and consumption state.
+type QuotaSummary struct {
+	Enabled       bool               `json:"enabled"`
+	Strategy      quota.StrategyType `json:"strategy"`
+	Window        quota.WindowType   `json:"window"`
+	DurationSec   int64              `json:"duration_sec,omitempty"`
+	LimitValue    int64              `json:"limit_value"`
+	UsedValue     int64              `json:"used_value"`
+	AllowedModels []string           `json:"allowed_models,omitempty"`
+	WindowStart   string             `json:"window_start,omitempty"`
+	WindowEnd     string             `json:"window_end,omitempty"`
+	ResetAt       string             `json:"reset_at,omitempty"`
+	Exceeded      bool               `json:"exceeded"`
+}
+
+// QuotaUpdate is the request payload to configure a key's quota rule.
+type QuotaUpdate struct {
+	Key           string             `json:"key,omitempty"`  // Can pass key or hash
+	Hash          string             `json:"hash,omitempty"` // API key hash
+	Enabled       bool               `json:"enabled"`
+	Strategy      quota.StrategyType `json:"strategy"`
+	Window        quota.WindowType   `json:"window"`
+	DurationSec   int64              `json:"duration_sec,omitempty"`
+	LimitValue    int64              `json:"limit_value"`
+	AllowedModels []string           `json:"allowed_models,omitempty"`
 }
 
 // UsageSummary is the cumulative token accounting shown for one key.
@@ -167,7 +203,12 @@ type Backend interface {
 	SetRemark(ctx context.Context, apiKey string, remark string) error
 	GenerateKey(ctx context.Context) (string, error)
 	Failures(ctx context.Context, req FailuresRequest) (FailuresResult, error)
+	Quota(ctx context.Context, hash string) (QuotaSummary, bool, error)
+	SetQuota(ctx context.Context, update QuotaUpdate) error
+	DeleteQuota(ctx context.Context, hash string) error
+	Models(ctx context.Context) ([]string, error)
 }
+
 // Handler serves the plugin-owned Management API routes.
 type Handler struct {
 	backend Backend
@@ -204,6 +245,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveGenerate(w, r)
 	case PathFailures:
 		h.serveFailures(w, r)
+	case PathQuota:
+		h.serveQuota(w, r)
+	case PathModels:
+		h.serveModels(w, r)
 	default:
 		writeJSON(w, http.StatusNotFound, errorBody("not_found", "unknown plugin route"))
 	}
@@ -330,6 +375,67 @@ func (h *Handler) serveGenerate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, GenerateResult{Key: key})
+}
+func (h *Handler) serveQuota(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		hash := strings.TrimSpace(r.URL.Query().Get("hash"))
+		if hash == "" {
+			if k := strings.TrimSpace(r.URL.Query().Get("key")); k != "" {
+				hash = remarks.Index(k)
+			}
+		}
+		if hash == "" {
+			writeJSON(w, http.StatusBadRequest, errorBody("invalid_request", "hash or key is required"))
+			return
+		}
+		summary, found, err := h.backend.Quota(r.Context(), hash)
+		if h.fail(w, err) {
+			return
+		}
+		if !found {
+			writeJSON(w, http.StatusNotFound, errorBody("not_found", "quota rule not found"))
+			return
+		}
+		writeJSON(w, http.StatusOK, summary)
+	case http.MethodPut:
+		var update QuotaUpdate
+		if !decodeBody(w, r, &update) {
+			return
+		}
+		if h.fail(w, h.backend.SetQuota(r.Context(), update)) {
+			return
+		}
+		writeJSON(w, http.StatusOK, statusBody())
+	case http.MethodDelete:
+		hash := strings.TrimSpace(r.URL.Query().Get("hash"))
+		if hash == "" {
+			if k := strings.TrimSpace(r.URL.Query().Get("key")); k != "" {
+				hash = remarks.Index(k)
+			}
+		}
+		if hash == "" {
+			writeJSON(w, http.StatusBadRequest, errorBody("invalid_request", "hash or key is required"))
+			return
+		}
+		if h.fail(w, h.backend.DeleteQuota(r.Context(), hash)) {
+			return
+		}
+		writeJSON(w, http.StatusOK, statusBody())
+	default:
+		methodNotAllowed(w, http.MethodGet+", "+http.MethodPut+", "+http.MethodDelete)
+	}
+}
+func (h *Handler) serveModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w, http.MethodGet)
+		return
+	}
+	models, err := h.backend.Models(r.Context())
+	if h.fail(w, err) {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string][]string{"models": models})
 }
 
 // fail writes an error response and reports whether the request is finished.

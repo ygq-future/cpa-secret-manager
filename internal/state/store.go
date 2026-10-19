@@ -10,10 +10,10 @@ import (
 	"strings"
 	"sync"
 
+	"cpa-secret-manager/internal/quota"
 	"cpa-secret-manager/internal/remarks"
 	"cpa-secret-manager/internal/usage"
 )
-
 // SchemaVersion is the current plugin state document schema.
 const SchemaVersion = 1
 
@@ -44,9 +44,11 @@ func DefaultAppConfig() AppConfig {
 // counters with it, see Runtime.Forget.
 type Document struct {
 	SchemaVersion int                       `json:"schema_version"`
-	Remarks       map[string]remarks.Entry  `json:"remarks,omitempty"`
-	Usage         map[string]usage.KeyUsage `json:"usage,omitempty"`
-	AppConfig     AppConfig                 `json:"app_config"`
+	Remarks       map[string]remarks.Entry       `json:"remarks,omitempty"`
+	Usage         map[string]usage.KeyUsage      `json:"usage,omitempty"`
+	QuotaRules    map[string]quota.Rule          `json:"quota_rules,omitempty"`
+	QuotaStates   map[string]quota.WindowState   `json:"quota_states,omitempty"`
+	AppConfig     AppConfig                      `json:"app_config"`
 }
 
 // Store owns the plugin state document and its atomic persistence.
@@ -215,6 +217,76 @@ func (s *Store) DeleteRemark(hash string) bool {
 	delete(s.doc.Remarks, hash)
 	return true
 }
+// QuotaRules returns a copy of the quota rules.
+func (s *Store) QuotaRules() map[string]quota.Rule {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.doc.QuotaRules) == 0 {
+		return nil
+	}
+	out := make(map[string]quota.Rule, len(s.doc.QuotaRules))
+	for k, v := range s.doc.QuotaRules {
+		out[k] = v
+	}
+	return out
+}
+
+// ReplaceQuotaRules sets the full set of quota rules.
+func (s *Store) ReplaceQuotaRules(rules map[string]quota.Rule) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(rules) == 0 {
+		s.doc.QuotaRules = nil
+		return
+	}
+	out := make(map[string]quota.Rule, len(rules))
+	for k, v := range rules {
+		out[k] = v
+	}
+	s.doc.QuotaRules = out
+}
+
+// QuotaStates returns a copy of the window states.
+func (s *Store) QuotaStates() map[string]quota.WindowState {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.doc.QuotaStates) == 0 {
+		return nil
+	}
+	out := make(map[string]quota.WindowState, len(s.doc.QuotaStates))
+	for k, v := range s.doc.QuotaStates {
+		out[k] = v
+	}
+	return out
+}
+
+// ReplaceQuotaStates sets the full set of window states.
+func (s *Store) ReplaceQuotaStates(states map[string]quota.WindowState) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(states) == 0 {
+		s.doc.QuotaStates = nil
+		return
+	}
+	out := make(map[string]quota.WindowState, len(states))
+	for k, v := range states {
+		out[k] = v
+	}
+	s.doc.QuotaStates = out
+}
+
 
 // Snapshot returns a deep copy of the document for persistence or inspection.
 func (s *Store) Snapshot() Document {
@@ -298,6 +370,20 @@ func (doc Document) clone() Document {
 		doc.Remarks = remarksCopy
 	}
 	doc.Usage = cloneUsage(doc.Usage)
+	if len(doc.QuotaRules) > 0 {
+		rulesCopy := make(map[string]quota.Rule, len(doc.QuotaRules))
+		for k, v := range doc.QuotaRules {
+			rulesCopy[k] = v
+		}
+		doc.QuotaRules = rulesCopy
+	}
+	if len(doc.QuotaStates) > 0 {
+		statesCopy := make(map[string]quota.WindowState, len(doc.QuotaStates))
+		for k, v := range doc.QuotaStates {
+			statesCopy[k] = v
+		}
+		doc.QuotaStates = statesCopy
+	}
 	return doc
 }
 

@@ -4,7 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"cpa-secret-manager/internal/quota"
 	"cpa-secret-manager/internal/usage"
 )
 
@@ -129,5 +131,53 @@ func TestStore_RetentionDaysBounds(t *testing.T) {
 	s.SetAppConfig(AppConfig{UsageEnabled: true, RetentionDays: 15})
 	if s.AppConfig().RetentionDays != 15 {
 		t.Fatalf("retention days 15 should be kept, got %d", s.AppConfig().RetentionDays)
+	}
+}
+
+func TestQuota_RoundTripAndIsolation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	store, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
+	rules := map[string]quota.Rule{
+		"h1": {
+			Hash:       "h1",
+			Enabled:    true,
+			Strategy:   quota.StrategyTypeToken,
+			Window:     quota.WindowTypeDaily,
+			LimitValue: 5000,
+			UpdatedAt:  now,
+		},
+	}
+	states := map[string]quota.WindowState{
+		"h1": {
+			Hash:        "h1",
+			WindowStart: now,
+			WindowEnd:   now.AddDate(0, 0, 1),
+			UsedValue:   1200,
+		},
+	}
+
+	store.ReplaceQuotaRules(rules)
+	store.ReplaceQuotaStates(states)
+	if err := store.SaveAtomic(); err != nil {
+		t.Fatalf("SaveAtomic() error = %v", err)
+	}
+
+	// Reload and verify
+	reloaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("reloaded Load() error = %v", err)
+	}
+	loadedRules := reloaded.QuotaRules()
+	if len(loadedRules) != 1 || loadedRules["h1"].LimitValue != 5000 {
+		t.Fatalf("loaded rules mismatch: %+v", loadedRules)
+	}
+	loadedStates := reloaded.QuotaStates()
+	if len(loadedStates) != 1 || loadedStates["h1"].UsedValue != 1200 {
+		t.Fatalf("loaded states mismatch: %+v", loadedStates)
 	}
 }

@@ -17,10 +17,10 @@ import (
 	"cpa-secret-manager/internal/keys"
 	"cpa-secret-manager/internal/management"
 	"cpa-secret-manager/internal/remarks"
+	"cpa-secret-manager/internal/quota"
 	"cpa-secret-manager/internal/state"
 	"cpa-secret-manager/internal/usage"
 )
-
 // defaultFlushInterval bounds how much usage accounting a crash can lose.
 const defaultFlushInterval = 5 * time.Second
 
@@ -29,6 +29,7 @@ type Runtime struct {
 	clock         Clock
 	generator     *keys.Generator
 	aggregator    *usage.Aggregator
+	quota         *quota.Manager
 	flushInterval time.Duration
 
 	// lifecycleMu serializes register, reconfigure and shutdown.
@@ -74,6 +75,7 @@ func New(opts Options) *Runtime {
 		cfg:           cfg,
 		generator:     generator,
 		aggregator:    usage.NewAggregator(),
+		quota:         quota.NewManager(),
 		flushInterval: flushInterval,
 	}
 	r.handler = management.NewHandler(r)
@@ -97,6 +99,8 @@ func (r *Runtime) Handle(ctx context.Context, method string, raw []byte) []byte 
 		return r.handleManagement(ctx, raw)
 	case MethodUsageHandle:
 		return r.handleUsage(raw)
+	case MethodRequestInterceptBefore:
+		return r.handleInterceptBefore(ctx, raw)
 	default:
 		return failureEnvelope("unknown_method", "unknown method: "+method)
 	}
@@ -241,17 +245,16 @@ func (r *Runtime) Resolve(_ context.Context, apiKeys []string) (management.Resol
 		if usageEntry, ok := aggregate[hash]; ok && !usageEntry.IsZero() {
 			item.Usage = buildUsageSummary(usageEntry)
 		}
+		if rule, hasRule := r.quota.GetRule(hash); hasRule {
+			item.Quota = r.buildQuotaSummary(hash, rule)
+		}
 		items = append(items, item)
 	}
 
-	return management.ResolveResult{Items: items, StaleHashes: staleHashes(store, aggregate, live)}, nil
+	return management.ResolveResult{Items: items, StaleHashes: r.staleHashes(store, aggregate, live)}, nil
 }
 
-// staleHashes reports the stored entries - remarks and usage counters - whose
-// key is not in the submitted list. Reporting them is the read side of the
-// host-list projection: the page decides when a stale entry has been stale long
-// enough to forget, and asks for it through Forget.
-func staleHashes(store *state.Store, aggregate map[string]usage.KeyUsage, live map[string]struct{}) []string {
+func (r *Runtime) staleHashes(store *state.Store, aggregate map[string]usage.KeyUsage, live map[string]struct{}) []string {
 	stale := make([]string, 0)
 	for hash := range store.Remarks() {
 		if _, ok := live[hash]; !ok {
@@ -259,6 +262,11 @@ func staleHashes(store *state.Store, aggregate map[string]usage.KeyUsage, live m
 		}
 	}
 	for hash := range aggregate {
+		if _, ok := live[hash]; !ok {
+			stale = append(stale, hash)
+		}
+	}
+	for hash := range r.quota.AllRules() {
 		if _, ok := live[hash]; !ok {
 			stale = append(stale, hash)
 		}
@@ -302,7 +310,9 @@ func (r *Runtime) Forget(_ context.Context, hashes []string) (int, error) {
 	for _, hash := range hashes {
 		_, hasRemark := store.Remark(hash)
 		_, hasUsage := aggregate[hash]
-		if hasRemark || hasUsage {
+		_, hasRule := r.quota.GetRule(hash)
+		_, hasState := r.quota.GetState(hash)
+		if hasRemark || hasUsage || hasRule || hasState {
 			pending = append(pending, hash)
 		}
 	}
@@ -323,6 +333,7 @@ func (r *Runtime) Forget(_ context.Context, hashes []string) (int, error) {
 			r.errorsStore.Forget(hash)
 		}
 	}
+	r.quota.Forget(pending)
 	if err := r.persistStateLocked(store); err != nil {
 		return 0, err
 	}
@@ -366,6 +377,158 @@ func (r *Runtime) GenerateKey(_ context.Context) (string, error) {
 	return r.generator.Generate()
 }
 
+// Quota implements management.Backend.
+func (r *Runtime) Quota(_ context.Context, hash string) (management.QuotaSummary, bool, error) {
+	r.mu.RLock()
+	closed := r.closed
+	store := r.store
+	r.mu.RUnlock()
+	if closed || store == nil {
+		return management.QuotaSummary{}, false, ErrShutdown
+	}
+
+	rule, ok := r.quota.GetRule(hash)
+	if !ok {
+		return management.QuotaSummary{}, false, nil
+	}
+
+	summary := r.buildQuotaSummary(hash, rule)
+	if summary == nil {
+		return management.QuotaSummary{}, false, nil
+	}
+	return *summary, true, nil
+}
+
+// SetQuota implements management.Backend.
+func (r *Runtime) SetQuota(_ context.Context, update management.QuotaUpdate) error {
+	r.runMu.Lock()
+	defer r.runMu.Unlock()
+
+	r.mu.RLock()
+	closed := r.closed
+	store := r.store
+	r.mu.RUnlock()
+	if closed || store == nil {
+		return ErrShutdown
+	}
+
+	hash := strings.TrimSpace(update.Hash)
+	if hash == "" && update.Key != "" {
+		if err := remarks.ValidateKey(update.Key); err != nil {
+			return management.NewInvalidRequest(err.Error())
+		}
+		hash = remarks.Index(update.Key)
+	}
+	if hash == "" {
+		return management.NewInvalidRequest("key or hash is required")
+	}
+
+	if update.LimitValue < 0 {
+		return management.NewInvalidRequest("limit_value cannot be negative")
+	}
+	strategy := update.Strategy
+	if strategy == "" {
+		strategy = quota.StrategyTypeToken
+	}
+	window := update.Window
+	if window == "" {
+		window = quota.WindowTypeDaily
+	}
+
+	rule := quota.Rule{
+		Hash:        hash,
+		Enabled:     update.Enabled,
+		Strategy:    strategy,
+		Window:      window,
+		DurationSec: update.DurationSec,
+		LimitValue:    update.LimitValue,
+		AllowedModels: update.AllowedModels,
+		UpdatedAt:     r.clock.Now().UTC(),
+	}
+
+	r.quota.SetRule(rule)
+	return r.persistStateLocked(store)
+}
+
+// DeleteQuota implements management.Backend.
+func (r *Runtime) DeleteQuota(_ context.Context, hash string) error {
+	r.runMu.Lock()
+	defer r.runMu.Unlock()
+
+	r.mu.RLock()
+	closed := r.closed
+	store := r.store
+	r.mu.RUnlock()
+	if closed || store == nil {
+		return ErrShutdown
+	}
+
+	r.quota.DeleteRule(hash)
+	return r.persistStateLocked(store)
+}
+
+// Models implements management.Backend: returns all active models discovered by the plugin.
+func (r *Runtime) Models(_ context.Context) ([]string, error) {
+	r.mu.RLock()
+	closed := r.closed
+	store := r.store
+	r.mu.RUnlock()
+	if closed || store == nil {
+		return nil, ErrShutdown
+	}
+
+	modelSet := make(map[string]struct{})
+	for _, keyUsage := range r.aggregator.Snapshot() {
+		for m := range keyUsage.Models {
+			if m != "" {
+				modelSet[m] = struct{}{}
+			}
+		}
+	}
+	if r.errorsStore != nil {
+		for _, failures := range r.errorsStore.QueryAll(time.Time{}, time.Time{}) {
+			for _, f := range failures {
+				if f.Model != "" {
+					modelSet[f.Model] = struct{}{}
+				}
+			}
+		}
+	}
+
+	out := make([]string, 0, len(modelSet))
+	for m := range modelSet {
+		out = append(out, m)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func (r *Runtime) buildQuotaSummary(hash string, rule quota.Rule) *management.QuotaSummary {
+	now := r.clock.Now().UTC()
+	wStart, wEnd := quota.CalculateWindow(rule.Window, rule.DurationSec, now)
+	state, hasState := r.quota.GetState(hash)
+	var used int64
+	if hasState && state.WindowStart.Equal(wStart) && state.WindowEnd.Equal(wEnd) {
+		used = state.UsedValue
+	}
+
+	exceeded := rule.Enabled && rule.LimitValue > 0 && used >= rule.LimitValue
+
+	return &management.QuotaSummary{
+		Enabled:     rule.Enabled,
+		Strategy:    rule.Strategy,
+		Window:      rule.Window,
+		DurationSec: rule.DurationSec,
+		LimitValue:    rule.LimitValue,
+		UsedValue:     used,
+		AllowedModels: rule.AllowedModels,
+		WindowStart:   formatTimestamp(wStart),
+		WindowEnd:   formatTimestamp(wEnd),
+		ResetAt:     formatTimestamp(wEnd),
+		Exceeded:    exceeded,
+	}
+}
+
 // ObserveUsage accounts one usage record. It is exported so local harnesses can
 // inject records without going through the host RPC path.
 func (r *Runtime) ObserveUsage(record usage.Record) {
@@ -388,6 +551,7 @@ func (r *Runtime) ObserveUsage(record usage.Record) {
 		record.At = r.clock.Now().UTC()
 	}
 	r.aggregator.Observe(record)
+	r.quota.Record(record)
 	if r.errorsStore != nil && record.Failed && record.Hash != "" {
 		r.errorsStore.Record(record.Hash, errorslog.ErrorEntry{
 			Time:       record.At,
@@ -397,7 +561,6 @@ func (r *Runtime) ObserveUsage(record usage.Record) {
 		})
 	}
 }
-
 // FlushUsage persists pending usage counters when they changed since the last
 // successful flush.
 func (r *Runtime) FlushUsage() {
@@ -445,6 +608,7 @@ func (r *Runtime) loadState(path string) {
 	store, err := state.Load(path)
 	if store != nil {
 		r.aggregator.Seed(store.Usage())
+		r.quota.Import(store.QuotaRules(), store.QuotaStates())
 	}
 	var errorsStore *errorslog.Store
 	if strings.TrimSpace(path) != "" {
@@ -473,10 +637,9 @@ func (r *Runtime) registrationResult() RegisterResult {
 	return RegisterResult{
 		SchemaVersion: SchemaVersion,
 		Metadata:      buildMetadata(),
-		Capabilities:  Capabilities{ManagementAPI: true, UsagePlugin: true},
+		Capabilities:  Capabilities{ManagementAPI: true, UsagePlugin: true, RequestInterceptor: true},
 	}
 }
-
 func (r *Runtime) startFlushLoop() {
 	r.flushMu.Lock()
 	defer r.flushMu.Unlock()
@@ -540,6 +703,8 @@ func (r *Runtime) flushUsage(force bool) error {
 // and writes it atomically. Callers must hold runMu.
 func (r *Runtime) persistStateLocked(store *state.Store) error {
 	store.ReplaceUsage(r.aggregator.Snapshot())
+	store.ReplaceQuotaRules(r.quota.AllRules())
+	store.ReplaceQuotaStates(r.quota.AllStates())
 	if err := store.SaveAtomic(); err != nil {
 		r.setUsageWarning(err.Error())
 		return err
