@@ -364,6 +364,24 @@ if (isModelsExpanded('k2', [{ model: 'm1' }, { model: 'm2' }]) !== false) {
 	}
 }
 
+func TestPage_KeyMutationsTriggerKeysLoading(t *testing.T) {
+	script := extractPageScript(t)
+	saveKeyFormMatch := regexp.MustCompile(`(?s)function saveKeyForm\(\)\s*\{.*?\n\}`).FindString(script)
+	if saveKeyFormMatch == "" {
+		t.Fatal("saveKeyForm function not found")
+	}
+	if count := strings.Count(saveKeyFormMatch, "setKeysLoading(true)"); count < 2 {
+		t.Fatalf("saveKeyForm should call setKeysLoading(true) in both edit and add branches, found %d", count)
+	}
+	confirmDeleteMatch := regexp.MustCompile(`(?s)function confirmDeleteKey\(.*?\)\s*\{.*?\n\}`).FindString(script)
+	if confirmDeleteMatch == "" {
+		t.Fatal("confirmDeleteKey function not found")
+	}
+	if !strings.Contains(confirmDeleteMatch, "setKeysLoading(true)") {
+		t.Fatal("confirmDeleteKey should call setKeysLoading(true)")
+	}
+}
+
 func extractDictionaries(t *testing.T, script string) map[string]map[string]bool {
 	t.Helper()
 	match := regexp.MustCompile(`(?s)var I18N = \{(.*?)\n\};`).FindStringSubmatch(script)

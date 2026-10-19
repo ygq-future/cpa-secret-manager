@@ -977,9 +977,10 @@ function saveKeyForm() {
     // Editing never touches the key list: the host owns the key, the plugin
     // owns the remark.
     setKeyFormSaving(true);
+    closeKeyForm();
+    setKeysLoading(true);
     saveRemark(state.editingKey, remark)
       .then(function () {
-        closeKeyForm();
         showToast(t('keys.updated'), 'success');
         return refreshAll({ silent: true });
       })
@@ -988,6 +989,7 @@ function saveKeyForm() {
       })
       .then(function () {
         setKeyFormSaving(false);
+        setKeysLoading(false);
       });
     return;
   }
