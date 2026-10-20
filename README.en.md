@@ -8,7 +8,7 @@
 
 A proxy API key management and usage attribution plugin for [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProxyAPI). The plugin ID, dynamic library basename, and CPA configuration key are all `cpa-secret-manager`.
 
-It provides **per-key remarks** and **per-key token usage attribution**, covering the two capabilities the official management center lacks: human annotations and fine-grained per-key usage visibility.
+It provides **per-key remarks**, **per-key token usage attribution**, and **quota / model-allowlist enforcement**, covering the capabilities the official management center lacks: human annotations, fine-grained usage visibility, and request boundaries.
 
 ---
 
@@ -31,6 +31,8 @@ It provides **per-key remarks** and **per-key token usage attribution**, coverin
 - **Keys Owned by Host, Metadata Owned by Plugin**: API key CRUD operations fully reuse the host `/v0/management/api-keys` API, ensuring no second source of truth. The plugin maintains remarks and token usage indexed solely by `SHA-256(key)` digests—**never persisting or revealing plain key material**.
 - **1:1 Official Key Generation Algorithm**: Generated keys use an `sk-` prefix plus 48 alphanumeric characters `[A-Za-z0-9]`, with modulo bias removed through rejection sampling (threshold 248), matching the official management console algorithm.
 - **Full-Dimensional Token Attribution**: Intercepts requests through the host `usage_plugin` capability, aggregating request counts, failure counts, and Input/Output tokens, as well as Reasoning, Cached, and CacheRead token breakdowns grouped by model.
+- **Per-Key Quotas and Model Allowlists**: Set a token limit per key over a natural day, natural week, natural month, or fixed-duration window, optionally restricted to a model allowlist. Requests that exceed the limit or use a disallowed model are terminated with `403` before reaching upstream; keys without a rule are unaffected.
+- **Range Dashboard and Failure Triage**: A single date range drives the stat cards, per-key columns, and model breakdown, including each key's last-seen time. Failure records are grouped into a timeline for locating abnormal keys and upstream errors.
 - **Automatic Orphan Metadata Pruning**: Implements the `/forget` protocol; when keys are deleted from the host, the plugin detects and safely purges corresponding orphaned metadata and usage counters.
 - **Deep CPA Integration & Native Feel**: The embedded management page is completely self-contained (zero external CDNs, zero inline event handlers). It dynamically extracts host CSS variables via same-origin iframe to follow CPA themes (light, white, dark, and custom themes) and UI language (`cli-proxy-language`).
 - **Minimalist Host Configuration**: The host `config.yaml` only requires `enabled: true`. Business state is stored in an independent cache document, and metadata `ConfigFields` remains empty to prevent drawer write-backs from triggering unnecessary host reloads.
@@ -45,9 +47,13 @@ Client Request to CPA
   ▼
 CLIProxyAPI Host Routing
   │
+  ├─► [request.intercept_before Quota Gate]
+  │     └─ Read the client key's token quota and model allowlist
+  │     └─ Exceeded or disallowed model ──► return 403 before upstream
+  │
   ├─► [usage_plugin Interception]
   │     └─ Extract client proxy API key serving the request
-  │     └─ usage.Aggregator accumulates metrics concurrently (requests/failures/tokens/models)
+  │     └─ usage.Aggregator folds UTC hourly buckets (requests/failures/tokens/models)
   │     └─ 5-second throttled batch disk flush (forced atomic flush on shutdown)
   │
   └─► [management_api Coordination]
@@ -138,6 +144,8 @@ plugins:
 
 - **Attribution Source**: Directly fed by `UsageRecord` payloads dispatched by `usage_plugin`, grouped by the SHA-256 digest of the client proxy key.
 - **Hourly Buckets**: Usage is stored in **UTC hourly buckets** (key × model × hour) and the page aggregates whichever range is selected. The range reaches back at most the configured **data retention days** (1-365, default 30); older buckets are pruned on every flush. No cost estimation and no trend charts.
+- **Quota Windows**: Natural day, natural week (Monday 00:00 UTC), and natural month (1st 00:00 UTC) align to UTC; fixed-duration windows roll by the configured number of seconds. Requests are terminated with `403` before upstream once the token limit is reached or the model is outside the allowlist.
+- **Last Seen**: Each key records the exact instant of its latest request within retention, independent of the selected date range. Legacy buckets without a precise stamp fall back to the bucket start.
 - **Error Accounting**: Requests returning upstream errors or zero tokens are accurately accounted for in request and failure counters (tokens counted as 0).
 - **Unmanaged Keys Discarded**: Only keys currently registered in the CPA host's managed list are tracked; blank or unmanaged requests are discarded without polluting the dashboard.
 - **Throttled Persistence**: In-memory aggregation is protected by mutexes, flushed to disk on a 5-second cadence, and force-flushed on graceful shutdown. Buckets start accumulating at upgrade time: the previous cumulative counters carry no time attribution and are no longer displayed.
@@ -154,6 +162,8 @@ The plugin registers **static Web UI resources** and **dynamic management routes
   - **Access**: Click **"API Key Manager"** in the CPA management sidebar, or access same-origin in your browser.
   - **Key Features**:
     - **Keys & Remarks Dashboard**: Masked by default, with one-click copy, real-time key/remark filtering, and multi-unit (K / M / B) token scaling;
+    - **Range Dashboard**: One date range drives the stat cards, per-key columns, model breakdown, and failure log, including each key's last-seen time;
+    - **Quota Rule Editor**: Configure a token limit, window period, and model allowlist per key; exceeding either boundary blocks the request;
     - **Per-Model Breakdown**: Expandable inspection of input, output, reasoning, and cache token distribution across models;
     - **Pure Native Visuals**: Zero external CDNs, dynamically following CPA themes (light, white, dark, and custom themes);
     - **Interaction Tolerance**: Two-phase mousedown/click verification prevents modal backdrop dismissals when dragging text selections across borders.
@@ -167,11 +177,16 @@ All management endpoints require `Authorization: Bearer <management_key>` or `X-
 | **`GET`** | `/v0/management/api-keys` | Reads all currently saved proxy keys from the host (host endpoint) |
 | **`PUT`** | `/v0/management/api-keys` | Saves the full proxy key list to the host (host endpoint) |
 | **`POST`** | `/v0/management/plugins/cpa-secret-manager/keys/generate` | Generates a cryptographically secure proxy API key (`sk-` + 48 characters) |
-| **`POST`** | `/v0/management/plugins/cpa-secret-manager/resolve` | Submits key list and returns matching remarks, usage, and stale hashes |
+| **`POST`** | `/v0/management/plugins/cpa-secret-manager/resolve` | Submits a key list and window; returns remarks, in-window usage, lifetime `last_seen`, and stale hashes |
 | **`PUT`** | `/v0/management/plugins/cpa-secret-manager/remarks` | Sets or clears a remark for a specific key (empty string clears) |
 | **`POST`** | `/v0/management/plugins/cpa-secret-manager/forget` | Instructs the plugin to permanently purge metadata for stale key hashes |
-| **`GET`** | `/v0/management/plugins/cpa-secret-manager/settings` | Reads runtime settings (active cache path, usage toggle status, warnings) |
-| **`PUT`** | `/v0/management/plugins/cpa-secret-manager/settings` | Updates plugin configuration flags (e.g. enabling/disabling usage attribution) |
+| **`GET`** | `/v0/management/plugins/cpa-secret-manager/quota` | Reads a key's quota rule and current window consumption |
+| **`PUT`** | `/v0/management/plugins/cpa-secret-manager/quota` | Creates or updates a key's token limit, window period, and model allowlist |
+| **`DELETE`** | `/v0/management/plugins/cpa-secret-manager/quota` | Deletes a key's quota rule |
+| **`POST`** | `/v0/management/plugins/cpa-secret-manager/failures` | Queries failure records by key digest and time range |
+| **`GET`** | `/v0/management/plugins/cpa-secret-manager/models` | Lists models observed by the plugin |
+| **`GET`** | `/v0/management/plugins/cpa-secret-manager/settings` | Reads runtime settings (cache path, usage toggle, retention days, warnings) |
+| **`PUT`** | `/v0/management/plugins/cpa-secret-manager/settings` | Updates the usage toggle and data retention days |
 
 ---
 
