@@ -1,6 +1,6 @@
 # v1.0.0 路线图与技术规格
 
-状态：**实施中**
+状态：**v1.0.0 已完成**（v1.1 增量见 ADR-0005、ADR-0006 与 Release Notes）
 产品定位：CLIProxyAPI (CPA) 的代理 API Key 管理与用量归因插件（插件 ID `cpa-secret-manager`）。
 
 ---
@@ -153,7 +153,7 @@ usage.handle(record)
 
 ```
 .
-├── AGENTS.md / CLAUDE.md         智能体约束（严格交互、提交门禁、分层所有权）
+├── AGENTS.md                     智能体约束（严格交互、提交门禁、分层所有权）
 ├── CONTEXT.md                    领域词汇表（Single Source of Truth）
 ├── README.md / README.en.md      双语文档
 ├── registry.json                 CPA 插件商店元数据
@@ -161,9 +161,8 @@ usage.handle(record)
 ├── registry_workflow_test.go     registry / 文档 / 版本号一致性门禁
 ├── docs/
 │   ├── release-checklist.md      发布审阅矩阵
-│   ├── requirements/             本路线图
-│   ├── adr/                      架构决策记录
-│   └── agents/domain.md          领域文档消费规范
+│   ├── roadmap.md                本路线图
+│   └── adr/                      架构决策记录
 ├── internal/{config,state,keys,remarks,usage,runtime,management}/
 └── cmd/devserver/                本地 CPA 宿主仿真
 ```

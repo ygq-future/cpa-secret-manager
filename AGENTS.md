@@ -1,6 +1,6 @@
 # AGENTS.md
 
-> **说明**：本文档与 [CLAUDE.md](./CLAUDE.md) 保持内容完全一致，共同定义本项目的核心设计原则、严格交互确认协议、Git 提交验收门禁与发布审阅规范。
+> **说明**：本文档是项目智能体约束的唯一入口，定义本项目的核心设计原则、严格交互确认协议、Git 提交验收门禁与发布审阅规范。
 
 ---
 
@@ -77,8 +77,8 @@
 
 ### Domain docs
 
-Single-context repository. See `docs/agents/domain.md`, `CONTEXT.md`, and `docs/adr/`.
+Single-context repository. See `CONTEXT.md` and `docs/adr/`.
 
 ### Roadmap
 
-本项目的需求与实施计划集中在 `docs/requirements/v1.0.0-roadmap.md`；不维护 `.scratch` 工单目录。
+本项目的需求与实施计划集中在 `docs/roadmap.md`；不维护 `.scratch` 工单目录。

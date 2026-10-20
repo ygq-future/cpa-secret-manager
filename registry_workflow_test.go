@@ -155,12 +155,10 @@ func TestDomainDocumentation_IsPresent(t *testing.T) {
 	for _, path := range []string{
 		"CONTEXT.md",
 		"AGENTS.md",
-		"CLAUDE.md",
 		"README.md",
 		"README.en.md",
-		"docs/requirements/v1.0.0-roadmap.md",
+		"docs/roadmap.md",
 		"docs/release-checklist.md",
-		"docs/agents/domain.md",
 	} {
 		info, err := os.Stat(path)
 		if err != nil {
