@@ -17,6 +17,7 @@ import (
 	"cpa-secret-manager/internal/management"
 	"cpa-secret-manager/internal/remarks"
 	"cpa-secret-manager/internal/state"
+	"cpa-secret-manager/internal/usage"
 	"cpa-secret-manager/internal/version"
 )
 
@@ -64,6 +65,30 @@ func usageCall(t *testing.T, rt *Runtime, payload map[string]any) {
 	if !env.OK {
 		t.Fatalf("usage.handle failed: %+v", env.Error)
 	}
+}
+
+func resolveWindow(t *testing.T, rt *Runtime, apiKeys []string, start, end time.Time) management.ResolveResult {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"keys":  apiKeys,
+		"start": start.UTC().Format(time.RFC3339),
+		"end":   end.UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("encode resolve: %v", err)
+	}
+	status, responseBody := managementCall(t, rt, "POST", management.RouteResolve, body)
+	if status != 200 {
+		t.Fatalf("resolve status = %d, want 200", status)
+	}
+	var result management.ResolveResult
+	if err := json.Unmarshal(responseBody, &result); err != nil {
+		t.Fatalf("decode resolve: %v", err)
+	}
+	if len(result.Items) != len(apiKeys) {
+		t.Fatalf("items = %d, want one per submitted key", len(result.Items))
+	}
+	return result
 }
 
 func resolveResult(t *testing.T, rt *Runtime, apiKeys []string) management.ResolveResult {
@@ -389,9 +414,6 @@ func TestUsage_AttributesTokensPerKeyAndModel(t *testing.T) {
 	if first.Input != 16 || first.Output != 20 || first.CacheRead != 7 || first.Total != 43 {
 		t.Fatalf("counters = %+v, want input 16, output 20, cache read 7, total 43", first.Counters)
 	}
-	if first.FirstSeen == "" || first.LastSeen == "" {
-		t.Fatalf("usage window = %q..%q, want timestamps", first.FirstSeen, first.LastSeen)
-	}
 	if len(first.Models) != 2 {
 		t.Fatalf("models = %+v, want two model rows", first.Models)
 	}
@@ -475,20 +497,24 @@ func TestForget_DropsMetadataAndKeepsARecoveryCopy(t *testing.T) {
 	if after.Items[0].Remark != "" || after.Items[0].Usage != nil {
 		t.Fatalf("items[0] = %+v, want the key to keep no remark and no counters", after.Items[0])
 	}
-	reloaded, err := state.Load(statePath)
+	buckets, err := state.LoadBuckets(BucketsPath(statePath))
 	if err != nil {
-		t.Fatalf("state.Load() error = %v", err)
+		t.Fatalf("state.LoadBuckets() error = %v", err)
 	}
-	if _, ok := reloaded.Usage()[hash]; ok {
-		t.Fatal("state file still holds usage for a forgotten key")
+	if _, ok := buckets.Buckets()[hash]; ok {
+		t.Fatal("bucket file still holds usage for a forgotten key")
 	}
 
+	bucketBackup, err := state.LoadBuckets(BucketsPath(statePath) + ".bak")
+	if err != nil {
+		t.Fatalf("state.LoadBuckets(backup) error = %v", err)
+	}
+	if _, ok := bucketBackup.Buckets()[hash]; !ok {
+		t.Fatal("bucket backup does not hold the counters that were dropped")
+	}
 	backup, err := state.Load(statePath + ".bak")
 	if err != nil {
 		t.Fatalf("state.Load(backup) error = %v", err)
-	}
-	if _, ok := backup.Usage()[hash]; !ok {
-		t.Fatal("backup does not hold the counters that were dropped")
 	}
 	if entry, ok := backup.Remark(hash); !ok || entry.Remark != "old key" {
 		t.Fatalf("backup remark = %+v (ok=%v), want the dropped remark", entry, ok)
@@ -504,6 +530,125 @@ func TestForget_DropsMetadataAndKeepsARecoveryCopy(t *testing.T) {
 	}
 	if result.Dropped != 0 {
 		t.Fatalf("second dropped = %d, want 0", result.Dropped)
+	}
+}
+
+func TestResolve_SplitsUsageByWindow(t *testing.T) {
+	rt := registerRuntime(t, filepath.Join(t.TempDir(), "state.json"))
+	now := time.Now().UTC().Truncate(time.Hour)
+
+	usageCall(t, rt, map[string]any{"APIKey": "sk-a", "Model": "m", "RequestedAt": now.Add(-2 * time.Hour).Format(time.RFC3339),
+		"Detail": map[string]any{"TotalTokens": 10}})
+	usageCall(t, rt, map[string]any{"APIKey": "sk-a", "Model": "m", "RequestedAt": now.Format(time.RFC3339),
+		"Detail": map[string]any{"TotalTokens": 20}})
+
+	recent := resolveWindow(t, rt, []string{"sk-a"}, now, now.Add(time.Hour))
+	if recent.Items[0].Usage == nil || recent.Items[0].Usage.Total != 20 {
+		t.Fatalf("recent window = %+v, want only the 20 tokens recorded this hour", recent.Items[0].Usage)
+	}
+
+	older := resolveWindow(t, rt, []string{"sk-a"}, now.Add(-2*time.Hour), now.Add(-time.Hour))
+	if older.Items[0].Usage == nil || older.Items[0].Usage.Total != 10 {
+		t.Fatalf("older window = %+v, want only the 10 tokens recorded two hours ago", older.Items[0].Usage)
+	}
+
+	both := resolveWindow(t, rt, []string{"sk-a"}, now.Add(-3*time.Hour), now.Add(time.Hour))
+	if both.Items[0].Usage == nil || both.Items[0].Usage.Total != 30 {
+		t.Fatalf("wide window = %+v, want both records", both.Items[0].Usage)
+	}
+}
+
+func TestResolve_ClampsWindowToRetention(t *testing.T) {
+	rt := registerRuntime(t, filepath.Join(t.TempDir(), "state.json"))
+	now := time.Now().UTC()
+	expired := now.AddDate(0, 0, -40).Truncate(time.Hour)
+
+	usageCall(t, rt, map[string]any{"APIKey": "sk-a", "Model": "m", "RequestedAt": expired.Format(time.RFC3339),
+		"Detail": map[string]any{"TotalTokens": 99}})
+
+	if got := resolveWindow(t, rt, []string{"sk-a"}, expired, expired.Add(time.Hour)); got.Items[0].Usage != nil {
+		t.Fatalf("usage outside retention = %+v, want none", got.Items[0].Usage)
+	}
+	if got := resolveResult(t, rt, []string{"sk-a"}); got.Items[0].Usage != nil {
+		t.Fatalf("default window = %+v, want the retained window only", got.Items[0].Usage)
+	}
+}
+
+// TestFlush_SplitsConfigurationAndBuckets pins the storage contract: the state
+// document holds settings and remarks while every time bucket lives in its own
+// file, and a bucket that fell out of retention is never written back.
+func TestFlush_SplitsConfigurationAndBuckets(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	rt := registerRuntime(t, statePath)
+	now := time.Now().UTC().Truncate(time.Hour)
+
+	usageCall(t, rt, map[string]any{"APIKey": "sk-a", "Model": "m", "RequestedAt": now.Format(time.RFC3339),
+		"Detail": map[string]any{"TotalTokens": 5}})
+	usageCall(t, rt, map[string]any{"APIKey": "sk-a", "Model": "m", "RequestedAt": now.AddDate(0, 0, -40).Format(time.RFC3339),
+		"Detail": map[string]any{"TotalTokens": 500}})
+	rt.FlushUsage()
+
+	raw, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read state file: %v", err)
+	}
+	if strings.Contains(string(raw), `"usage"`) || strings.Contains(string(raw), `"buckets"`) {
+		t.Fatalf("state document still carries usage data:\n%s", raw)
+	}
+
+	bucketPath := BucketsPath(statePath)
+	if bucketPath == statePath {
+		t.Fatal("bucket path collides with the state path")
+	}
+	buckets, err := state.LoadBuckets(bucketPath)
+	if err != nil {
+		t.Fatalf("state.LoadBuckets() error = %v", err)
+	}
+	kept := buckets.Buckets()[remarks.Index("sk-a")]
+	if len(kept) != 1 {
+		t.Fatalf("buckets = %+v, want only the retained hour", kept)
+	}
+	if bucket := kept[usage.PeriodKey(now)]; bucket.Total != 5 {
+		t.Fatalf("retained bucket = %+v, want the 5 tokens from now", bucket)
+	}
+}
+
+// TestUpdateSettings_ShrinksRetentionImmediately pins requirement one: lowering
+// the retention window drops the now-expired buckets at once, without waiting
+// for the next request to dirty the aggregate.
+func TestUpdateSettings_ShrinksRetentionImmediately(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	rt := registerRuntime(t, statePath)
+	now := time.Now().UTC().Truncate(time.Hour)
+
+	usageCall(t, rt, map[string]any{"APIKey": "sk-a", "Model": "m", "RequestedAt": now.Format(time.RFC3339),
+		"Detail": map[string]any{"TotalTokens": 5}})
+	usageCall(t, rt, map[string]any{"APIKey": "sk-a", "Model": "m", "RequestedAt": now.AddDate(0, 0, -5).Format(time.RFC3339),
+		"Detail": map[string]any{"TotalTokens": 50}})
+	rt.FlushUsage()
+
+	buckets, err := state.LoadBuckets(BucketsPath(statePath))
+	if err != nil {
+		t.Fatalf("state.LoadBuckets() error = %v", err)
+	}
+	if got := len(buckets.Buckets()[remarks.Index("sk-a")]); got != 2 {
+		t.Fatalf("buckets before the change = %d, want 2", got)
+	}
+
+	if status, body := managementCall(t, rt, "PUT", management.RouteSettings, []byte(`{"retention_days":2}`)); status != 200 {
+		t.Fatalf("settings status = %d: %s", status, body)
+	}
+
+	buckets, err = state.LoadBuckets(BucketsPath(statePath))
+	if err != nil {
+		t.Fatalf("state.LoadBuckets() after the change error = %v", err)
+	}
+	kept := buckets.Buckets()[remarks.Index("sk-a")]
+	if len(kept) != 1 {
+		t.Fatalf("buckets after shrinking retention = %+v, want only the current hour", kept)
+	}
+	if _, ok := kept[usage.PeriodKey(now)]; !ok {
+		t.Fatalf("kept buckets = %+v, want the current hour", kept)
 	}
 }
 
@@ -525,20 +670,23 @@ func TestUsage_DisabledSettingStopsCollection(t *testing.T) {
 func TestUsageHandle_AcceptsSnakeCasePayload(t *testing.T) {
 	rt := registerRuntime(t, filepath.Join(t.TempDir(), "state.json"))
 
-	raw := []byte(`{"api_key":"sk-a","model":"gpt-5.6","failed":true,"requested_at":"2026-09-23T10:00:00Z",` +
-		`"detail":{"input_tokens":3,"output_tokens":4,"total_tokens":7}}`)
-	env := decodeEnvelope(t, rt.Handle(context.Background(), MethodUsageHandle, raw))
+	// Backdated by two days so the record only answers a window that contains
+	// its ReportedAt, which proves the snake_case field was parsed.
+	requestedAt := time.Now().UTC().Add(-48 * time.Hour).Truncate(time.Hour)
+	raw := fmt.Sprintf(`{"api_key":"sk-a","model":"gpt-5.6","failed":true,"requested_at":%q,`+
+		`"detail":{"input_tokens":3,"output_tokens":4,"total_tokens":7}}`, requestedAt.Format(time.RFC3339))
+	env := decodeEnvelope(t, rt.Handle(context.Background(), MethodUsageHandle, []byte(raw)))
 	if !env.OK {
 		t.Fatalf("usage.handle failed: %+v", env.Error)
 	}
 
-	result := resolveResult(t, rt, []string{"sk-a"})
+	result := resolveWindow(t, rt, []string{"sk-a"}, requestedAt, requestedAt.Add(time.Hour))
 	usageRecord := result.Items[0].Usage
 	if usageRecord == nil || usageRecord.Input != 3 || usageRecord.Output != 4 || usageRecord.Total != 7 || usageRecord.Failed != 1 {
 		t.Fatalf("usage = %+v, want the snake_case payload counters", usageRecord)
 	}
-	if usageRecord.FirstSeen != "2026-09-23T10:00:00Z" {
-		t.Fatalf("first_seen = %q, want the payload timestamp", usageRecord.FirstSeen)
+	if outside := resolveWindow(t, rt, []string{"sk-a"}, requestedAt.Add(time.Hour), requestedAt.Add(2*time.Hour)); outside.Items[0].Usage != nil {
+		t.Fatalf("usage outside the window = %+v, want none", outside.Items[0].Usage)
 	}
 }
 
@@ -555,10 +703,12 @@ func TestFlushUsage_PersistsAggregateInBackground(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		reloaded, err := state.Load(statePath)
+		reloaded, err := state.LoadBuckets(BucketsPath(statePath))
 		if err == nil {
-			if entry, ok := reloaded.Usage()[remarks.Index("sk-a")]; ok && entry.Total == 42 {
-				return
+			for _, bucket := range reloaded.Buckets()[remarks.Index("sk-a")] {
+				if bucket.Total == 42 {
+					return
+				}
 			}
 		}
 		if time.Now().After(deadline) {
@@ -635,7 +785,7 @@ func TestHandle_ManagementRegister_DeclaresAllRoutes(t *testing.T) {
 		"GET " + management.RouteQuota:     "quota read",
 		"PUT " + management.RouteQuota:     "quota write",
 		"DELETE " + management.RouteQuota:  "quota delete",
-		"GET " + management.RouteModels:     "models read",
+		"GET " + management.RouteModels:    "models read",
 	}
 
 	declared := make(map[string]bool)

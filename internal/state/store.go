@@ -12,10 +12,12 @@ import (
 
 	"cpa-secret-manager/internal/quota"
 	"cpa-secret-manager/internal/remarks"
-	"cpa-secret-manager/internal/usage"
 )
-// SchemaVersion is the current plugin state document schema.
-const SchemaVersion = 1
+
+// SchemaVersion is the current plugin state document schema. Version 2 moved
+// the usage counters out into the bucket document, so an older file simply has
+// its "usage" section ignored.
+const SchemaVersion = 2
 
 // AppConfig carries plugin-owned business settings that must not live in the
 // host config.yaml, see ADR-0001.
@@ -34,6 +36,7 @@ const (
 	MinRetentionDays = 1
 	MaxRetentionDays = 365
 )
+
 // DefaultAppConfig returns the canonical business defaults.
 func DefaultAppConfig() AppConfig {
 	return AppConfig{UsageEnabled: true, RetentionDays: DefaultRetentionDays}
@@ -43,12 +46,11 @@ func DefaultAppConfig() AppConfig {
 // currently manages: a key removed from the host takes its remark and its usage
 // counters with it, see Runtime.Forget.
 type Document struct {
-	SchemaVersion int                       `json:"schema_version"`
-	Remarks       map[string]remarks.Entry       `json:"remarks,omitempty"`
-	Usage         map[string]usage.KeyUsage      `json:"usage,omitempty"`
-	QuotaRules    map[string]quota.Rule          `json:"quota_rules,omitempty"`
-	QuotaStates   map[string]quota.WindowState   `json:"quota_states,omitempty"`
-	AppConfig     AppConfig                      `json:"app_config"`
+	SchemaVersion int                          `json:"schema_version"`
+	Remarks       map[string]remarks.Entry     `json:"remarks,omitempty"`
+	QuotaRules    map[string]quota.Rule        `json:"quota_rules,omitempty"`
+	QuotaStates   map[string]quota.WindowState `json:"quota_states,omitempty"`
+	AppConfig     AppConfig                    `json:"app_config"`
 }
 
 // Store owns the plugin state document and its atomic persistence.
@@ -119,27 +121,6 @@ func (s *Store) SetAppConfig(cfg AppConfig) {
 		cfg.RetentionDays = MaxRetentionDays
 	}
 	s.doc.AppConfig = cfg
-}
-
-// Usage returns a deep copy of the persisted token accounting.
-func (s *Store) Usage() map[string]usage.KeyUsage {
-	if s == nil {
-		return map[string]usage.KeyUsage{}
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return cloneUsage(s.doc.Usage)
-}
-
-// ReplaceUsage materializes the live aggregate into the document. The caller
-// owns the counters; this method only stores a copy.
-func (s *Store) ReplaceUsage(entries map[string]usage.KeyUsage) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.doc.Usage = cloneUsage(entries)
 }
 
 // Backup writes the current document to <path>.bak so a destructive change - a
@@ -217,6 +198,7 @@ func (s *Store) DeleteRemark(hash string) bool {
 	delete(s.doc.Remarks, hash)
 	return true
 }
+
 // QuotaRules returns a copy of the quota rules.
 func (s *Store) QuotaRules() map[string]quota.Rule {
 	if s == nil {
@@ -286,7 +268,6 @@ func (s *Store) ReplaceQuotaStates(states map[string]quota.WindowState) {
 	}
 	s.doc.QuotaStates = out
 }
-
 
 // Snapshot returns a deep copy of the document for persistence or inspection.
 func (s *Store) Snapshot() Document {
@@ -369,7 +350,6 @@ func (doc Document) clone() Document {
 		}
 		doc.Remarks = remarksCopy
 	}
-	doc.Usage = cloneUsage(doc.Usage)
 	if len(doc.QuotaRules) > 0 {
 		rulesCopy := make(map[string]quota.Rule, len(doc.QuotaRules))
 		for k, v := range doc.QuotaRules {
@@ -385,20 +365,4 @@ func (doc Document) clone() Document {
 		doc.QuotaStates = statesCopy
 	}
 	return doc
-}
-
-func cloneUsage(source map[string]usage.KeyUsage) map[string]usage.KeyUsage {
-	if len(source) == 0 {
-		return nil
-	}
-	out := make(map[string]usage.KeyUsage, len(source))
-	for hash, entry := range source {
-		copied := entry
-		copied.Models = make(map[string]usage.ModelUsage, len(entry.Models))
-		for model, modelUsage := range entry.Models {
-			copied.Models[model] = modelUsage
-		}
-		out[hash] = copied
-	}
-	return out
 }

@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestObserve_AccumulatesKeyAndModelCounters(t *testing.T) {
+func TestObserve_SplitsByHourAndModel(t *testing.T) {
 	aggregator := NewAggregator()
 	base := time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)
 
@@ -16,25 +16,91 @@ func TestObserve_AccumulatesKeyAndModelCounters(t *testing.T) {
 		Detail: Detail{Input: 1, Output: 2, Total: 3}})
 	aggregator.Observe(Record{Hash: "h1", Model: "claude-sonnet", At: base.Add(2 * time.Minute),
 		Detail: Detail{Input: 5, CacheRead: 7, CacheCreation: 9, Total: 21}})
+	aggregator.Observe(Record{Hash: "h1", Model: "claude-sonnet", At: base.Add(time.Hour),
+		Detail: Detail{Total: 7}})
 
-	snapshot := aggregator.Snapshot()
-
-	entry, ok := snapshot["h1"]
-	if !ok {
-		t.Fatal("aggregate is missing h1")
+	buckets := aggregator.SnapshotBuckets()["h1"]
+	if len(buckets) != 2 {
+		t.Fatalf("buckets = %d, want one per hour", len(buckets))
 	}
+	first := buckets[PeriodKey(base)]
 	want := Counters{Requests: 3, Failed: 1, Input: 16, Output: 22, Reasoning: 3, Cached: 4, CacheRead: 7, CacheCreation: 9, Total: 57}
-	if entry.Counters != want {
-		t.Fatalf("key counters = %+v, want %+v", entry.Counters, want)
+	if first.Counters != want {
+		t.Fatalf("hour counters = %+v, want %+v", first.Counters, want)
 	}
-	if len(entry.Models) != 2 {
-		t.Fatalf("models = %d entries, want 2", len(entry.Models))
-	}
-	if got := entry.Models["gpt-5.6"]; got.Requests != 2 || got.Failed != 1 || got.Total != 36 {
+	if got := first.Models["gpt-5.6"]; got.Requests != 2 || got.Failed != 1 || got.Total != 36 {
 		t.Fatalf("gpt-5.6 counters = %+v, want 2 requests (1 failed) and 36 total tokens", got)
 	}
-	if !entry.FirstSeen.Equal(base) || !entry.LastSeen.Equal(base.Add(2*time.Minute)) {
-		t.Fatalf("window = %v..%v, want %v..%v", entry.FirstSeen, entry.LastSeen, base, base.Add(2*time.Minute))
+	second := buckets[PeriodKey(base.Add(time.Hour))]
+	if second.Requests != 1 || second.Models["claude-sonnet"].Total != 7 {
+		t.Fatalf("next hour bucket = %+v, want the single claude record", second)
+	}
+}
+
+func TestRange_MergesOnlyOverlappingBuckets(t *testing.T) {
+	aggregator := NewAggregator()
+	day := time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)
+
+	aggregator.Observe(Record{Hash: "h1", Model: "m", At: day, Detail: Detail{Total: 10}})
+	aggregator.Observe(Record{Hash: "h1", Model: "m", At: day.AddDate(0, 0, -1), Detail: Detail{Total: 1}})
+	aggregator.Observe(Record{Hash: "h2", Model: "m", At: day, Detail: Detail{Total: 5}})
+
+	dayStart := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
+	dayEnd := dayStart.AddDate(0, 0, 1)
+	got := aggregator.Range(dayStart, dayEnd)
+
+	if len(got) != 2 {
+		t.Fatalf("keys = %d, want the two observed keys", len(got))
+	}
+	if got["h1"].Total != 10 || got["h1"].Requests != 1 {
+		t.Fatalf("h1 = %+v, want only the bucket inside the window", got["h1"].Counters)
+	}
+	if got["h2"].Total != 5 {
+		t.Fatalf("h2 = %+v, want its single in-window request", got["h2"].Counters)
+	}
+	if got["h1"].Models["m"].Total != 10 {
+		t.Fatalf("h1 model split = %+v, want the same window", got["h1"].Models)
+	}
+	if !got["h1"].FirstSeen.Equal(day) || !got["h1"].LastSeen.Equal(day.Add(time.Hour)) {
+		t.Fatalf("window = %v..%v, want the bucket span %v..%v", got["h1"].FirstSeen, got["h1"].LastSeen, day, day.Add(time.Hour))
+	}
+}
+
+func TestRange_EmptyWindowReturnsNothing(t *testing.T) {
+	aggregator := NewAggregator()
+	at := time.Date(2026, 9, 23, 10, 30, 0, 0, time.UTC)
+	aggregator.Observe(Record{Hash: "h1", Model: "m", At: at})
+
+	if got := aggregator.Range(at, at); len(got) != 0 {
+		t.Fatalf("zero-width window = %+v, want nothing", got)
+	}
+	if got := aggregator.Range(at.Add(time.Hour), at.Add(2*time.Hour)); len(got) != 0 {
+		t.Fatalf("future window = %+v, want nothing", got)
+	}
+}
+
+func TestPrune_DropsBucketsOutsideRetention(t *testing.T) {
+	aggregator := NewAggregator()
+	now := time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)
+	aggregator.Observe(Record{Hash: "old", Model: "m", At: now.AddDate(0, 0, -40)})
+	aggregator.Observe(Record{Hash: "recent", Model: "m", At: now.AddDate(0, 0, -2)})
+	aggregator.MarkClean()
+
+	if removed := aggregator.Prune(now.AddDate(0, 0, -30)); removed != 1 {
+		t.Fatalf("Prune removed %d buckets, want 1", removed)
+	}
+	buckets := aggregator.SnapshotBuckets()
+	if _, ok := buckets["old"]; ok {
+		t.Fatal("expired key survived Prune")
+	}
+	if _, ok := buckets["recent"]; !ok {
+		t.Fatal("in-retention key was pruned")
+	}
+	if !aggregator.Dirty() {
+		t.Fatal("Dirty() = false after Prune dropped data, want a pending write")
+	}
+	if removed := aggregator.Prune(time.Time{}); removed != 0 {
+		t.Fatalf("Prune(zero) removed %d buckets, want 0", removed)
 	}
 }
 
@@ -42,26 +108,9 @@ func TestObserve_GroupsMissingModelAsUnknown(t *testing.T) {
 	aggregator := NewAggregator()
 	aggregator.Observe(Record{Hash: "h1", Detail: Detail{Total: 1}})
 
-	snapshot := aggregator.Snapshot()
-	if _, ok := snapshot["h1"].Models[UnknownModel]; !ok {
-		t.Fatalf("models = %+v, want an %s bucket", snapshot["h1"].Models, UnknownModel)
-	}
-}
-
-func TestObserve_KeepsEarliestTimestampOnReplay(t *testing.T) {
-	aggregator := NewAggregator()
-	later := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
-	earlier := later.Add(-time.Hour)
-
-	aggregator.Observe(Record{Hash: "h1", Model: "m", At: later})
-	aggregator.Observe(Record{Hash: "h1", Model: "m", At: earlier})
-
-	snapshot := aggregator.Snapshot()
-	if !snapshot["h1"].FirstSeen.Equal(earlier) {
-		t.Fatalf("first_seen = %v, want the earlier observation %v", snapshot["h1"].FirstSeen, earlier)
-	}
-	if !snapshot["h1"].LastSeen.Equal(later) {
-		t.Fatalf("last_seen = %v, want the later observation %v", snapshot["h1"].LastSeen, later)
+	bucket := aggregator.SnapshotBuckets()["h1"][PeriodKey(time.Now())]
+	if _, ok := bucket.Models[UnknownModel]; !ok {
+		t.Fatalf("models = %+v, want an %s bucket", bucket.Models, UnknownModel)
 	}
 }
 
@@ -69,32 +118,32 @@ func TestObserve_IgnoresEmptyHash(t *testing.T) {
 	aggregator := NewAggregator()
 	aggregator.Observe(Record{Model: "m", Detail: Detail{Total: 5}})
 
-	snapshot := aggregator.Snapshot()
-	if len(snapshot) != 0 {
-		t.Fatalf("snapshot = %+v, want nothing recorded", snapshot)
+	if buckets := aggregator.SnapshotBuckets(); len(buckets) != 0 {
+		t.Fatalf("buckets = %+v, want nothing recorded", buckets)
 	}
 }
 
-func TestSeed_ReplacesAndIsolatesState(t *testing.T) {
+func TestSeedBuckets_ReplacesAndIsolatesState(t *testing.T) {
 	aggregator := NewAggregator()
 	aggregator.Observe(Record{Hash: "stale", Model: "m"})
 
-	seeded := map[string]KeyUsage{
-		"h1": {Counters: Counters{Requests: 4, Total: 40}, Models: map[string]ModelUsage{"m": {Counters: Counters{Requests: 4}}}},
+	period := PeriodKey(time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC))
+	seeded := map[string]map[string]Bucket{
+		"h1": {period: {Counters: Counters{Requests: 4, Total: 40}, Models: map[string]Counters{"m": {Requests: 4}}}},
 	}
-	aggregator.Seed(seeded)
+	aggregator.SeedBuckets(seeded)
 
-	snapshot := aggregator.Snapshot()
-	if len(snapshot) != 1 || snapshot["h1"].Requests != 4 {
-		t.Fatalf("snapshot = %+v, want only the seeded entry", snapshot)
+	snapshot := aggregator.SnapshotBuckets()
+	if len(snapshot) != 1 || snapshot["h1"][period].Requests != 4 {
+		t.Fatalf("snapshot = %+v, want only the seeded bucket", snapshot)
 	}
 	if aggregator.Dirty() {
-		t.Fatal("Dirty() = true right after Seed, want false")
+		t.Fatal("Dirty() = true right after SeedBuckets, want false")
 	}
 
-	seeded["h1"].Models["m"] = ModelUsage{}
-	aggregator.Observe(Record{Hash: "h1", Model: "m2"})
-	if _, ok := snapshot["h1"].Models["m2"]; ok {
+	seeded["h1"][period] = Bucket{}
+	aggregator.Observe(Record{Hash: "h1", Model: "m2", At: time.Date(2026, 9, 23, 10, 5, 0, 0, time.UTC)})
+	if snapshot["h1"][period].Models["m2"].Requests != 0 {
 		t.Fatal("snapshot changed after later observations")
 	}
 }
@@ -114,30 +163,69 @@ func TestDirty_TracksUnpersistedChanges(t *testing.T) {
 	}
 }
 
+func TestRemove_DropsEveryBucketOfOneKey(t *testing.T) {
+	aggregator := NewAggregator()
+	at := time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)
+	aggregator.Observe(Record{Hash: "h1", Model: "m", At: at})
+	aggregator.Observe(Record{Hash: "h1", Model: "m", At: at.Add(time.Hour)})
+	aggregator.Observe(Record{Hash: "h2", Model: "m", At: at})
+
+	if !aggregator.Remove("h1") {
+		t.Fatal("Remove(h1) = false, want true")
+	}
+	if aggregator.Remove("h1") {
+		t.Fatal("Remove(h1) on the second call = true, want false")
+	}
+	buckets := aggregator.SnapshotBuckets()
+	if _, ok := buckets["h1"]; ok {
+		t.Fatal("h1 buckets survived Remove")
+	}
+	if _, ok := buckets["h2"]; !ok {
+		t.Fatal("Remove(h1) also dropped h2")
+	}
+}
+
+func TestHashesAndModels_ReportObservedValues(t *testing.T) {
+	aggregator := NewAggregator()
+	at := time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)
+	aggregator.Observe(Record{Hash: "h1", Model: "a", At: at})
+	aggregator.Observe(Record{Hash: "h2", Model: "b", At: at})
+
+	hashes := aggregator.Hashes()
+	if len(hashes) != 2 {
+		t.Fatalf("hashes = %v, want both keys", hashes)
+	}
+	models := aggregator.Models()
+	if len(models) != 2 {
+		t.Fatalf("models = %v, want a and b", models)
+	}
+}
+
 func TestObserve_IsConcurrencySafe(t *testing.T) {
 	aggregator := NewAggregator()
 	const (
 		workers = 8
 		perWork = 50
 	)
+	now := time.Now().UTC()
 
 	var waitGroup sync.WaitGroup
-	for worker := range workers {
+	for range workers {
 		waitGroup.Add(1)
-		go func(worker int) {
+		go func() {
 			defer waitGroup.Done()
 			for range perWork {
-				aggregator.Observe(Record{Hash: "h1", Model: "m", Detail: Detail{Total: 1}, At: time.Now()})
+				aggregator.Observe(Record{Hash: "h1", Model: "m", Detail: Detail{Total: 1}, At: now})
 			}
-		}(worker)
+		}()
 	}
 	waitGroup.Wait()
 
-	snapshot := aggregator.Snapshot()
-	if got := snapshot["h1"].Requests; got != workers*perWork {
-		t.Fatalf("requests = %d, want %d", got, workers*perWork)
+	got := aggregator.Range(now.Add(-time.Hour), now.Add(time.Hour))["h1"]
+	if got.Requests != workers*perWork {
+		t.Fatalf("requests = %d, want %d", got.Requests, workers*perWork)
 	}
-	if got := snapshot["h1"].Models["m"].Requests; got != workers*perWork {
-		t.Fatalf("model requests = %d, want %d", got, workers*perWork)
+	if got.Models["m"].Requests != workers*perWork {
+		t.Fatalf("model requests = %d, want %d", got.Models["m"].Requests, workers*perWork)
 	}
 }

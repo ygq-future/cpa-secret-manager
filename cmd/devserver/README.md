@@ -18,6 +18,7 @@ go run ./cmd/devserver
 | `-management-key` | `CPA_SECRET_MANAGER_DEVSERVER_KEY` | `devkey` | 模拟的管理密钥 |
 | `-keys` | `CPA_SECRET_MANAGER_DEVSERVER_KEYS` | `data/devserver/api-keys.json` | 模拟的代理密钥存储 |
 | `-state` | `CPA_SECRET_MANAGER_DEVSERVER_STATE` | `data/devserver/cache.json` | 插件状态文件 |
+| `-latency` | `CPA_SECRET_MANAGER_DEVSERVER_LATENCY` | `800ms` | 管理接口人为延迟，用于观察前端的 loading 状态；`0` 关闭 |
 
 需要从其它设备访问仿真环境时，显式指定全部网卡地址（会触发防火墙提示）：
 
@@ -46,7 +47,7 @@ seedDemo(3)           // 生成 3 把官方格式密钥、备注与用量，再�
 
 ## 端点
 
-宿主侧（需要管理密钥）：
+宿主侧（需要管理密钥；除 `/dev/*` 外都受 `-latency` 影响）：
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
@@ -60,7 +61,9 @@ seedDemo(3)           // 生成 3 把官方格式密钥、备注与用量，再�
 | --- | --- | --- |
 | GET | `/v0/resource/plugins/cpa-secret-manager/keys` | 生产插件页面（无管理鉴权，与宿主一致） |
 | GET | `/control-panel` | 仿真宿主外壳 |
-| POST | `/dev/seed?keys=3` | 生成演示密钥、备注与用量 |
+| POST | `/dev/seed?keys=3` | 生成演示密钥、备注与用量（记录时间戳为"现在"） |
+| POST | `/dev/seed-history?keys=3&days=30` | 清空后生成跨 `days` 天的历史用量与失败记录，供日期筛选验证 |
+| POST | `/dev/reset` | 清空模拟密钥列表与插件状态文件，并重建 runtime |
 | POST | `/dev/simulate-usage` | 注入一条或多条用量记录 |
 
 `/dev/simulate-usage` 支持的查询参数：
@@ -68,9 +71,18 @@ seedDemo(3)           // 生成 3 把官方格式密钥、备注与用量，再�
 ```bash
 # 命中某把密钥的 3 条 gpt-5.6 用量
 curl -X POST "http://localhost:8080/dev/simulate-usage?key=sk-xxx&model=gpt-5.6&count=3&input=100&output=200&total=300"
+
+# 把记录写入 3 天前，或指定绝对时刻（RFC3339）
+curl -X POST "http://localhost:8080/dev/simulate-usage?key=sk-xxx&days_ago=3&failed=true&status_code=429"
+curl -X POST "http://localhost:8080/dev/simulate-usage?key=sk-xxx&at=2026-10-01T08:30:00Z"
 ```
 
-其余可选参数：`reasoning`、`cached`、`cache_read`、`failed=true`。
+其余可选参数：`reasoning`、`cached`、`cache_read`、`failed=true`、`status_code`、`error_body`、`at`（RFC3339）、`days_ago`（浮点天数）。**不加 `at` / `days_ago` 时记录时间戳就是"现在"**，因此默认的 `/dev/seed` 只会落在当天。
+
+`/dev/seed-history` 参数：`keys`（1-20，默认 3）、`days`（1-365，默认 30）、`reset`（默认 `true`，先清空）。它给每把密钥在最近 `days` 个自然日各注入若干用量，并每 3 天注入一条失败记录，因此切换日期范围后统计数据与失败记录都会随之变化。
+
+注意：**数据保留天数**（插件设置页，默认 30 天）同时裁剪用量桶与失败记录。`days` 超过保留天数时，超出部分会在下一次刷盘（5 秒）时被裁掉，日期选择器也不会允许选中保留范围以外的日期。
+
 
 ## 与真实宿主的差异
 

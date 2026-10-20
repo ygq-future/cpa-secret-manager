@@ -18,6 +18,7 @@ type stubBackend struct {
 	key      string
 	forgot   []string
 	failures []errorslog.ErrorEntry
+	resolved *ResolveRequest
 }
 
 func (s *stubBackend) Settings(context.Context) (Settings, error) {
@@ -29,9 +30,10 @@ func (s *stubBackend) UpdateSettings(_ context.Context, update SettingsUpdate) e
 	return nil
 }
 
-func (s *stubBackend) Resolve(_ context.Context, keys []string) (ResolveResult, error) {
-	items := make([]KeyEntry, 0, len(keys))
-	for _, key := range keys {
+func (s *stubBackend) Resolve(_ context.Context, req ResolveRequest) (ResolveResult, error) {
+	s.resolved = &req
+	items := make([]KeyEntry, 0, len(req.Keys))
+	for _, key := range req.Keys {
 		items = append(items, KeyEntry{Hash: "hash:" + key, Remark: key})
 	}
 	return ResolveResult{Items: items}, nil
@@ -156,6 +158,24 @@ func TestHandler_ResolveKeepsKeyOrderAndMetadata(t *testing.T) {
 	}
 	if len(result.Items) != 2 || result.Items[1].Hash != "hash:sk-b" {
 		t.Fatalf("items = %+v, want one entry per submitted key in order", result.Items)
+	}
+}
+
+func TestHandler_ResolveForwardsTheUsageWindow(t *testing.T) {
+	backend := &stubBackend{}
+	handler := NewHandler(backend)
+
+	recorder := httptest.NewRecorder()
+	body := `{"keys":["sk-a"],"start":"2026-09-19T00:00:00Z","end":"2026-10-19T09:00:00Z"}`
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, RouteResolve, strings.NewReader(body)))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	if backend.resolved == nil {
+		t.Fatal("backend never received the resolve request")
+	}
+	if backend.resolved.Start != "2026-09-19T00:00:00Z" || backend.resolved.End != "2026-10-19T09:00:00Z" {
+		t.Fatalf("window = %q..%q, want the submitted bounds", backend.resolved.Start, backend.resolved.End)
 	}
 }
 

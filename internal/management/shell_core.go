@@ -19,6 +19,7 @@ var HOST_THEME_VARIABLES = [
 var REFRESH_INTERVAL_MS = 15000;
 var LANGUAGE_STORAGE_KEY = 'cpa-secret-manager-language';
 var TOKEN_UNIT_STORAGE_KEY = 'cpa-secret-manager-token-unit';
+var RANGE_STORAGE_KEY = 'cpa-secret-manager-range';
 var MANUAL_KEY_STORAGE = 'cpa-secret-manager-key';
 var HOST_AUTH_STORAGE_KEY = 'cli-proxy-auth';
 var HOST_THEME_STORAGE_KEY = 'cli-proxy-theme';

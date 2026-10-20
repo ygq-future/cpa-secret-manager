@@ -130,23 +130,26 @@ type QuotaUpdate struct {
 	AllowedModels []string           `json:"allowed_models,omitempty"`
 }
 
-// UsageSummary is the cumulative token accounting shown for one key.
+// UsageSummary is the token accounting of one key inside the queried window.
 type UsageSummary struct {
 	usage.Counters
-	FirstSeen string       `json:"first_seen,omitempty"`
-	LastSeen  string       `json:"last_seen,omitempty"`
-	Models    []ModelUsage `json:"models,omitempty"`
+	Models []ModelUsage `json:"models,omitempty"`
 }
 
-// ModelUsage is the cumulative token accounting for one model of one key.
+// ModelUsage is the token accounting for one model of one key inside the
+// queried window.
 type ModelUsage struct {
 	Model string `json:"model"`
 	usage.Counters
 }
 
-// ResolveRequest carries the current proxy key list, in display order.
+// ResolveRequest carries the current proxy key list, in display order, and the
+// window the usage figures must cover. Both bounds are RFC3339 instants; an
+// empty bound means "the retained window".
 type ResolveRequest struct {
-	Keys []string `json:"keys"`
+	Keys  []string `json:"keys"`
+	Start string   `json:"start,omitempty"`
+	End   string   `json:"end,omitempty"`
 }
 
 // ResolveResult is the resolved metadata for the submitted key list.
@@ -198,7 +201,7 @@ func NewInvalidRequest(message string) error {
 type Backend interface {
 	Settings(ctx context.Context) (Settings, error)
 	UpdateSettings(ctx context.Context, update SettingsUpdate) error
-	Resolve(ctx context.Context, apiKeys []string) (ResolveResult, error)
+	Resolve(ctx context.Context, req ResolveRequest) (ResolveResult, error)
 	Forget(ctx context.Context, hashes []string) (int, error)
 	SetRemark(ctx context.Context, apiKey string, remark string) error
 	GenerateKey(ctx context.Context) (string, error)
@@ -301,7 +304,7 @@ func (h *Handler) serveResolve(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &request) {
 		return
 	}
-	result, err := h.backend.Resolve(r.Context(), request.Keys)
+	result, err := h.backend.Resolve(r.Context(), request)
 	if h.fail(w, err) {
 		return
 	}

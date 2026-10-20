@@ -7,9 +7,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"cpa-secret-manager/internal/keys"
 	"cpa-secret-manager/internal/management"
@@ -567,5 +569,190 @@ func TestDevHost_V1ModelsAndModelRestrictions(t *testing.T) {
 	}](t, body)
 	if !rejected.Terminate || rejected.StatusCode != http.StatusForbidden {
 		t.Fatalf("rejected = %+v, want Terminate=true, StatusCode=403", rejected)
+	}
+}
+
+// utcDay returns the inclusive UTC window of the calendar day offset days from
+// today, which is how the page's date picker groups records.
+func utcDay(offset int) (time.Time, time.Time) {
+	day := time.Now().UTC().AddDate(0, 0, offset)
+	return time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC),
+		time.Date(day.Year(), day.Month(), day.Day(), 23, 59, 59, 0, time.UTC)
+}
+
+func queryFailures(t *testing.T, server *httptest.Server, hash string, start, end time.Time) management.FailuresResult {
+	t.Helper()
+	body := mustJSON(t, map[string]string{
+		"hash":  hash,
+		"start": start.Format(time.RFC3339),
+		"end":   end.Format(time.RFC3339),
+	})
+	status, raw := call(t, server, http.MethodPost, "/v0/management/plugins/cpa-secret-manager/failures", body, true)
+	if status != http.StatusOK {
+		t.Fatalf("failures status = %d: %s", status, raw)
+	}
+	return decode[management.FailuresResult](t, raw)
+}
+
+// TestDevHost_BackdatedInjectionSplitsByDate pins the simulator's history knob:
+// a record injected with an explicit instant must only answer the ranges that
+// contain it, otherwise the date filter looks broken when it is not.
+func TestDevHost_BackdatedInjectionSplitsByDate(t *testing.T) {
+	_, server := newTestHost(t)
+
+	if status, _ := call(t, server, http.MethodPut, "/v0/management/api-keys", `["sk-backdated"]`, true); status != http.StatusOK {
+		t.Fatal("failed to prepare key")
+	}
+
+	target, _ := utcDay(-2)
+	target = target.Add(9 * time.Hour)
+	path := "/dev/simulate-usage?key=sk-backdated&model=gpt-5.6&failed=true&status_code=429&at=" + url.QueryEscape(target.Format(time.RFC3339))
+	if status, body := call(t, server, http.MethodPost, path, "", true); status != http.StatusOK {
+		t.Fatalf("backdated simulate status = %d: %s", status, body)
+	}
+
+	hash := remarks.Index("sk-backdated")
+	todayStart, todayEnd := utcDay(0)
+	if got := queryFailures(t, server, hash, todayStart, todayEnd); len(got.Items) != 0 {
+		t.Fatalf("today's window returned %d items, want 0 for a two-day-old record", len(got.Items))
+	}
+	oldStart, oldEnd := utcDay(-2)
+	got := queryFailures(t, server, hash, oldStart, oldEnd)
+	if len(got.Items) != 1 || got.Items[0].StatusCode != 429 {
+		t.Fatalf("two-day window = %+v, want the backdated failure", got.Items)
+	}
+}
+
+func TestDevHost_RejectsInvalidRecordTime(t *testing.T) {
+	_, server := newTestHost(t)
+
+	status, _ := call(t, server, http.MethodPost, "/dev/simulate-usage?key=sk-x&at=yesterday", "", true)
+	if status != http.StatusBadRequest {
+		t.Fatalf("non-RFC3339 at status = %d, want 400", status)
+	}
+	status, _ = call(t, server, http.MethodPost, "/dev/simulate-usage?key=sk-x&days_ago=soon", "", true)
+	if status != http.StatusBadRequest {
+		t.Fatalf("non-numeric days_ago status = %d, want 400", status)
+	}
+}
+
+// TestDevHost_ResolveHonorsTheDateRange is the end-to-end guard for the page's
+// default view: the resolve call the browser makes must only count the window it
+// asked for, so the cards and the table follow the date picker.
+func TestDevHost_ResolveHonorsTheDateRange(t *testing.T) {
+	_, server := newTestHost(t)
+
+	if status, body := call(t, server, http.MethodPost, "/dev/seed-history?keys=1&days=9", "", true); status != http.StatusOK {
+		t.Fatalf("seed-history status = %d: %s", status, body)
+	}
+	status, body := call(t, server, http.MethodGet, "/v0/management/api-keys", "", true)
+	if status != http.StatusOK {
+		t.Fatalf("api-keys status = %d", status)
+	}
+	keys := decode[struct {
+		APIKeys []string `json:"api-keys"`
+	}](t, body).APIKeys
+	if len(keys) != 1 {
+		t.Fatalf("keys = %v, want the seeded key", keys)
+	}
+
+	total := func(start, end time.Time) int64 {
+		payload := mustJSON(t, map[string]any{
+			"keys":  keys,
+			"start": start.Format(time.RFC3339),
+			"end":   end.Format(time.RFC3339),
+		})
+		status, raw := call(t, server, http.MethodPost, "/v0/management/plugins/cpa-secret-manager/resolve", payload, true)
+		if status != http.StatusOK {
+			t.Fatalf("resolve status = %d: %s", status, raw)
+		}
+		result := decode[management.ResolveResult](t, raw)
+		if result.Items[0].Usage == nil {
+			return 0
+		}
+		return result.Items[0].Usage.Total
+	}
+
+	wideStart, _ := utcDay(-8)
+	_, wideEnd := utcDay(0)
+	wide := total(wideStart, wideEnd)
+	todayStart, todayEnd := utcDay(0)
+	narrow := total(todayStart, todayEnd)
+	if wide == 0 || narrow == 0 {
+		t.Fatalf("totals = wide %d, today %d; want both windows to hold usage", wide, narrow)
+	}
+	if wide <= narrow {
+		t.Fatalf("nine-day total = %d, today total = %d; the range must change the figure", wide, narrow)
+	}
+
+	if status, body := call(t, server, http.MethodPost, "/dev/reset", "", true); status != http.StatusOK {
+		t.Fatalf("reset status = %d: %s", status, body)
+	}
+	if got := total(todayStart, todayEnd); got != 0 {
+		t.Fatalf("today total after reset = %d, want 0", got)
+	}
+}
+
+// TestDevHost_SeedHistorySpreadsAcrossDays covers the endpoint that exists so a
+// date-filtered view has more than one day of data to slice.
+func TestDevHost_SeedHistorySpreadsAcrossDays(t *testing.T) {
+	_, server := newTestHost(t)
+
+	status, body := call(t, server, http.MethodPost, "/dev/seed-history?keys=2&days=9", "", true)
+	if status != http.StatusOK {
+		t.Fatalf("seed-history status = %d: %s", status, body)
+	}
+	seeded := decode[struct {
+		Keys     []string `json:"keys"`
+		Records  int      `json:"records"`
+		Failures int      `json:"failures"`
+	}](t, body)
+	if len(seeded.Keys) != 2 || seeded.Records == 0 || seeded.Failures == 0 {
+		t.Fatalf("seed-history = %+v, want two keys with usage and failures", seeded)
+	}
+
+	resolveStatus, resolveBody := call(t, server, http.MethodPost,
+		"/v0/management/plugins/cpa-secret-manager/resolve", mustJSON(t, map[string][]string{"keys": seeded.Keys}), true)
+	if resolveStatus != http.StatusOK {
+		t.Fatalf("resolve status = %d", resolveStatus)
+	}
+	resolved := decode[management.ResolveResult](t, resolveBody)
+	for _, item := range resolved.Items {
+		if item.Usage == nil || item.Usage.Requests == 0 {
+			t.Fatalf("seeded key has no usage: %+v", item)
+		}
+	}
+
+	hash := remarks.Index(seeded.Keys[0])
+	wideStart, _ := utcDay(-8)
+	_, wideEnd := utcDay(0)
+	if got := queryFailures(t, server, hash, wideStart, wideEnd); len(got.Items) == 0 {
+		t.Fatal("nine-day window returned no failures; the history spread is not visible to the date filter")
+	}
+	narrowStart, narrowEnd := utcDay(-40)
+	if got := queryFailures(t, server, hash, narrowStart, narrowEnd); len(got.Items) != 0 {
+		t.Fatalf("forty-day-old window returned %d items, want 0", len(got.Items))
+	}
+	// The first key always gets a failure on day zero; a stamp nudged into the
+	// future would silently drop it from every range that ends at now.
+	now := time.Now().UTC()
+	if got := queryFailures(t, server, hash, now.Add(-time.Hour), now); len(got.Items) != 1 {
+		t.Fatalf("last-hour window = %d items, want exactly the day-zero failure", len(got.Items))
+	}
+
+	if status, body := call(t, server, http.MethodPost, "/dev/reset", "", true); status != http.StatusOK {
+		t.Fatalf("reset status = %d: %s", status, body)
+	}
+	if status, body := call(t, server, http.MethodGet, "/v0/management/api-keys", "", true); status != http.StatusOK {
+		t.Fatalf("api-keys status = %d", status)
+	} else if got := decode[struct {
+		APIKeys []string `json:"api-keys"`
+	}](t, body).APIKeys; len(got) != 0 {
+		t.Fatalf("keys after reset = %v, want none", got)
+	}
+	// The error log lives in its own document; a reset that leaves it behind
+	// makes every later seed look like it accumulated history it never wrote.
+	if got := queryFailures(t, server, hash, wideStart, wideEnd); len(got.Items) != 0 {
+		t.Fatalf("failures after reset = %d items, want none", len(got.Items))
 	}
 }

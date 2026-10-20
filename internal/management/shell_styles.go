@@ -279,6 +279,17 @@ const templateStyleOverlays = `
   opacity: 0;
 }
 
+/* Days before the retention window hold no data at all, so they are shown but
+   cannot be picked. */
+.calendar-day.is-disabled {
+  color: var(--text-muted);
+  opacity: 0.4;
+  cursor: not-allowed;
+  text-decoration: line-through;
+}
+
+.calendar-day.is-disabled:hover { background: transparent; }
+
 .calendar-day.range-start,
 .calendar-day.range-end {
   background: var(--accent-blue) !important;

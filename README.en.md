@@ -128,19 +128,19 @@ plugins:
 | :--- | :--- | :--- | :--- |
 | **`enabled`** | `true` | Yes | Global plugin switch. When `false`, all routes and usage interception are deactivated. |
 | **`priority`** | `1` | No | Execution priority in the CPA plugin pipeline. |
-| **`state_path`** | `data/cpa-secret-manager-cache.json` | No | File path for persisting remarks and aggregated usage data. |
+| **`state_path`** | `data/cpa-secret-manager-cache.json` | No | Path of the state document; the same directory also holds `-buckets.json` (hourly usage buckets) and `-errors.json` (failure records). |
 
-> **Persistence Guarantee**: State updates write through `*.tmp` temporary files followed by atomic `os.Rename`, locked to `0600` file permissions. Deleting the cache file completely resets all remarks and historical usage metrics.
+> **Persistence Guarantee**: All three documents (state, usage buckets, failure records) write through `*.tmp` temporary files followed by atomic `os.Rename`, locked to `0600` file permissions. Deleting them completely resets remarks, usage and failure history.
 
 ---
 
 ## Usage Attribution Semantics
 
 - **Attribution Source**: Directly fed by `UsageRecord` payloads dispatched by `usage_plugin`, grouped by the SHA-256 digest of the client proxy key.
-- **Cumulative Totals**: Metrics represent **all-time cumulative values** since the first request observed by the plugin; there are no sliding time windows and no cost estimations.
+- **Hourly Buckets**: Usage is stored in **UTC hourly buckets** (key × model × hour) and the page aggregates whichever range is selected. The range reaches back at most the configured **data retention days** (1-365, default 30); older buckets are pruned on every flush. No cost estimation and no trend charts.
 - **Error Accounting**: Requests returning upstream errors or zero tokens are accurately accounted for in request and failure counters (tokens counted as 0).
 - **Unmanaged Keys Discarded**: Only keys currently registered in the CPA host's managed list are tracked; blank or unmanaged requests are discarded without polluting the dashboard.
-- **Throttled Persistence**: In-memory aggregations are protected by concurrent mutex locks, written to disk on a 5-second throttled cadence, and synchronously force-flushed upon graceful process shutdown.
+- **Throttled Persistence**: In-memory aggregation is protected by mutexes, flushed to disk on a 5-second cadence, and force-flushed on graceful shutdown. Buckets start accumulating at upgrade time: the previous cumulative counters carry no time attribution and are no longer displayed.
 
 ---
 

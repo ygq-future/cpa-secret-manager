@@ -23,6 +23,7 @@ type options struct {
 	managementKey string
 	keysPath      string
 	statePath     string
+	latency       time.Duration
 }
 
 func main() {
@@ -32,6 +33,7 @@ func main() {
 		ManagementKey: parsed.managementKey,
 		KeysPath:      parsed.keysPath,
 		StatePath:     parsed.statePath,
+		Latency:       parsed.latency,
 	})
 	if err != nil {
 		log.Fatalf("devserver: %v", err)
@@ -82,8 +84,18 @@ func parseOptions() options {
 	flag.StringVar(&parsed.managementKey, "management-key", envString("CPA_SECRET_MANAGER_DEVSERVER_KEY", "devkey"), "simulated management key")
 	flag.StringVar(&parsed.keysPath, "keys", envString("CPA_SECRET_MANAGER_DEVSERVER_KEYS", "data/devserver/api-keys.json"), "simulated proxy API key store")
 	flag.StringVar(&parsed.statePath, "state", envString("CPA_SECRET_MANAGER_DEVSERVER_STATE", "data/devserver/cache.json"), "plugin state document path")
+	flag.DurationVar(&parsed.latency, "latency", envDuration("CPA_SECRET_MANAGER_DEVSERVER_LATENCY", 800*time.Millisecond), "artificial management API latency so the page's loading states are visible; 0 disables it")
 	flag.Parse()
 	return parsed
+}
+
+func envDuration(key string, fallback time.Duration) time.Duration {
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		if parsed, err := time.ParseDuration(value); err == nil && parsed >= 0 {
+			return parsed
+		}
+	}
+	return fallback
 }
 
 func envString(key string, fallback string) string {

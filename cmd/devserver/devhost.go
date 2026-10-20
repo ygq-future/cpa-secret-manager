@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -27,6 +28,9 @@ type devHost struct {
 	statePath     string
 	shellHTML     string
 	runtime       *pluginruntime.Runtime
+	// latency delays every management response so the page's loading states are
+	// observable; a local host answers in microseconds, which paints no frame.
+	latency time.Duration
 
 	mu   sync.Mutex
 	keys []string
@@ -36,6 +40,7 @@ type devHostOptions struct {
 	ManagementKey string
 	KeysPath      string
 	StatePath     string
+	Latency       time.Duration
 }
 
 func newDevHost(options devHostOptions) (*devHost, error) {
@@ -49,6 +54,7 @@ func newDevHost(options devHostOptions) (*devHost, error) {
 		statePath:     options.StatePath,
 		shellHTML:     hostShellHTML(options.ManagementKey),
 		runtime:       pluginruntime.New(pluginruntime.Options{StatePath: options.StatePath}),
+		latency:       options.Latency,
 		keys:          keys,
 	}
 	if err := host.register(); err != nil {
@@ -92,6 +98,8 @@ func (h *devHost) handler() http.Handler {
 	mux.HandleFunc("POST /dev/simulate-usage", h.handleSimulateUsage)
 	mux.HandleFunc("POST /dev/simulate-intercept", h.handleSimulateIntercept)
 	mux.HandleFunc("POST /dev/seed", h.handleSeed)
+	mux.HandleFunc("POST /dev/seed-history", h.handleSeedHistory)
+	mux.HandleFunc("POST /dev/reset", h.handleReset)
 	mux.HandleFunc("GET /v1/models", h.handleV1Models)
 	mux.HandleFunc("/v0/management/", h.handleManagement)
 	mux.HandleFunc("/v0/resource/", h.handleResource)
@@ -121,6 +129,9 @@ func (h *devHost) handleManagement(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid management key"})
 		return
 	}
+	if !h.delay(r) {
+		return
+	}
 	switch r.URL.Path {
 	case "/v0/management/api-keys":
 		h.serveAPIKeys(w, r)
@@ -140,6 +151,23 @@ func (h *devHost) handleResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.runtime.ManagementHandler().ServeHTTP(w, r)
+}
+
+// delay holds the response for the configured latency so the page's spinners and
+// table masks stay on screen long enough to be seen. It reports false when the
+// caller went away while waiting.
+func (h *devHost) delay(r *http.Request) bool {
+	if h.latency <= 0 {
+		return true
+	}
+	timer := time.NewTimer(h.latency)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-r.Context().Done():
+		return false
+	}
 }
 
 func (h *devHost) authorized(r *http.Request) bool {
@@ -335,37 +363,209 @@ func (h *devHost) handleSimulateUsage(w http.ResponseWriter, r *http.Request) {
 	if failed && errorBody == "" {
 		errorBody = "Simulated upstream failure"
 	}
+	at, err := resolveRecordTime(query)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	detail := usageDetail{
+		Input:     intQuery(query.Get("input"), 120),
+		Output:    intQuery(query.Get("output"), 240),
+		Reasoning: intQuery(query.Get("reasoning"), 0),
+		Cached:    intQuery(query.Get("cached"), 0),
+		CacheRead: intQuery(query.Get("cache_read"), 0),
+		Total:     intQuery(query.Get("total"), 360),
+	}
 	for range count {
-		record := map[string]any{
-			"Provider":    "openai",
-			"APIKey":      apiKey,
-			"Model":       model,
-			"Failed":      failed,
-			"RequestedAt": time.Now().UTC().Format(time.RFC3339Nano),
-			"Detail": map[string]any{
-				"InputTokens":     intQuery(query.Get("input"), 120),
-				"OutputTokens":    intQuery(query.Get("output"), 240),
-				"ReasoningTokens": intQuery(query.Get("reasoning"), 0),
-				"CachedTokens":    intQuery(query.Get("cached"), 0),
-				"CacheReadTokens": intQuery(query.Get("cache_read"), 0),
-				"TotalTokens":     intQuery(query.Get("total"), 360),
-			},
+		h.injectUsage(apiKey, model, at, failed, statusCode, errorBody, detail)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "count": count, "model": model, "at": at.Format(time.RFC3339)})
+}
+
+// resolveRecordTime turns the optional "at" (RFC3339) and "days_ago" (float)
+// query parameters into the instant the injected records carry. Without either
+// the record is stamped "now", which is why a default seed only ever populates
+// today; both parameters exist so the simulator can produce history that a
+// date-filtered view can actually exercise.
+func resolveRecordTime(query url.Values) (time.Time, error) {
+	if raw := strings.TrimSpace(query.Get("at")); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("at must be RFC3339: %v", err)
 		}
-		if failed {
-			record["Failure"] = map[string]any{
-				"StatusCode": statusCode,
-				"Body":       errorBody,
-			}
+		return parsed.UTC(), nil
+	}
+	if raw := strings.TrimSpace(query.Get("days_ago")); raw != "" {
+		days, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("days_ago must be a number: %v", err)
 		}
-		raw, err := json.Marshal(record)
+		return time.Now().UTC().Add(-time.Duration(days * float64(24*time.Hour))), nil
+	}
+	return time.Now().UTC(), nil
+}
+
+// usageDetail mirrors the token accounting the host reports for one request.
+type usageDetail struct {
+	Input     int
+	Output    int
+	Reasoning int
+	Cached    int
+	CacheRead int
+	Total     int
+}
+
+// injectUsage pushes one host-shaped usage record through the production usage
+// path, stamped with at.
+func (h *devHost) injectUsage(apiKey, model string, at time.Time, failed bool, statusCode int, message string, detail usageDetail) {
+	record := map[string]any{
+		"Provider":    "openai",
+		"APIKey":      apiKey,
+		"Model":       model,
+		"Failed":      failed,
+		"RequestedAt": at.UTC().Format(time.RFC3339Nano),
+		"Detail": map[string]any{
+			"InputTokens":     detail.Input,
+			"OutputTokens":    detail.Output,
+			"ReasoningTokens": detail.Reasoning,
+			"CachedTokens":    detail.Cached,
+			"CacheReadTokens": detail.CacheRead,
+			"TotalTokens":     detail.Total,
+		},
+	}
+	if failed {
+		record["Failure"] = map[string]any{
+			"StatusCode": statusCode,
+			"Body":       message,
+		}
+	}
+	raw, err := json.Marshal(record)
+	if err != nil {
+		return
+	}
+	h.runtime.Handle(context.Background(), pluginruntime.MethodUsageHandle, raw)
+}
+
+// handleSeedHistory fills the simulator with a day-by-day history so a
+// date-filtered view has something to slice: every key gets usage on each of the
+// last "days" calendar days, with a failure every third day. Unlike /dev/seed,
+// whose records are all stamped "now", this endpoint makes the date range
+// observable.
+func (h *devHost) handleSeedHistory(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	keyCount := intQuery(query.Get("keys"), 3)
+	if keyCount < 1 || keyCount > 20 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "keys must be between 1 and 20"})
+		return
+	}
+	days := intQuery(query.Get("days"), 30)
+	if days < 1 || days > 365 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "days must be between 1 and 365"})
+		return
+	}
+	if query.Get("reset") != "false" {
+		if err := h.resetState(); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+	}
+
+	seeded := make([]string, 0, keyCount)
+	for range keyCount {
+		key, err := h.runtime.GenerateKey(r.Context())
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		h.runtime.Handle(context.Background(), pluginruntime.MethodUsageHandle, raw)
+		seeded = append(seeded, key)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "count": count, "model": model})
+	if err := h.replaceKeys(append(h.keyList(), seeded...)); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	models := []string{"gpt-5.6", "claude-sonnet", "gemini-3-flash"}
+	base := time.Now()
+	records := 0
+	failures := 0
+	for index, key := range seeded {
+		if err := h.runtime.SetRemark(r.Context(), key, fmt.Sprintf("dev key %d", index+1)); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		for day := 0; day < days; day++ {
+			requests := 1 + (index+day)%3
+			for n := 0; n < requests; n++ {
+				model := models[(index+day+n)%len(models)]
+				h.injectUsage(key, model, historyStamp(base, day, time.Duration(n)*time.Minute), false, 0, "", usageDetail{
+					Input:     100 * (n + 1),
+					Output:    200 * (n + 1),
+					Reasoning: 10 * (n + 1),
+					Cached:    5 * (n + 1),
+					CacheRead: 7 * (n + 1),
+					Total:     310 * (n + 1),
+				})
+				records++
+			}
+			if (day+index)%3 == 0 {
+				h.injectUsage(key, models[(index+day)%len(models)], historyStamp(base, day, 90*time.Second), true, 429, "Rate limit exceeded for token quota", usageDetail{})
+				failures++
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":   "ok",
+		"keys":     seeded,
+		"days":     days,
+		"records":  records,
+		"failures": failures,
+	})
 }
+
+// historyStamp places one record on the calendar day daysAgo back, offset
+// earlier from the seeding instant. Every stamp is nudged backwards and clamped
+// to its own midnight so a record can never land in the future: a "today"
+// record in the future would be invisible to any range ending at now, which
+// makes the date filter look broken when it is not.
+func historyStamp(base time.Time, daysAgo int, offset time.Duration) time.Time {
+	day := base.AddDate(0, 0, -daysAgo)
+	at := day.Add(-offset)
+	if start := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, day.Location()); at.Before(start) {
+		return start
+	}
+	return at
+}
+
+// handleReset drops the simulated key list and the plugin state document, then
+// rebuilds the runtime so the page starts from an empty dataset.
+func (h *devHost) handleReset(w http.ResponseWriter, r *http.Request) {
+	if err := h.resetState(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := h.replaceKeys(nil); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+}
+
+// resetState shuts the runtime down, removes its state and error-log documents
+// and starts a fresh runtime against the same paths.
+func (h *devHost) resetState() error {
+	_ = h.runtime.Shutdown(context.Background())
+	for _, path := range []string{h.statePath, pluginruntime.ErrorsPath(h.statePath), pluginruntime.BucketsPath(h.statePath), pluginruntime.BucketsPath(h.statePath) + ".bak"} {
+		if path == "" {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove %s: %w", path, err)
+		}
+	}
+	h.runtime = pluginruntime.New(pluginruntime.Options{StatePath: h.statePath})
+	return h.register()
+}
+
 func (h *devHost) handleSimulateIntercept(w http.ResponseWriter, r *http.Request) {
 	key := r.URL.Query().Get("key")
 	if key == "" {
@@ -405,7 +605,6 @@ func (h *devHost) handleSimulateIntercept(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(envelope.Result)
 }
-
 
 // handleSeed prepares a demonstrable dataset: proxy keys, remarks and usage.
 func (h *devHost) handleSeed(w http.ResponseWriter, r *http.Request) {

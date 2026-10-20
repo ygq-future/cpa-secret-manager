@@ -16,11 +16,12 @@ import (
 	"cpa-secret-manager/internal/errorslog"
 	"cpa-secret-manager/internal/keys"
 	"cpa-secret-manager/internal/management"
-	"cpa-secret-manager/internal/remarks"
 	"cpa-secret-manager/internal/quota"
+	"cpa-secret-manager/internal/remarks"
 	"cpa-secret-manager/internal/state"
 	"cpa-secret-manager/internal/usage"
 )
+
 // defaultFlushInterval bounds how much usage accounting a crash can lose.
 const defaultFlushInterval = 5 * time.Second
 
@@ -43,6 +44,7 @@ type Runtime struct {
 	mu             sync.RWMutex
 	cfg            config.Config
 	store          *state.Store
+	bucketStore    *state.BucketStore
 	errorsStore    *errorslog.Store
 	stateErr       error
 	configWarnings []string
@@ -177,7 +179,10 @@ func (r *Runtime) UpdateSettings(_ context.Context, update management.SettingsUp
 		current.RetentionDays = *update.RetentionDays
 	}
 	store.SetAppConfig(current)
-	return store.SaveAtomic()
+	// Persisting right away also applies the new retention window: shrinking it
+	// must drop the now-expired buckets immediately instead of waiting for the
+	// next request to dirty the aggregate.
+	return r.persistStateLocked(store)
 }
 
 // Failures implements management.Backend.
@@ -190,17 +195,8 @@ func (r *Runtime) Failures(_ context.Context, req management.FailuresRequest) (m
 		return management.FailuresResult{}, nil
 	}
 
-	var start, end time.Time
-	if strings.TrimSpace(req.Start) != "" {
-		if parsed, err := time.Parse(time.RFC3339, req.Start); err == nil {
-			start = parsed.UTC()
-		}
-	}
-	if strings.TrimSpace(req.End) != "" {
-		if parsed, err := time.Parse(time.RFC3339, req.End); err == nil {
-			end = parsed.UTC()
-		}
-	}
+	start, _ := parseInstant(req.Start)
+	end, _ := parseInstant(req.End)
 
 	if strings.TrimSpace(req.Hash) != "" {
 		return management.FailuresResult{
@@ -223,7 +219,7 @@ func (r *Runtime) Failures(_ context.Context, req management.FailuresRequest) (m
 // onto stored metadata and usage, preserving list order. It is a pure read -
 // deleting plugin state is a separate, explicit call (Forget), so a mistimed or
 // mistrusted key list can never destroy anything.
-func (r *Runtime) Resolve(_ context.Context, apiKeys []string) (management.ResolveResult, error) {
+func (r *Runtime) Resolve(_ context.Context, req management.ResolveRequest) (management.ResolveResult, error) {
 	r.mu.RLock()
 	store := r.store
 	closed := r.closed
@@ -232,11 +228,15 @@ func (r *Runtime) Resolve(_ context.Context, apiKeys []string) (management.Resol
 		return management.ResolveResult{}, ErrShutdown
 	}
 
-	aggregate := r.aggregator.Snapshot()
+	start, end := r.usageWindow(req)
+	var aggregate map[string]usage.KeyUsage
+	if end.After(start) {
+		aggregate = r.aggregator.Range(start, end)
+	}
 
-	items := make([]management.KeyEntry, 0, len(apiKeys))
-	live := make(map[string]struct{}, len(apiKeys))
-	for _, apiKey := range apiKeys {
+	items := make([]management.KeyEntry, 0, len(req.Keys))
+	live := make(map[string]struct{}, len(req.Keys))
+	for _, apiKey := range req.Keys {
 		hash := remarks.Index(apiKey)
 		live[hash] = struct{}{}
 		entry, _ := store.Remark(hash)
@@ -251,17 +251,54 @@ func (r *Runtime) Resolve(_ context.Context, apiKeys []string) (management.Resol
 		items = append(items, item)
 	}
 
-	return management.ResolveResult{Items: items, StaleHashes: r.staleHashes(store, aggregate, live)}, nil
+	return management.ResolveResult{Items: items, StaleHashes: r.staleHashes(store, live)}, nil
 }
 
-func (r *Runtime) staleHashes(store *state.Store, aggregate map[string]usage.KeyUsage, live map[string]struct{}) []string {
+// usageWindow clamps a requested range to the retention window. A missing bound
+// falls back to the retained window, so a caller that sends no range still sees
+// exactly the history the plugin is allowed to keep. A range that falls outside
+// retention collapses to an empty window, never to "everything".
+func (r *Runtime) usageWindow(req management.ResolveRequest) (time.Time, time.Time) {
+	now := r.clock.Now().UTC()
+	start := now.AddDate(0, 0, -r.retentionDays())
+	end := now
+	if parsed, ok := parseInstant(req.Start); ok {
+		start = parsed
+	}
+	if parsed, ok := parseInstant(req.End); ok {
+		end = parsed
+	}
+	if earliest := now.AddDate(0, 0, -r.retentionDays()); start.Before(earliest) {
+		start = earliest
+	}
+	if end.After(now) {
+		end = now
+	}
+	return start, end
+}
+
+// retentionDays returns the configured retention with the canonical fallback.
+func (r *Runtime) retentionDays() int {
+	days := state.DefaultRetentionDays
+	r.mu.RLock()
+	if r.store != nil {
+		days = r.store.AppConfig().RetentionDays
+	}
+	r.mu.RUnlock()
+	if days < state.MinRetentionDays {
+		days = state.DefaultRetentionDays
+	}
+	return days
+}
+
+func (r *Runtime) staleHashes(store *state.Store, live map[string]struct{}) []string {
 	stale := make([]string, 0)
 	for hash := range store.Remarks() {
 		if _, ok := live[hash]; !ok {
 			stale = append(stale, hash)
 		}
 	}
-	for hash := range aggregate {
+	for hash := range r.aggregator.Hashes() {
 		if _, ok := live[hash]; !ok {
 			stale = append(stale, hash)
 		}
@@ -305,7 +342,7 @@ func (r *Runtime) Forget(_ context.Context, hashes []string) (int, error) {
 		return 0, ErrShutdown
 	}
 
-	aggregate := r.aggregator.Snapshot()
+	aggregate := r.aggregator.Hashes()
 	pending := make([]string, 0, len(hashes))
 	for _, hash := range hashes {
 		_, hasRemark := store.Remark(hash)
@@ -320,9 +357,17 @@ func (r *Runtime) Forget(_ context.Context, hashes []string) (int, error) {
 		return 0, nil
 	}
 
-	// Materialize the live counters first: the recovery copy must contain them,
+	// Materialize the live buckets first: the recovery copy must contain them,
 	// not just whatever the last flush wrote.
-	store.ReplaceUsage(r.aggregator.Snapshot())
+	r.mu.RLock()
+	bucketStore := r.bucketStore
+	r.mu.RUnlock()
+	if bucketStore != nil {
+		bucketStore.ReplaceBuckets(r.aggregator.SnapshotBuckets())
+		if err := bucketStore.Backup(); err != nil {
+			return 0, err
+		}
+	}
 	if err := store.Backup(); err != nil {
 		return 0, err
 	}
@@ -436,11 +481,11 @@ func (r *Runtime) SetQuota(_ context.Context, update management.QuotaUpdate) err
 	}
 
 	rule := quota.Rule{
-		Hash:        hash,
-		Enabled:     update.Enabled,
-		Strategy:    strategy,
-		Window:      window,
-		DurationSec: update.DurationSec,
+		Hash:          hash,
+		Enabled:       update.Enabled,
+		Strategy:      strategy,
+		Window:        window,
+		DurationSec:   update.DurationSec,
 		LimitValue:    update.LimitValue,
 		AllowedModels: update.AllowedModels,
 		UpdatedAt:     r.clock.Now().UTC(),
@@ -477,14 +522,7 @@ func (r *Runtime) Models(_ context.Context) ([]string, error) {
 		return nil, ErrShutdown
 	}
 
-	modelSet := make(map[string]struct{})
-	for _, keyUsage := range r.aggregator.Snapshot() {
-		for m := range keyUsage.Models {
-			if m != "" {
-				modelSet[m] = struct{}{}
-			}
-		}
-	}
+	modelSet := r.aggregator.Models()
 	if r.errorsStore != nil {
 		for _, failures := range r.errorsStore.QueryAll(time.Time{}, time.Time{}) {
 			for _, f := range failures {
@@ -515,17 +553,17 @@ func (r *Runtime) buildQuotaSummary(hash string, rule quota.Rule) *management.Qu
 	exceeded := rule.Enabled && rule.LimitValue > 0 && used >= rule.LimitValue
 
 	return &management.QuotaSummary{
-		Enabled:     rule.Enabled,
-		Strategy:    rule.Strategy,
-		Window:      rule.Window,
-		DurationSec: rule.DurationSec,
+		Enabled:       rule.Enabled,
+		Strategy:      rule.Strategy,
+		Window:        rule.Window,
+		DurationSec:   rule.DurationSec,
 		LimitValue:    rule.LimitValue,
 		UsedValue:     used,
 		AllowedModels: rule.AllowedModels,
 		WindowStart:   formatTimestamp(wStart),
-		WindowEnd:   formatTimestamp(wEnd),
-		ResetAt:     formatTimestamp(wEnd),
-		Exceeded:    exceeded,
+		WindowEnd:     formatTimestamp(wEnd),
+		ResetAt:       formatTimestamp(wEnd),
+		Exceeded:      exceeded,
 	}
 }
 
@@ -561,6 +599,7 @@ func (r *Runtime) ObserveUsage(record usage.Record) {
 		})
 	}
 }
+
 // FlushUsage persists pending usage counters when they changed since the last
 // successful flush.
 func (r *Runtime) FlushUsage() {
@@ -607,30 +646,69 @@ func (r *Runtime) applyConfig(cfg config.Config, warnings []string) {
 func (r *Runtime) loadState(path string) {
 	store, err := state.Load(path)
 	if store != nil {
-		r.aggregator.Seed(store.Usage())
 		r.quota.Import(store.QuotaRules(), store.QuotaStates())
 	}
 	var errorsStore *errorslog.Store
+	var bucketStore *state.BucketStore
 	if strings.TrimSpace(path) != "" {
 		errorsStore, _ = errorslog.Load(deriveErrorsPath(path))
+		bucketStore, _ = state.LoadBuckets(deriveSiblingPath(path, "-buckets"))
+	}
+	if bucketStore != nil {
+		r.aggregator.SeedBuckets(bucketStore.Buckets())
 	}
 	r.mu.Lock()
 	r.store = store
+	r.bucketStore = bucketStore
 	r.errorsStore = errorsStore
 	r.stateErr = err
 	r.mu.Unlock()
 }
 
+// ErrorsPath returns the error log document that belongs to a plugin state
+// path. The error log lives in its own file, so anything that resets the plugin
+// state (local harnesses) must clear both.
+func ErrorsPath(statePath string) string {
+	return deriveErrorsPath(statePath)
+}
+
+// BucketsPath returns the time-bucketed usage document that belongs to a plugin
+// state path.
+func BucketsPath(statePath string) string {
+	return deriveSiblingPath(statePath, "-buckets")
+}
+
 func deriveErrorsPath(statePath string) string {
+	return deriveSiblingPath(statePath, "-errors")
+}
+
+// deriveSiblingPath names a document that sits beside the state file, keeping
+// its directory and extension so one configured state path maps to exactly one
+// set of documents.
+func deriveSiblingPath(statePath, suffix string) string {
 	trimmed := strings.TrimSpace(statePath)
 	if trimmed == "" {
 		return ""
 	}
 	ext := filepath.Ext(trimmed)
 	if ext != "" {
-		return strings.TrimSuffix(trimmed, ext) + "-errors" + ext
+		return strings.TrimSuffix(trimmed, ext) + suffix + ext
 	}
-	return trimmed + "-errors.json"
+	return trimmed + suffix + ".json"
+}
+
+// parseInstant parses an RFC3339 instant. An absent or malformed value reports
+// false so callers can keep their own default instead of failing the request.
+func parseInstant(raw string) (time.Time, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return time.Time{}, false
+	}
+	parsed, err := time.Parse(time.RFC3339, trimmed)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return parsed.UTC(), true
 }
 
 func (r *Runtime) registrationResult() RegisterResult {
@@ -699,29 +777,45 @@ func (r *Runtime) flushUsage(force bool) error {
 	return r.persistStateLocked(store)
 }
 
-// persistStateLocked materializes the usage aggregate into the state document
-// and writes it atomically. Callers must hold runMu.
+// persistStateLocked materializes the business settings and the usage buckets
+// and writes both documents atomically. Callers must hold runMu.
 func (r *Runtime) persistStateLocked(store *state.Store) error {
-	store.ReplaceUsage(r.aggregator.Snapshot())
+	r.mu.RLock()
+	bucketStore := r.bucketStore
+	errorsStore := r.errorsStore
+	r.mu.RUnlock()
+
 	store.ReplaceQuotaRules(r.quota.AllRules())
 	store.ReplaceQuotaStates(r.quota.AllStates())
 	if err := store.SaveAtomic(); err != nil {
 		r.setUsageWarning(err.Error())
 		return err
 	}
-	r.aggregator.MarkClean()
-	r.setUsageWarning("")
-	if r.errorsStore != nil {
-		retentionDays := store.AppConfig().RetentionDays
-		if retentionDays < state.MinRetentionDays {
-			retentionDays = state.DefaultRetentionDays
-		}
-		cutoff := r.clock.Now().UTC().AddDate(0, 0, -retentionDays)
-		r.errorsStore.Prune(cutoff)
-		if r.errorsStore.Dirty() {
-			_ = r.errorsStore.Save()
+
+	retentionDays := store.AppConfig().RetentionDays
+	if retentionDays < state.MinRetentionDays {
+		retentionDays = state.DefaultRetentionDays
+	}
+	cutoff := r.clock.Now().UTC().AddDate(0, 0, -retentionDays)
+
+	if errorsStore != nil {
+		errorsStore.Prune(cutoff)
+		if errorsStore.Dirty() {
+			_ = errorsStore.Save()
 		}
 	}
+	// Prune before writing so a bucket that fell out of the retention window is
+	// never written back.
+	r.aggregator.Prune(cutoff)
+	if bucketStore != nil {
+		bucketStore.ReplaceBuckets(r.aggregator.SnapshotBuckets())
+		if err := bucketStore.SaveAtomic(); err != nil {
+			r.setUsageWarning(err.Error())
+			return err
+		}
+	}
+	r.aggregator.MarkClean()
+	r.setUsageWarning("")
 	return nil
 }
 
@@ -732,11 +826,7 @@ func (r *Runtime) setUsageWarning(message string) {
 }
 
 func buildUsageSummary(entry usage.KeyUsage) *management.UsageSummary {
-	summary := &management.UsageSummary{
-		Counters:  entry.Counters,
-		FirstSeen: formatTimestamp(entry.FirstSeen),
-		LastSeen:  formatTimestamp(entry.LastSeen),
-	}
+	summary := &management.UsageSummary{Counters: entry.Counters}
 	if len(entry.Models) == 0 {
 		return summary
 	}

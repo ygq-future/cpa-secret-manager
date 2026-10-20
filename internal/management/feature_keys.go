@@ -284,7 +284,10 @@ function refreshAll(options) {
     setStatus(t('shell.loading'), false);
   }
   return loadSettings()
-    .then(loadKeys)
+    .then(function () {
+      initDateRange();
+      return loadKeys();
+    })
     .then(function () {
       setStatus(tf('shell.updated_at', { time: new Date().toLocaleTimeString() }), false);
     })
@@ -334,8 +337,20 @@ function loadKeys() {
   });
 }
 
+// usageWindowPayload is the resolve window. Without an explicit range the
+// backend answers with everything retention still allows, which is exactly what
+// the first paint should show.
+function usageWindowPayload() {
+  var payload = { keys: state.keys };
+  if (state.dateRange && state.dateRange.start && state.dateRange.end) {
+    payload.start = state.dateRange.start.toISOString();
+    payload.end = state.dateRange.end.toISOString();
+  }
+  return payload;
+}
+
 function loadEntries(keysChanged) {
-  return apiFetch(RESOLVE_PATH, { method: 'POST', body: JSON.stringify({ keys: state.keys }) }).then(function (payload) {
+  return apiFetch(RESOLVE_PATH, { method: 'POST', body: JSON.stringify(usageWindowPayload()) }).then(function (payload) {
     state.entries = payload && Array.isArray(payload.items) ? payload.items : [];
     var stale = payload && Array.isArray(payload.stale_hashes) ? payload.stale_hashes : [];
     if (keysChanged) {
@@ -1456,8 +1471,105 @@ function parseTimePart(timeStr) {
   };
 }
 
+// retentionDays is the configured data retention, which also bounds the range
+// the page may query: nothing older than it exists on disk any more.
+function retentionDays() {
+  var days = state.settings && state.settings.retention_days ? state.settings.retention_days : 30;
+  return Math.min(365, Math.max(1, days));
+}
+
+// dateRangeBounds is the selectable window: from the first retained day to now.
+function dateRangeBounds() {
+  var now = new Date();
+  var days = retentionDays();
+  return {
+    min: new Date(now.getFullYear(), now.getMonth(), now.getDate() - (days - 1), 0, 0, 0, 0),
+    max: now
+  };
+}
+
+// clampDateRange keeps a requested window inside the retained data. A range that
+// reaches past retention is shortened instead of silently returning nothing.
+function clampDateRange(start, end) {
+  var bounds = dateRangeBounds();
+  var clampedStart = start < bounds.min ? bounds.min : start;
+  var clampedEnd = end > bounds.max ? bounds.max : end;
+  if (clampedEnd < clampedStart) {
+    clampedEnd = clampedStart;
+  }
+  return { start: clampedStart, end: clampedEnd };
+}
+
+// clampDraftToRetention shortens the draft window to the retained days and
+// drops a preset selection that no longer describes what is selected. Comparison
+// is by day because the picker always rebuilds the end instant with millisecond
+// precision.
+function clampDraftToRetention() {
+  var requestedLabel = formatRangeLabel(draftStart, draftEnd);
+  var clamped = clampDateRange(draftStart, draftEnd);
+  draftStart = clamped.start;
+  draftEnd = clamped.end;
+  if (formatRangeLabel(draftStart, draftEnd) !== requestedLabel) {
+    draftMode = 'custom';
+  }
+}
+
+// saveDateRange persists the picked window so a page refresh, a host reload or a
+// tab switch does not silently fall back to "today".
+function saveDateRange() {
+  if (!state.dateRange || !state.dateRange.start || !state.dateRange.end) {
+    return;
+  }
+  writeStorage(window, 'localStorage', RANGE_STORAGE_KEY, JSON.stringify({
+    mode: state.dateRange.mode || 'custom',
+    start: state.dateRange.start.toISOString(),
+    end: state.dateRange.end.toISOString()
+  }));
+}
+
+// restoreDateRange reads the persisted window and clamps it to the retention
+// that is in force now, so shrinking retention invalidates old selections.
+function restoreDateRange() {
+  var raw = readStorage(window, 'localStorage', RANGE_STORAGE_KEY);
+  if (!raw) {
+    return null;
+  }
+  try {
+    var saved = JSON.parse(raw);
+    var start = new Date(saved.start);
+    var end = new Date(saved.end);
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return null;
+    }
+    var clamped = clampDateRange(start, end);
+    return {
+      mode: saved.mode || 'custom',
+      start: clamped.start,
+      end: clamped.end,
+      label: formatRangeLabel(clamped.start, clamped.end)
+    };
+  } catch (error) {
+    return null;
+  }
+}
+
 function initDateRange() {
   if (state.dateRange) {
+    var clamped = clampDateRange(state.dateRange.start, state.dateRange.end);
+    if (clamped.start.getTime() !== state.dateRange.start.getTime() || clamped.end.getTime() !== state.dateRange.end.getTime()) {
+      state.dateRange.start = clamped.start;
+      state.dateRange.end = clamped.end;
+      state.dateRange.label = formatRangeLabel(clamped.start, clamped.end);
+      updateDateRangeLabel();
+      saveDateRange();
+    }
+    return;
+  }
+  var restored = restoreDateRange();
+  if (restored) {
+    state.dateRange = restored;
+    updateDateRangeLabel();
+    saveDateRange();
     return;
   }
   var now = new Date();
@@ -1470,6 +1582,16 @@ function initDateRange() {
     label: formatDateStr(start)
   };
   updateDateRangeLabel();
+  saveDateRange();
+}
+
+// formatRangeLabel renders the picker label: one date for a single day, a range
+// otherwise.
+function formatRangeLabel(start, end) {
+  if (formatDateStr(start) === formatDateStr(end)) {
+    return formatDateStr(start);
+  }
+  return formatDateStr(start) + ' - ' + formatDateStr(end);
 }
 
 function updateDateRangeLabel() {
@@ -1544,6 +1666,7 @@ function applyDateRangePreset(preset) {
     draftStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
     draftEnd = new Date(now.getTime());
   }
+  clampDraftToRetention();
   calendarBaseMonth = new Date(draftStart.getFullYear(), draftStart.getMonth(), 1);
 
   var timeStartInput = byId('time-start');
@@ -1594,20 +1717,31 @@ function confirmDateRange() {
     draftEnd = tmp;
   }
 
-  var label = formatDateStr(draftStart);
-  if (formatDateStr(draftStart) !== formatDateStr(draftEnd)) {
-    label = formatDateStr(draftStart) + ' - ' + formatDateStr(draftEnd);
-  }
+  clampDraftToRetention();
 
   state.dateRange = {
     mode: draftMode,
     start: draftStart,
     end: draftEnd,
-    label: label
+    label: formatRangeLabel(draftStart, draftEnd)
   };
 
   updateDateRangeLabel();
+  saveDateRange();
   closeDateRangeModal();
+  // The whole table is a windowed read, so the numbers must be fetched again,
+  // and the mask has to be explicit: this path is not a refreshAll() call.
+  setKeysLoading(true);
+  loadEntries(false)
+    .then(function () {
+      renderKeys();
+    })
+    .catch(function (error) {
+      showToast(error.message, 'error');
+    })
+    .then(function () {
+      setKeysLoading(false);
+    });
 }
 
 function renderDateCalendars() {
@@ -1676,6 +1810,9 @@ function renderSingleCalendar(container, monthDate, showPrev, showNext) {
 
   var firstDayOfWeek = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1).getDay();
   var totalDays = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0).getDate();
+  var bounds = dateRangeBounds();
+  var minDay = new Date(bounds.min.getFullYear(), bounds.min.getMonth(), bounds.min.getDate()).getTime();
+  var maxDay = new Date(bounds.max.getFullYear(), bounds.max.getMonth(), bounds.max.getDate()).getTime();
 
   for (var empty = 0; empty < firstDayOfWeek; empty++) {
     var blank = document.createElement('div');
@@ -1703,11 +1840,17 @@ function renderSingleCalendar(container, monthDate, showPrev, showNext) {
       cell.classList.add('in-range');
     }
 
-    cell.onclick = (function (selectedDate) {
-      return function () {
-        handleDateClick(selectedDate);
-      };
-    })(thisDate);
+    if (dateMidnight < minDay || dateMidnight > maxDay) {
+      // Outside retention the plugin holds no data, so the day is not a choice.
+      cell.classList.add('is-disabled');
+      cell.setAttribute('aria-disabled', 'true');
+    } else {
+      cell.onclick = (function (selectedDate) {
+        return function () {
+          handleDateClick(selectedDate);
+        };
+      })(thisDate);
+    }
 
     grid.appendChild(cell);
   }
