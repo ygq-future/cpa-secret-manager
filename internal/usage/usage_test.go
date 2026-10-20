@@ -1,6 +1,8 @@
 package usage
 
 import (
+	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -61,8 +63,50 @@ func TestRange_MergesOnlyOverlappingBuckets(t *testing.T) {
 	if got["h1"].Models["m"].Total != 10 {
 		t.Fatalf("h1 model split = %+v, want the same window", got["h1"].Models)
 	}
-	if !got["h1"].FirstSeen.Equal(day) || !got["h1"].LastSeen.Equal(day.Add(time.Hour)) {
-		t.Fatalf("window = %v..%v, want the bucket span %v..%v", got["h1"].FirstSeen, got["h1"].LastSeen, day, day.Add(time.Hour))
+	if !got["h1"].FirstSeen.Equal(day) || !got["h1"].LastSeen.Equal(day) {
+		t.Fatalf("window = %v..%v, want the exact observed instant %v", got["h1"].FirstSeen, got["h1"].LastSeen, day)
+	}
+}
+
+func TestBucket_ZeroLastAtIsOmitted(t *testing.T) {
+	legacy, err := json.Marshal(Bucket{Counters: Counters{Requests: 1}})
+	if err != nil {
+		t.Fatalf("marshal legacy bucket: %v", err)
+	}
+	if strings.Contains(string(legacy), "last_at") {
+		t.Fatalf("legacy bucket = %s, want no last_at field", legacy)
+	}
+
+	at := time.Date(2026, 9, 23, 10, 42, 7, 0, time.UTC)
+	observed, err := json.Marshal(Bucket{Counters: Counters{Requests: 1}, LastAt: at})
+	if err != nil {
+		t.Fatalf("marshal observed bucket: %v", err)
+	}
+	if !strings.Contains(string(observed), `"last_at":"2026-09-23T10:42:07Z"`) {
+		t.Fatalf("observed bucket = %s, want the precise last_at", observed)
+	}
+}
+
+func TestLastSeen_ReportsLatestObservedInstant(t *testing.T) {
+	aggregator := NewAggregator()
+	base := time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)
+	latest := base.Add(47 * time.Minute)
+
+	aggregator.Observe(Record{Hash: "h1", Model: "m", At: base, Detail: Detail{Total: 1}})
+	aggregator.Observe(Record{Hash: "h1", Model: "m", At: latest, Detail: Detail{Total: 2}})
+
+	if got := aggregator.LastSeen()["h1"]; !got.Equal(latest) {
+		t.Fatalf("last seen = %v, want the exact latest record %v", got, latest)
+	}
+
+	// A bucket written before precise stamps existed reports its start: a lower
+	// bound that cannot claim a call in the future.
+	legacy := map[string]map[string]Bucket{
+		"h2": {PeriodKey(base): {Counters: Counters{Requests: 1}}},
+	}
+	aggregator.SeedBuckets(legacy)
+	if got := aggregator.LastSeen()["h2"]; !got.Equal(base) {
+		t.Fatalf("legacy last seen = %v, want the bucket start %v", got, base)
 	}
 }
 
@@ -128,14 +172,18 @@ func TestSeedBuckets_ReplacesAndIsolatesState(t *testing.T) {
 	aggregator.Observe(Record{Hash: "stale", Model: "m"})
 
 	period := PeriodKey(time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC))
+	lastAt := time.Date(2026, 9, 23, 10, 42, 7, 0, time.UTC)
 	seeded := map[string]map[string]Bucket{
-		"h1": {period: {Counters: Counters{Requests: 4, Total: 40}, Models: map[string]Counters{"m": {Requests: 4}}}},
+		"h1": {period: {Counters: Counters{Requests: 4, Total: 40}, Models: map[string]Counters{"m": {Requests: 4}}, LastAt: lastAt}},
 	}
 	aggregator.SeedBuckets(seeded)
 
 	snapshot := aggregator.SnapshotBuckets()
 	if len(snapshot) != 1 || snapshot["h1"][period].Requests != 4 {
 		t.Fatalf("snapshot = %+v, want only the seeded bucket", snapshot)
+	}
+	if !snapshot["h1"][period].LastAt.Equal(lastAt) {
+		t.Fatalf("snapshot last-at = %v, want %v", snapshot["h1"][period].LastAt, lastAt)
 	}
 	if aggregator.Dirty() {
 		t.Fatal("Dirty() = true right after SeedBuckets, want false")

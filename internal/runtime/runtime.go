@@ -233,6 +233,7 @@ func (r *Runtime) Resolve(_ context.Context, req management.ResolveRequest) (man
 	if end.After(start) {
 		aggregate = r.aggregator.Range(start, end)
 	}
+	lastSeen := r.aggregator.LastSeen()
 
 	items := make([]management.KeyEntry, 0, len(req.Keys))
 	live := make(map[string]struct{}, len(req.Keys))
@@ -241,7 +242,7 @@ func (r *Runtime) Resolve(_ context.Context, req management.ResolveRequest) (man
 		live[hash] = struct{}{}
 		entry, _ := store.Remark(hash)
 
-		item := management.KeyEntry{Hash: hash, Remark: entry.Remark}
+		item := management.KeyEntry{Hash: hash, Remark: entry.Remark, LastSeen: formatTimestamp(lastSeen[hash])}
 		if usageEntry, ok := aggregate[hash]; ok && !usageEntry.IsZero() {
 			item.Usage = buildUsageSummary(usageEntry)
 		}

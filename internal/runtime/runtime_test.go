@@ -558,6 +558,33 @@ func TestResolve_SplitsUsageByWindow(t *testing.T) {
 	}
 }
 
+func TestResolve_LastSeenIgnoresTheQueriedRange(t *testing.T) {
+	rt := registerRuntime(t, filepath.Join(t.TempDir(), "state.json"))
+	now := time.Now().UTC().Truncate(time.Hour)
+	older := now.Add(-48 * time.Hour).Add(17 * time.Minute)
+	latest := now.Add(-9 * time.Minute)
+
+	usageCall(t, rt, map[string]any{"APIKey": "sk-a", "Model": "m", "RequestedAt": older.Format(time.RFC3339),
+		"Detail": map[string]any{"TotalTokens": 10}})
+	usageCall(t, rt, map[string]any{"APIKey": "sk-a", "Model": "m", "RequestedAt": latest.Format(time.RFC3339),
+		"Detail": map[string]any{"TotalTokens": 20}})
+
+	// The queried window only contains the older record, yet the lifetime last
+	// call must still be the latest one.
+	got := resolveWindow(t, rt, []string{"sk-a"}, now.Add(-72*time.Hour), now.Add(-24*time.Hour))
+	if got.Items[0].Usage == nil || got.Items[0].Usage.Total != 10 {
+		t.Fatalf("usage = %+v, want only the older record inside the window", got.Items[0].Usage)
+	}
+	if want := latest.Format(time.RFC3339); got.Items[0].LastSeen != want {
+		t.Fatalf("last seen = %q, want the precise latest call %q", got.Items[0].LastSeen, want)
+	}
+
+	idle := resolveResult(t, rt, []string{"sk-unknown"})
+	if idle.Items[0].LastSeen != "" {
+		t.Fatalf("idle key last seen = %q, want empty", idle.Items[0].LastSeen)
+	}
+}
+
 func TestResolve_ClampsWindowToRetention(t *testing.T) {
 	rt := registerRuntime(t, filepath.Join(t.TempDir(), "state.json"))
 	now := time.Now().UTC()

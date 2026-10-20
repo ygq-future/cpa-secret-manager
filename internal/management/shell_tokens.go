@@ -28,6 +28,7 @@ const ThemePaletteCSS = `
   --bg-secondary: #f1f5f9;
   --bg-tertiary: #e2e8f0;
   --bg-surface: #ffffff;
+  --bg-inset: #eef2f7;
   --bg-card: #ffffff;
   --bg-subtle: #f1f5f9;
   --bg-hover: rgba(15, 23, 42, 0.04);
@@ -86,6 +87,7 @@ const ThemePaletteCSS = `
     --bg-secondary: #18181b;
     --bg-tertiary: #27272a;
     --bg-surface: #18181b;
+    --bg-inset: var(--bg-primary);
     --bg-card: #1f1f23;
     --bg-subtle: #27272a;
     --bg-hover: rgba(255, 255, 255, 0.055);
@@ -139,6 +141,7 @@ const ThemePaletteCSS = `
   --bg-secondary: #ffffff;
   --bg-tertiary: #f4f4f5;
   --bg-surface: #ffffff;
+  --bg-inset: #f4f4f5;
   --bg-card: #ffffff;
   --bg-subtle: #f4f4f5;
   --bg-hover: rgba(15, 23, 42, 0.04);
@@ -197,6 +200,7 @@ const ThemePaletteCSS = `
   --bg-secondary: #18181b;
   --bg-tertiary: #27272a;
   --bg-surface: #18181b;
+  --bg-inset: var(--bg-primary);
   --bg-card: #1f1f23;
   --bg-subtle: #27272a;
   --bg-hover: rgba(255, 255, 255, 0.055);

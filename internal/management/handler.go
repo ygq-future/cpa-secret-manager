@@ -97,6 +97,9 @@ type FailuresResult struct {
 type KeyEntry struct {
 	Hash   string `json:"hash"`
 	Remark string `json:"remark"`
+	// LastSeen is the exact instant of the key's latest observed request inside
+	// the retention window, independent of the queried range.
+	LastSeen string `json:"last_seen,omitempty"`
 	// Usage is nil until the key served at least one attributable request.
 	Usage *UsageSummary `json:"usage,omitempty"`
 	// Quota describes the rule and window usage if configured.

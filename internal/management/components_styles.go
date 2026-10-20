@@ -1206,7 +1206,7 @@ table.data-table {
   transition: background-color 0.18s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.data-table tbody tr:hover td { background-color: var(--bg-hover) !important; }
+.data-table tbody tr:not(.detail-row):hover td { background-color: var(--bg-hover) !important; }
 
 .num {
   text-align: right;

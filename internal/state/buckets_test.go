@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"cpa-secret-manager/internal/usage"
 )
@@ -14,6 +15,7 @@ func sampleBuckets() map[string]map[string]usage.Bucket {
 			"2026-09-23T10": {
 				Counters: usage.Counters{Requests: 2, Failed: 1, Total: 30},
 				Models:   map[string]usage.Counters{"gpt-5.6": {Requests: 2, Total: 30}},
+				LastAt:   time.Date(2026, 9, 23, 10, 42, 7, 0, time.UTC),
 			},
 		},
 	}
@@ -56,6 +58,9 @@ func TestSaveAtomic_RoundTripsBuckets(t *testing.T) {
 	}
 	if entry.Models["gpt-5.6"].Requests != 2 {
 		t.Fatalf("reloaded models = %+v, want the model split", entry.Models)
+	}
+	if want := time.Date(2026, 9, 23, 10, 42, 7, 0, time.UTC); !entry.LastAt.Equal(want) {
+		t.Fatalf("reloaded last-at = %v, want %v", entry.LastAt, want)
 	}
 	if got := reloaded.doc.SchemaVersion; got != BucketSchemaVersion {
 		t.Fatalf("schema version = %d, want %d", got, BucketSchemaVersion)

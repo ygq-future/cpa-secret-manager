@@ -134,11 +134,7 @@ func cloneBuckets(source map[string]map[string]usage.Bucket) map[string]map[stri
 	for hash, byPeriod := range source {
 		copied := make(map[string]usage.Bucket, len(byPeriod))
 		for period, bucket := range byPeriod {
-			entry := usage.Bucket{Counters: bucket.Counters, Models: make(map[string]usage.Counters, len(bucket.Models))}
-			for model, counters := range bucket.Models {
-				entry.Models[model] = counters
-			}
-			copied[period] = entry
+			copied[period] = usage.CloneBucket(bucket)
 		}
 		out[hash] = copied
 	}

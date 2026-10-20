@@ -92,6 +92,10 @@ type KeyUsage struct {
 type Bucket struct {
 	Counters
 	Models map[string]Counters `json:"models,omitempty"`
+	// LastAt is the exact instant of the latest request folded into this bucket.
+	// Buckets written before this field existed leave it zero; readers fall back
+	// to the bucket start, a lower bound that is never in the future.
+	LastAt time.Time `json:"last_at,omitzero"`
 }
 
 // PeriodLayout identifies a bucket by its UTC hour.
@@ -129,6 +133,20 @@ type Record struct {
 
 // UnknownModel groups records that carried no model name.
 const UnknownModel = "unknown"
+
+// CloneBucket returns a deep copy of one bucket. Every field, including the
+// precise last-observation instant, must survive persistence and snapshots.
+func CloneBucket(bucket Bucket) Bucket {
+	copied := Bucket{
+		Counters: bucket.Counters,
+		LastAt:   bucket.LastAt,
+		Models:   make(map[string]Counters, len(bucket.Models)),
+	}
+	for model, counters := range bucket.Models {
+		copied.Models[model] = counters
+	}
+	return copied
+}
 
 // Aggregator accumulates usage records into hourly buckets. It is safe for
 // concurrent use and owns the live accounting, which the application layer
@@ -176,6 +194,9 @@ func (a *Aggregator) Observe(record Record) {
 	modelCounters := bucket.Models[model]
 	modelCounters.Add(record.Detail, record.Failed)
 	bucket.Models[model] = modelCounters
+	if bucket.LastAt.Before(at) {
+		bucket.LastAt = at
+	}
 
 	a.dirty = true
 }
@@ -215,8 +236,12 @@ func (a *Aggregator) Range(start, end time.Time) map[string]KeyUsage {
 			if merged.FirstSeen.IsZero() || at.Before(merged.FirstSeen) {
 				merged.FirstSeen = at
 			}
-			if finish := at.Add(BucketSpan); finish.After(merged.LastSeen) {
-				merged.LastSeen = finish
+			observed := bucket.LastAt
+			if observed.IsZero() {
+				observed = at
+			}
+			if observed.After(merged.LastSeen) {
+				merged.LastSeen = observed
 			}
 		}
 		if matched {
@@ -237,6 +262,40 @@ func overlaps(at, start, end time.Time) bool {
 		return false
 	}
 	return true
+}
+
+// LastSeen reports the latest observed request instant per key across every
+// retained bucket. It ignores query windows on purpose: "last call" answers a
+// lifetime question, so a key that was active before the selected range still
+// has an answer.
+func (a *Aggregator) LastSeen() map[string]time.Time {
+	if a == nil {
+		return map[string]time.Time{}
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	out := make(map[string]time.Time, len(a.buckets))
+	for hash, byPeriod := range a.buckets {
+		var latest time.Time
+		for period, bucket := range byPeriod {
+			at, ok := ParsePeriod(period)
+			if !ok {
+				continue
+			}
+			observed := bucket.LastAt
+			if observed.IsZero() {
+				observed = at
+			}
+			if observed.After(latest) {
+				latest = observed
+			}
+		}
+		if !latest.IsZero() {
+			out[hash] = latest
+		}
+	}
+	return out
 }
 
 // Prune drops every bucket whose hour ended at or before cutoff and reports how
@@ -279,11 +338,8 @@ func (a *Aggregator) SeedBuckets(buckets map[string]map[string]Bucket) {
 	for hash, byPeriod := range buckets {
 		copied := make(map[string]*Bucket, len(byPeriod))
 		for period, bucket := range byPeriod {
-			entry := &Bucket{Counters: bucket.Counters, Models: make(map[string]Counters, len(bucket.Models))}
-			for model, counters := range bucket.Models {
-				entry.Models[model] = counters
-			}
-			copied[period] = entry
+			entry := CloneBucket(bucket)
+			copied[period] = &entry
 		}
 		a.buckets[hash] = copied
 	}
@@ -302,11 +358,7 @@ func (a *Aggregator) SnapshotBuckets() map[string]map[string]Bucket {
 	for hash, byPeriod := range a.buckets {
 		copied := make(map[string]Bucket, len(byPeriod))
 		for period, bucket := range byPeriod {
-			entry := Bucket{Counters: bucket.Counters, Models: make(map[string]Counters, len(bucket.Models))}
-			for model, counters := range bucket.Models {
-				entry.Models[model] = counters
-			}
-			copied[period] = entry
+			copied[period] = CloneBucket(*bucket)
 		}
 		out[hash] = copied
 	}

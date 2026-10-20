@@ -663,6 +663,56 @@ func TestPage_SharesOneGlyphTable(t *testing.T) {
 	}
 }
 
+// TestPage_LastSeenColumnUsesLifetimeEntry pins the column contract: the header
+// exists, the cell reads the entry-level lifetime value instead of the
+// window-scoped usage block, and the shared timestamp formatter is reused.
+func TestPage_LastSeenColumnUsesLifetimeEntry(t *testing.T) {
+	if !strings.Contains(PageHTML, `data-i18n="keys.column.last_seen"`) {
+		t.Fatal("the keys table should declare a last seen column")
+	}
+	script := extractPageScript(t)
+	for _, fragment := range []string{
+		"item.last_seen ? formatTimestamp(item.last_seen) : '—'",
+		"keys.column.last_seen",
+	} {
+		if !strings.Contains(script, fragment) {
+			t.Fatalf("last seen column wiring is missing %q", fragment)
+		}
+	}
+	if strings.Contains(script, "function formatLastSeen") {
+		t.Fatal("last seen should reuse formatTimestamp instead of a second formatter")
+	}
+	if !strings.Contains(script, "table.tHead.rows[0].cells.length") {
+		t.Fatal("column count must read the direct header; nested model tables would inflate it")
+	}
+	if strings.Contains(script, "colSpan = 9") {
+		t.Fatal("full-width rows must derive their span from the header, not a fixed column count")
+	}
+	if !strings.Contains(script, "function keyTableColumnCount") || !strings.Contains(script, "cell.colSpan = keyTableColumnCount();") {
+		t.Fatal("detail and empty rows should span every table column")
+	}
+}
+
+// TestPage_DetailRowIsRecessed pins the hierarchy fix: the expanded detail area
+// uses the page-owned inset surface instead of the same token as the table
+// header, and hover never repaints it.
+func TestPage_DetailRowIsRecessed(t *testing.T) {
+	style := extractPageStyle(t)
+	detail := regexp.MustCompile(`(?s)\.detail-row > td \{.*?\}`).FindString(style)
+	if detail == "" || !strings.Contains(detail, "background: var(--bg-inset);") {
+		t.Fatal("the detail row should sit on the inset surface")
+	}
+	if strings.Contains(style, ".detail-row:hover") {
+		t.Fatal("hover must not repaint the detail well")
+	}
+	if !strings.Contains(style, ".data-table tbody tr:not(.detail-row):hover td") {
+		t.Fatal("the generic row hover should exclude the detail row")
+	}
+	if count := strings.Count(style, "--bg-inset:"); count != 4 {
+		t.Fatalf("--bg-inset declared %d times, want once per theme block", count)
+	}
+}
+
 // TestPage_QuotaBadgeExplainsItself pins the remark-column quota tags: both tags
 // are icon led (gauge for usage/limit, clock for the reset), the visible quota
 // tag carries no label word, and the reset tag counts down while its tooltip

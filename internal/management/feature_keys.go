@@ -59,6 +59,7 @@ var keysFeature = pageFeature{
               <tr>
                 <th data-i18n="keys.column.key">Key</th>
                 <th class="col-remark" data-i18n="keys.column.remark">Remark</th>
+                <th class="num" data-i18n="keys.column.last_seen">Last seen</th>
                 <th class="num" data-i18n="keys.column.requests">Requests</th>
                 <th class="num" data-i18n="keys.column.failed">Failed</th>
                 <th class="num" data-i18n="keys.column.input">Input</th>
@@ -108,13 +109,15 @@ var keysFeature = pageFeature{
   border-bottom: 1px dashed var(--border-color);
 }
 
-.data-table tbody tr.detail-row:hover td { background-color: var(--bg-subtle) !important; }
-
+/* The detail row is a sunken well: the page canvas sits below the card, and the
+   nested model table stays on --bg-card so it reads as a sheet inside the well.
+   Hover deliberately does not repaint it; the generic row hover excludes this
+   row. */
 .detail-row > td {
   padding: 0;
   border-top: none;
   border-bottom: 1px solid var(--border-color);
-  background: var(--bg-subtle);
+  background: var(--bg-inset);
 }
 
 .detail-panel {
@@ -550,6 +553,7 @@ function buildQuotaResetBadge(quota) {
 
 function buildKeyRow(index, value, remark, usage) {
   var row = document.createElement('tr');
+  var item = state.entries[index] || {};
   var models = usage && Array.isArray(usage.models) ? usage.models : [];
   var expanded = isModelsExpanded(value, models);
   row.className = 'key-row' + (expanded ? ' is-expanded' : '');
@@ -593,8 +597,7 @@ function buildKeyRow(index, value, remark, usage) {
     emptyRemark.textContent = '—';
     tagRow.appendChild(emptyRemark);
   }
-  var entryItem = state.entries[index] || {};
-  var entryQuota = entryItem.quota;
+  var entryQuota = item.quota;
   if (entryQuota && entryQuota.enabled) {
     if (entryQuota.exceeded) {
       var exBadge = document.createElement('span');
@@ -622,6 +625,14 @@ function buildKeyRow(index, value, remark, usage) {
   }
   remarkCell.appendChild(tagRow);
   row.appendChild(remarkCell);
+
+  // Last call is lifetime information: it comes from the entry, not from the
+  // window-scoped usage block, so a key idle during the selected range still
+  // shows when it was last used.
+  var lastSeenCell = document.createElement('td');
+  lastSeenCell.className = 'num' + (item.last_seen ? '' : ' muted');
+  lastSeenCell.textContent = item.last_seen ? formatTimestamp(item.last_seen) : '—';
+  row.appendChild(lastSeenCell);
 
   row.appendChild(buildNumberCell(usage ? usage.requests : 0, !usage));
   row.appendChild(buildFailedCell(usage, index));
@@ -749,12 +760,25 @@ function findDetailRow(index) {
   return null;
 }
 
+// keyTableColumnCount keeps full-width rows aligned with the live header, so a
+// new column can never leave a dead strip beside a detail or empty row.
+function keyTableColumnCount() {
+  var body = byId('keys-body');
+  var table = body ? body.closest('table') : null;
+  // table.tHead is the direct header only; a descendant query would also count
+  // the nested model tables inside earlier detail rows.
+  if (table && table.tHead && table.tHead.rows.length > 0) {
+    return table.tHead.rows[0].cells.length;
+  }
+  return 10;
+}
+
 function buildUsageDetailRow(index, usage) {
   var row = document.createElement('tr');
   row.className = 'detail-row';
   row.setAttribute('data-index', String(index));
   var cell = document.createElement('td');
-  cell.colSpan = 9;
+  cell.colSpan = keyTableColumnCount();
 
   var panel = document.createElement('div');
   panel.className = 'detail-panel';
@@ -841,7 +865,7 @@ function buildEmptyRow(message) {
   var row = document.createElement('tr');
   row.className = 'empty-row';
   var cell = document.createElement('td');
-  cell.colSpan = 9;
+  cell.colSpan = keyTableColumnCount();
   var box = document.createElement('div');
   box.className = 'empty-state';
   box.textContent = message;
