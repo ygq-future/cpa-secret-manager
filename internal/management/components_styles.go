@@ -635,7 +635,10 @@ input[readonly] {
   max-width: 340px;
 }
 
-.search .icon {
+/* Only the leading glyph is pinned; the clear button centres its own cross.
+   A descendant selector would absolutely position that cross too and drag it
+   out of the button. */
+.search > .icon {
   position: absolute;
   left: 11px;
   color: var(--text-tertiary);
@@ -643,6 +646,13 @@ input[readonly] {
 }
 
 .search input { padding-left: 34px; padding-right: 32px; }
+
+/* The filter is read-only until first interaction to block credential
+   autofill; that guard must not change how the field looks. */
+.search input[readonly] {
+  background: var(--bg-card) !important;
+  cursor: text;
+}
 
 .search-clear {
   position: absolute;
@@ -663,7 +673,12 @@ input[readonly] {
   color: var(--text-primary);
 }
 
-.search-clear .icon { width: 11px; height: 11px; }
+.search-clear .icon {
+  width: 11px;
+  height: 11px;
+  position: static;
+  color: inherit;
+}
 
 /* --- input with unit --- */
 .input-unit-group {

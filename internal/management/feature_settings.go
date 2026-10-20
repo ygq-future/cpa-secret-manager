@@ -31,7 +31,10 @@ var settingsFeature = pageFeature{
                   <input id="settings-retention-input" class="unit-input" type="number" min="1" max="365" step="1" inputmode="numeric" data-i18n-aria-label="settings.retention_title">
                   <span class="unit-suffix" data-i18n="settings.days"></span>
                 </div>
-                <button id="settings-retention-save" class="btn btn-secondary" type="button" data-i18n="settings.save">Save</button>
+                <button id="settings-retention-save" class="btn btn-secondary" type="button" disabled aria-busy="false">
+                  <span class="spinner" aria-hidden="true"></span>
+                  <span data-i18n="settings.save">Save</span>
+                </button>
               </div>
             </div>
           </div>
@@ -70,6 +73,52 @@ function usageEnabled() {
   return state.settings.usage_enabled !== false;
 }
 
+// savedRetentionDays is the baseline the save action compares against: the
+// value the plugin reported, not whatever the field currently shows.
+function savedRetentionDays() {
+  if (!state.settings) {
+    return null;
+  }
+  var saved = Number(state.settings.retention_days);
+  return isFinite(saved) ? saved : null;
+}
+
+function enteredRetentionDays() {
+  var input = byId('settings-retention-input');
+  if (!input || input.value === '') {
+    return null;
+  }
+  var entered = parseInt(input.value, 10);
+  return isNaN(entered) ? null : entered;
+}
+
+// syncRetentionSaveState keeps the action honest: it is only clickable once the
+// field holds a value that differs from the persisted one.
+function syncRetentionSaveState() {
+  var button = byId('settings-retention-save');
+  if (!button || button.classList.contains('is-loading')) {
+    return;
+  }
+  var entered = enteredRetentionDays();
+  var saved = savedRetentionDays();
+  button.disabled = entered === null || saved === null || entered === saved;
+}
+
+// setRetentionSaving swaps the label for the shared spinner while the PUT is in
+// flight and keeps the button disabled until the round trip settles.
+function setRetentionSaving(saving) {
+  var button = byId('settings-retention-save');
+  if (!button) {
+    return;
+  }
+  button.classList.toggle('is-loading', saving);
+  button.setAttribute('aria-busy', saving ? 'true' : 'false');
+  button.disabled = saving;
+  if (!saving) {
+    syncRetentionSaveState();
+  }
+}
+
 function renderSettings() {
   var enabled = usageEnabled();
   var toggle = byId('settings-usage-toggle');
@@ -96,6 +145,7 @@ function renderSettings() {
   if (retInput && state.settings && state.settings.retention_days) {
     retInput.value = state.settings.retention_days;
   }
+  syncRetentionSaveState();
   var messages = [];
   if (state.settings && state.settings.state_warning) {
     messages.push(t('settings.state_warning') + ': ' + state.settings.state_warning);
@@ -141,6 +191,10 @@ function saveRetentionDays() {
     showToast(t('settings.retention_invalid'), 'error');
     return;
   }
+  if (val === savedRetentionDays()) {
+    return;
+  }
+  setRetentionSaving(true);
   apiFetch(SETTINGS_PATH, { method: 'PUT', body: JSON.stringify({ retention_days: val }) })
     .then(function () {
       return loadSettings();
@@ -151,6 +205,9 @@ function saveRetentionDays() {
     .catch(function (error) {
       showToast(error.message, 'error');
       renderSettings();
+    })
+    .then(function () {
+      setRetentionSaving(false);
     });
 }
 
@@ -159,6 +216,7 @@ function bindSettingsEvents() {
   bindClick('settings-retention-save', saveRetentionDays);
   var retInput = byId('settings-retention-input');
   if (retInput) {
+    retInput.addEventListener('input', syncRetentionSaveState);
     retInput.addEventListener('keydown', function (event) {
       if (event.key === 'Enter') {
         saveRetentionDays();

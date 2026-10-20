@@ -30,7 +30,7 @@ var keysFeature = pageFeature{
         <div class="toolbar">
           <div class="search">
             {{ICON:search}}
-            <input id="keys-filter" type="search" autocomplete="off" data-i18n-placeholder="keys.filter" data-i18n-aria-label="keys.filter">
+            <input id="keys-filter" name="keys-filter-query" type="search" autocomplete="off" autocapitalize="off" spellcheck="false" readonly data-lpignore="true" data-1p-ignore data-bwignore data-i18n-placeholder="keys.filter" data-i18n-aria-label="keys.filter">
             <button id="keys-clear" class="search-clear" type="button" hidden data-i18n-title="keys.filter_clear" data-i18n-aria-label="keys.filter_clear">{{ICON:close}}</button>
           </div>
           <div class="toolbar-actions">
@@ -2089,6 +2089,15 @@ function bindKeysEvents() {
 
   var filter = byId('keys-filter');
   if (filter) {
+    // The field starts read-only so credential managers have nothing to fill on
+    // load; the first interaction restores normal typing.
+    var unlockFilter = function () {
+      if (filter.readOnly) {
+        filter.readOnly = false;
+      }
+    };
+    filter.addEventListener('focus', unlockFilter);
+    filter.addEventListener('pointerdown', unlockFilter);
     filter.addEventListener('input', function () {
       renderKeys();
     });

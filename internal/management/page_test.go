@@ -22,6 +22,7 @@ var (
 	colorLiteralPattern     = regexp.MustCompile(`#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)`)
 	tokenDeclarationPattern = regexp.MustCompile(`^\s*--[a-z0-9-]+\s*:`)
 	refreshSpinnerPattern   = regexp.MustCompile(`(?s)<button id="refresh-button".*?<span class="spinner"`)
+	retentionSavePattern    = regexp.MustCompile(`(?s)<button id="settings-retention-save"[^>]*disabled[^>]*>.*?<span class="spinner"`)
 	sharedTagMetricsPattern = regexp.MustCompile(`(?s)\.badge-remark,\s*\.badge-quota,\s*\.badge-reset,\s*\.badge-models \{(.*?)\}`)
 	rootBlockPattern        = regexp.MustCompile(`(?s):root\s*\{(.*?)\}`)
 	whiteBlockPattern       = regexp.MustCompile(`(?s)\[data-theme='white'\]\s*\{(.*?)\}`)
@@ -491,6 +492,92 @@ func TestPage_RefreshShowsLoadingState(t *testing.T) {
 		if !strings.Contains(refreshAll, call) {
 			t.Fatalf("refreshAll should call %s so a refresh is always visible", call)
 		}
+	}
+}
+
+// TestPage_RetentionSaveFollowsTheField pins the retention action contract: it
+// starts disabled, enables only when the field diverges from the persisted
+// value, and owns the shared spinner while the PUT is in flight.
+func TestPage_RetentionSaveFollowsTheField(t *testing.T) {
+	if !retentionSavePattern.MatchString(PageHTML) {
+		t.Fatal("the retention save button should start disabled and carry the shared spinner")
+	}
+
+	script := extractPageScript(t)
+	for _, fragment := range []string{
+		"function syncRetentionSaveState",
+		"function setRetentionSaving",
+		"button.disabled = entered === null || saved === null || entered === saved;",
+		"button.classList.toggle('is-loading', saving);",
+		"retInput.addEventListener('input', syncRetentionSaveState);",
+	} {
+		if !strings.Contains(script, fragment) {
+			t.Fatalf("retention save wiring is missing %q", fragment)
+		}
+	}
+
+	saveFn := regexp.MustCompile(`(?s)function saveRetentionDays\(\)\s*\{.*?\n\}`).FindString(script)
+	if saveFn == "" {
+		t.Fatal("saveRetentionDays function not found")
+	}
+	for _, call := range []string{"setRetentionSaving(true)", "setRetentionSaving(false)"} {
+		if !strings.Contains(saveFn, call) {
+			t.Fatalf("saveRetentionDays should call %s", call)
+		}
+	}
+}
+
+// TestPage_SearchClearCentresItsGlyph guards the reported regression: the
+// leading glyph rule was a descendant selector, so it also absolutely
+// positioned the clear button's cross and pushed it out of the button.
+func TestPage_SearchClearCentresItsGlyph(t *testing.T) {
+	style := extractPageStyle(t)
+	if !strings.Contains(style, ".search > .icon {") {
+		t.Fatal("only the leading search glyph should be absolutely positioned")
+	}
+	if strings.Contains(style, ".search .icon {") {
+		t.Fatal("the descendant selector would reposition the clear button glyph")
+	}
+	if !strings.Contains(style, ".search-clear .icon {") || !regexp.MustCompile(`(?s)\.search-clear \.icon \{.*?position: static;`).MatchString(style) {
+		t.Fatal("the clear button glyph should stay in its flex box")
+	}
+}
+
+// TestPage_ResistsPasswordManagerAutofill pins the reported fix: the key
+// dialog is not advertised as a savable credential, and the filter starts
+// read-only so the password manager has nothing to populate on load. The guard
+// is released on first interaction instead of clearing the field on a timer.
+func TestPage_ResistsPasswordManagerAutofill(t *testing.T) {
+	filterTag := regexp.MustCompile(`<input id="keys-filter"[^>]*>`).FindString(PageHTML)
+	if filterTag == "" {
+		t.Fatal("keys filter input not found")
+	}
+	for _, attr := range []string{`name="keys-filter-query"`, `autocomplete="off"`, `readonly`, `data-lpignore="true"`, `data-1p-ignore`, `data-bwignore`, `spellcheck="false"`} {
+		if !strings.Contains(filterTag, attr) {
+			t.Fatalf("keys filter should carry %s to resist autofill", attr)
+		}
+	}
+
+	keyTag := regexp.MustCompile(`<input id="key-modal-input"[^>]*>`).FindString(PageHTML)
+	for _, attr := range []string{`autocomplete="new-password"`, `data-lpignore="true"`, `data-1p-ignore`, `data-bwignore`} {
+		if !strings.Contains(keyTag, attr) {
+			t.Fatalf("management key input should carry %s so the page is not treated as a login form", attr)
+		}
+	}
+
+	script := extractPageScript(t)
+	for _, fragment := range []string{"var unlockFilter = function", "filter.addEventListener('focus', unlockFilter)", "filter.addEventListener('pointerdown', unlockFilter)"} {
+		if !strings.Contains(script, fragment) {
+			t.Fatalf("filter unlock wiring is missing %q", fragment)
+		}
+	}
+	if strings.Contains(script, "clearAutofilledFilter") {
+		t.Fatal("the filter must not be cleared on a timer after load")
+	}
+
+	style := extractPageStyle(t)
+	if !regexp.MustCompile(`(?s)\.search input\[readonly\] \{.*?background: var\(--bg-card\)`).MatchString(style) {
+		t.Fatal("the read-only filter must keep its normal background")
 	}
 }
 
