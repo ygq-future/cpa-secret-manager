@@ -834,7 +834,7 @@ function startAutoRefresh() {
     if (document.hidden || !state.managementKey || state.authBlocked) {
       return;
     }
-    refreshAll({ silent: true });
+    refreshUsage({ silent: true });
   }, REFRESH_INTERVAL_MS);
 }
 

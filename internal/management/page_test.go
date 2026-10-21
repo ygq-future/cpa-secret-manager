@@ -495,6 +495,46 @@ func TestPage_RefreshShowsLoadingState(t *testing.T) {
 	}
 }
 
+// TestPage_EventDrivenAndUsageIntervalContract ensures that silent auto-refresh
+// only polls resolve (refreshUsage), while key mutations use event-driven refreshKeys
+// and do not poll settings.
+func TestPage_EventDrivenAndUsageIntervalContract(t *testing.T) {
+	script := extractPageScript(t)
+
+	autoRefresh := regexp.MustCompile(`(?s)function startAutoRefresh\(\)\s*\{.*?\n\}`).FindString(script)
+	if autoRefresh == "" {
+		t.Fatal("startAutoRefresh function not found")
+	}
+	if !strings.Contains(autoRefresh, "refreshUsage({ silent: true })") {
+		t.Fatalf("startAutoRefresh should only invoke refreshUsage, got:\n%s", autoRefresh)
+	}
+	if strings.Contains(autoRefresh, "refreshAll") {
+		t.Fatalf("startAutoRefresh should not invoke refreshAll directly:\n%s", autoRefresh)
+	}
+
+	refreshUsage := regexp.MustCompile(`(?s)function refreshUsage\(options\)\s*\{.*?\n\}`).FindString(script)
+	if refreshUsage == "" {
+		t.Fatal("refreshUsage function not found")
+	}
+	if !strings.Contains(refreshUsage, "loadEntries(false)") {
+		t.Fatal("refreshUsage must query loadEntries to resolve usage metrics")
+	}
+	if strings.Contains(refreshUsage, "loadSettings") || strings.Contains(refreshUsage, "loadKeys") {
+		t.Fatal("refreshUsage must never poll settings or host keys")
+	}
+
+	refreshKeys := regexp.MustCompile(`(?s)function refreshKeys\(options\)\s*\{.*?\n\}`).FindString(script)
+	if refreshKeys == "" {
+		t.Fatal("refreshKeys function not found")
+	}
+	if !strings.Contains(refreshKeys, "loadKeys()") {
+		t.Fatal("refreshKeys must call loadKeys to update keys list and usage")
+	}
+	if strings.Contains(refreshKeys, "loadSettings") {
+		t.Fatal("refreshKeys must not poll settings")
+	}
+}
+
 // TestPage_RetentionSaveFollowsTheField pins the retention action contract: it
 // starts disabled, enables only when the field diverges from the persisted
 // value, and owns the shared spinner while the PUT is in flight.

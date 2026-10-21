@@ -319,6 +319,83 @@ function refreshAll(options) {
     });
 }
 
+// refreshUsage only re-queries resolve to update token metrics and quota status.
+// It is the target of the silent background interval, completely skipping settings
+// and host api-keys reads.
+function refreshUsage(options) {
+  var settings = options || {};
+  if (state.busy || state.keys.length === 0) {
+    return Promise.resolve();
+  }
+  state.busy = true;
+  return loadEntries(false)
+    .then(function () {
+      renderKeys();
+      setStatus(tf('shell.updated_at', { time: new Date().toLocaleTimeString() }), false);
+    })
+    .catch(function (error) {
+      if (state.authBlocked) {
+        setStatus(t('error.auth_required'), true);
+      } else if (!settings.silent) {
+        setStatus(error.message, true);
+        showToast(error.message, 'error');
+      }
+    })
+    .then(function () {
+      state.busy = false;
+      var pending = state.pendingRefresh;
+      state.pendingRefresh = null;
+      if (pending) {
+        return refreshAll(pending);
+      }
+      return null;
+    });
+}
+
+// refreshKeys is invoked on key mutations (add, edit, delete). It reloads host
+// api-keys and re-resolves entries, without polling unchanged settings.
+function refreshKeys(options) {
+  var settings = options || {};
+  if (state.busy) {
+    state.pendingRefresh = settings;
+    return Promise.resolve();
+  }
+  state.busy = true;
+  var showLoading = !settings.silent || state.lastKeysSignature === null;
+  if (showLoading) {
+    setKeysLoading(true);
+  }
+  if (!settings.silent) {
+    setStatus(t('shell.loading'), false);
+  }
+  return loadKeys()
+    .then(function () {
+      setStatus(tf('shell.updated_at', { time: new Date().toLocaleTimeString() }), false);
+    })
+    .catch(function (error) {
+      if (state.authBlocked) {
+        setStatus(t('error.auth_required'), true);
+      } else {
+        setStatus(error.message, true);
+        if (!settings.silent) {
+          showToast(error.message, 'error');
+        }
+      }
+    })
+    .then(function () {
+      state.busy = false;
+      if (showLoading) {
+        setKeysLoading(false);
+      }
+      var pending = state.pendingRefresh;
+      state.pendingRefresh = null;
+      if (pending) {
+        return refreshAll(pending);
+      }
+      return null;
+    });
+}
+
 function loadKeys() {
   return apiFetch(KEYS_PATH).then(function (payload) {
     var list = [];
@@ -1380,7 +1457,7 @@ function saveKeyForm() {
       })
       .then(function () {
         showToast(t('keys.updated'), 'success');
-        return refreshAll({ silent: true });
+        return refreshKeys({ silent: true });
       })
       .catch(function (error) {
         showToast(error.message, 'error');
@@ -1421,7 +1498,7 @@ function saveKeyForm() {
     })
     .then(function () {
       showToast(t('keys.added'), 'success');
-      return refreshAll({ silent: true });
+      return refreshKeys({ silent: true });
     })
     .catch(function (error) {
       showToast(error.message, 'error');
@@ -1453,7 +1530,7 @@ function confirmDeleteKey(index) {
       })
       .then(function () {
         showToast(t('keys.deleted'), 'success');
-        return refreshAll({ silent: true });
+        return refreshKeys({ silent: true });
       })
       .catch(function (error) {
         showToast(error.message, 'error');

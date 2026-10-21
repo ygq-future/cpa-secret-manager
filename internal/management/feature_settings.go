@@ -175,7 +175,7 @@ function toggleUsageEnabled() {
     })
     .then(function () {
       showToast(t('settings.saved'), 'success');
-      return refreshAll({ silent: true });
+      return refreshUsage({ silent: true });
     })
     .catch(function (error) {
       showToast(error.message, 'error');
