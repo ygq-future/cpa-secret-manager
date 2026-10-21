@@ -1080,27 +1080,17 @@ function fetchHostModels() {
     headers['X-Management-Key'] = state.managementKey;
   }
 
-  function probe(path) {
-    return window.fetch(path, {
-      method: 'GET',
-      headers: headers,
-      cache: 'no-store'
-    }).then(function (response) {
-      if (!response.ok) {
-        throw new Error('HTTP ' + response.status);
-      }
-      return response.json();
-    }).then(function (payload) {
-      var ids = extractModelIds(payload);
-      if (ids.length === 0) {
-        throw new Error('empty_models');
-      }
-      return ids;
-    });
-  }
-
-  return probe(HOST_MODELS_PATH).catch(function () {
-    return probe(V1_MODELS_PATH);
+  return window.fetch(V1_MODELS_PATH, {
+    method: 'GET',
+    headers: headers,
+    cache: 'no-store'
+  }).then(function (response) {
+    if (!response.ok) {
+      throw new Error('HTTP ' + response.status);
+    }
+    return response.json();
+  }).then(function (payload) {
+    return extractModelIds(payload);
   });
 }
 

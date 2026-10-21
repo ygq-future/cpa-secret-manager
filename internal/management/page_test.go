@@ -966,7 +966,7 @@ func TestPage_RenderKeysCleansBodyBeforeAppend(t *testing.T) {
 func TestPage_HostModelsDiscoveryContract(t *testing.T) {
 	script := extractPageScript(t)
 	for _, token := range []string{
-		"var HOST_MODELS_PATH = '/models';",
+		"var V1_MODELS_PATH = '/v1/models';",
 		"function extractModelIds",
 		"function fetchHostModels",
 		"function loadAvailableModels",
