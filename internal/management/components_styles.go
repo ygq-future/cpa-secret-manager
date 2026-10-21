@@ -479,8 +479,10 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  margin: 0;
   padding: 12px 14px;
   background: var(--bg-subtle);
+  border: none;
 }
 
 .quota-switch-header .switch-label {

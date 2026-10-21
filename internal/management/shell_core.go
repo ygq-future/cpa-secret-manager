@@ -51,7 +51,7 @@ var state = {
   editingKey: '',
   activeTab: 'keys',
   authBlocked: false,
-  tokenUnit: 0,
+  tokenUnit: 3,
   busy: false,
   pendingRefresh: null,
   refreshTimer: 0,
@@ -127,7 +127,7 @@ function writeStorage(source, kind, key, value) {
 function readStoredTokenUnit() {
   var stored = readStorage(window, 'localStorage', TOKEN_UNIT_STORAGE_KEY);
   if (!stored) {
-    return 0;
+    return 3;
   }
   var parsed = parseInt(stored, 10);
   if (isFinite(parsed) && parsed >= 0 && parsed <= 3) {

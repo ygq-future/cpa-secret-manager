@@ -610,6 +610,20 @@ func TestPage_ResistsPasswordManagerAutofill(t *testing.T) {
 		}
 	}
 
+	formTag := regexp.MustCompile(`<form id="key-form"[^>]*>`).FindString(PageHTML)
+	for _, attr := range []string{`autocomplete="off"`, `data-bwignore="true"`, `data-lpignore="true"`, `data-1p-ignore`} {
+		if !strings.Contains(formTag, attr) {
+			t.Fatalf("key-form should carry %s to prevent password managers from latching on", attr)
+		}
+	}
+
+	remarkTag := regexp.MustCompile(`<textarea id="key-form-remark"[^>]*>`).FindString(PageHTML)
+	for _, attr := range []string{`data-bwignore="true"`, `data-lpignore="true"`, `data-1p-ignore`} {
+		if !strings.Contains(remarkTag, attr) {
+			t.Fatalf("key-form remark textarea should carry %s to prevent password managers from latching on", attr)
+		}
+	}
+
 	script := extractPageScript(t)
 	for _, fragment := range []string{"var unlockFilter = function", "filter.addEventListener('focus', unlockFilter)", "filter.addEventListener('pointerdown', unlockFilter)"} {
 		if !strings.Contains(script, fragment) {
@@ -1015,5 +1029,27 @@ if (!Array.isArray(testEmpty) || testEmpty.length !== 0) {
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("node test runner failed: %v, output: %s", err, string(output))
+	}
+}
+
+func TestPage_DefaultsAndMaskedKeyContract(t *testing.T) {
+	if !strings.Contains(PageHTML, `id="key-form-raw-value" type="hidden"`) {
+		t.Fatal("key-form should have hidden input key-form-raw-value for raw key storage")
+	}
+
+	if strings.Contains(PageHTML, `class="switch-row quota-switch-header"`) {
+		t.Fatal("quota card header should not carry switch-row to avoid unwanted margins/borders")
+	}
+
+	script := extractPageScript(t)
+	for _, fragment := range []string{
+		"tokenUnit: 3",
+		"rawInput.value = value",
+		"input.value = maskKey(value)",
+		"var bounds = dateRangeBounds()",
+	} {
+		if !strings.Contains(script, fragment) {
+			t.Fatalf("script is missing expected contract fragment %q", fragment)
+		}
 	}
 }

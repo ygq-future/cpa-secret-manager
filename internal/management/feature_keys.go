@@ -1420,6 +1420,10 @@ function openAddKeyForm() {
   if (title) {
     title.textContent = t('key_form.add_title');
   }
+  var rawValue = byId('key-form-raw-value');
+  if (rawValue) {
+    rawValue.value = '';
+  }
   var value = byId('key-form-value');
   if (value) {
     value.value = '';
@@ -1475,9 +1479,13 @@ function generateKeyIntoForm(options) {
   }
   apiFetch(GENERATE_PATH, { method: 'POST' }).then(function (payload) {
     var value = payload && payload.key ? String(payload.key) : '';
+    var rawInput = byId('key-form-raw-value');
+    if (rawInput) {
+      rawInput.value = value;
+    }
     var input = byId('key-form-value');
     if (input && value) {
-      input.value = value;
+      input.value = maskKey(value);
       input.readOnly = true;
     }
     return copyToClipboard(value);
@@ -1525,8 +1533,12 @@ function saveKeyForm() {
     return;
   }
 
-  var valueInput = byId('key-form-value');
-  var value = valueInput ? valueInput.value.trim() : '';
+  var rawInput = byId('key-form-raw-value');
+  var value = rawInput && rawInput.value ? rawInput.value.trim() : '';
+  if (!value) {
+    var valueInput = byId('key-form-value');
+    value = valueInput ? valueInput.value.trim() : '';
+  }
   if (!value) {
     showToast(t('error.key_required'), 'error');
     return;
@@ -1729,14 +1741,13 @@ function initDateRange() {
     saveDateRange();
     return;
   }
-  var now = new Date();
-  var start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-  var end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+  var bounds = dateRangeBounds();
+  var days = retentionDays();
   state.dateRange = {
-    mode: 'today',
-    start: start,
-    end: end,
-    label: formatDateStr(start)
+    mode: days === 30 ? 'last_30_days' : 'retention',
+    start: bounds.min,
+    end: bounds.max,
+    label: formatRangeLabel(bounds.min, bounds.max)
   };
   updateDateRangeLabel();
   saveDateRange();

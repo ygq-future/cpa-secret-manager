@@ -78,11 +78,12 @@ const shellModals = `  </main>
 <div id="key-form-modal" class="modal-backdrop">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="key-form-title">
     <h2 id="key-form-title" data-i18n="key_form.add_title">Add API key</h2>
-    <form id="key-form" novalidate>
+    <form id="key-form" novalidate autocomplete="off" data-bwignore="true" data-lpignore="true" data-1p-ignore>
       <div class="field" id="key-form-value-field">
         <label for="key-form-value" data-i18n="key_form.value">API key</label>
         <div class="field-row">
-          <input id="key-form-value" type="text" autocomplete="off" spellcheck="false" readonly required placeholder="Generating key...">
+          <input id="key-form-value" type="text" autocomplete="off" spellcheck="false" readonly required placeholder="Generating key..." data-bwignore="true" data-lpignore="true" data-1p-ignore>
+          <input id="key-form-raw-value" type="hidden">
           <button id="key-form-generate" class="btn btn-secondary" type="button" data-i18n="key_form.generate">Regenerate</button>
         </div>
       </div>
@@ -92,11 +93,11 @@ const shellModals = `  </main>
       </div>
       <div class="field">
         <label for="key-form-remark" data-i18n="key_form.remark">Remark</label>
-        <textarea id="key-form-remark" maxlength="200" data-i18n-placeholder="key_form.remark_placeholder"></textarea>
+        <textarea id="key-form-remark" maxlength="200" data-i18n-placeholder="key_form.remark_placeholder" autocomplete="off" spellcheck="false" data-bwignore="true" data-lpignore="true" data-1p-ignore></textarea>
         <p class="hint" data-i18n="key_form.remark_hint">Optional; empty clears the remark.</p>
       </div>
       <div class="quota-card">
-        <div class="switch-row quota-switch-header">
+        <div class="quota-switch-header">
           <div class="switch-text">
             <span class="switch-label" data-i18n="key_form.quota_enable">Enable limit rules for this key</span>
             <span class="hint" data-i18n="key_form.quota_enable_hint">Restrict window tokens and allowed models</span>
