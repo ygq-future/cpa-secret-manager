@@ -411,6 +411,9 @@ function loadKeys() {
     var keysChanged = state.lastKeysSignature !== null && state.lastKeysSignature !== currentSig;
     state.lastKeysSignature = currentSig;
     state.keys = nextKeys;
+    if (keysChanged) {
+      state.availableModels = [];
+    }
     return loadEntries(keysChanged);
   }).then(function () {
     renderKeys();
@@ -1039,21 +1042,76 @@ function setKeyFormMode(mode) {
   }
 }
 
-function loadAvailableModels() {
-  if (state.availableModels && state.availableModels.length > 0) {
+function extractModelIds(payload) {
+  var list = [];
+  if (!payload) {
+    return list;
+  }
+  var raw = Array.isArray(payload.data) ? payload.data
+    : Array.isArray(payload.models) ? payload.models
+    : Array.isArray(payload) ? payload : null;
+  if (!raw) {
+    return list;
+  }
+  for (var i = 0; i < raw.length; i++) {
+    var item = raw[i];
+    if (typeof item === 'string' && item.trim()) {
+      list.push(item.trim());
+    } else if (item && typeof item === 'object') {
+      var name = item.id || item.name;
+      if (typeof name === 'string' && name.trim()) {
+        list.push(name.trim());
+      }
+    }
+  }
+  return list;
+}
+
+function fetchHostModels() {
+  var clientKey = '';
+  if (Array.isArray(state.keys) && state.keys.length > 0 && typeof state.keys[0] === 'string' && state.keys[0]) {
+    clientKey = state.keys[0];
+  }
+  var headers = {};
+  if (clientKey) {
+    headers['Authorization'] = 'Bearer ' + clientKey;
+  } else if (state.managementKey) {
+    headers['Authorization'] = 'Bearer ' + state.managementKey;
+    headers['X-Management-Key'] = state.managementKey;
+  }
+
+  function probe(path) {
+    return window.fetch(path, {
+      method: 'GET',
+      headers: headers,
+      cache: 'no-store'
+    }).then(function (response) {
+      if (!response.ok) {
+        throw new Error('HTTP ' + response.status);
+      }
+      return response.json();
+    }).then(function (payload) {
+      var ids = extractModelIds(payload);
+      if (ids.length === 0) {
+        throw new Error('empty_models');
+      }
+      return ids;
+    });
+  }
+
+  return probe(HOST_MODELS_PATH).catch(function () {
+    return probe(V1_MODELS_PATH);
+  });
+}
+
+function loadAvailableModels(force) {
+  if (!force && state.availableModels && state.availableModels.length > 0) {
     return Promise.resolve(state.availableModels);
   }
-  return apiFetch(V1_MODELS_PATH)
-    .then(function (payload) {
-      var list = [];
-      if (payload && Array.isArray(payload.data)) {
-        list = payload.data.map(function (item) { return item.id; });
-      }
-      return list;
-    })
+  return fetchHostModels()
     .catch(function () {
       return apiFetch(MODELS_PATH).then(function (payload) {
-        return payload && Array.isArray(payload.models) ? payload.models : [];
+        return extractModelIds(payload);
       }).catch(function () {
         return [];
       });
@@ -1077,6 +1135,7 @@ function loadAvailableModels() {
     });
 }
 
+
 // modelChipGrid is the shared chip grid of the key form. The selection is read
 // from the component instead of from the DOM, so no feature re-implements the
 // chip markup.
@@ -1095,16 +1154,23 @@ function renderModelsSelection(allowedModels) {
     if (token !== modelChipToken) {
       return;
     }
+    var set = {};
+    for (var i = 0; i < (models || []).length; i++) {
+      if (models[i]) set[models[i]] = true;
+    }
+    for (var a = 0; a < allowed.length; a++) {
+      if (allowed[a]) set[allowed[a]] = true;
+    }
+    var allNames = Object.keys(set).sort();
     modelChipGrid = mountChipGrid({
       container: container,
-      items: (models || []).map(function (name) {
+      items: allNames.map(function (name) {
         return { value: name, label: name };
       }),
       selected: allowed
     });
   });
 }
-
 function readSelectedModels() {
   return modelChipGrid ? modelChipGrid.getSelected() : [];
 }

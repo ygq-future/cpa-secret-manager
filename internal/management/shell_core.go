@@ -37,8 +37,9 @@ var REMARKS_PATH = PLUGIN_BASE + '/remarks';
 var GENERATE_PATH = PLUGIN_BASE + '/keys/generate';
 var FAILURES_PATH = PLUGIN_BASE + '/failures';
 var QUOTA_PATH = PLUGIN_BASE + '/quota';
-var MODELS_PATH = PLUGIN_BASE + '/models';
+var HOST_MODELS_PATH = '/models';
 var V1_MODELS_PATH = '/v1/models';
+var MODELS_PATH = PLUGIN_BASE + '/models';
 var state = {
   availableModels: [],
   managementKey: '',

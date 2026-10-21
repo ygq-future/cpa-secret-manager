@@ -100,6 +100,7 @@ func (h *devHost) handler() http.Handler {
 	mux.HandleFunc("POST /dev/seed", h.handleSeed)
 	mux.HandleFunc("POST /dev/seed-history", h.handleSeedHistory)
 	mux.HandleFunc("POST /dev/reset", h.handleReset)
+	mux.HandleFunc("GET /models", h.handleV1Models)
 	mux.HandleFunc("GET /v1/models", h.handleV1Models)
 	mux.HandleFunc("/v0/management/", h.handleManagement)
 	mux.HandleFunc("/v0/resource/", h.handleResource)
@@ -752,6 +753,28 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 }
 
 func (h *devHost) handleV1Models(w http.ResponseWriter, r *http.Request) {
+	keys := h.keyList()
+	if len(keys) > 0 {
+		auth := r.Header.Get("Authorization")
+		token := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
+		matched := false
+		for _, k := range keys {
+			if token == k {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{
+				"error": map[string]any{
+					"code":    "unauthorized",
+					"message": "valid API key required for models endpoint",
+				},
+			})
+			return
+		}
+	}
+
 	models := []string{
 		"gpt-5.6",
 		"gpt-5.5",

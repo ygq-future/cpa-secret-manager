@@ -67,6 +67,29 @@ func call(t *testing.T, server *httptest.Server, method string, path string, bod
 	}
 	return response.StatusCode, payload
 }
+func callWithToken(t *testing.T, server *httptest.Server, method string, path string, token string) (int, []byte) {
+	t.Helper()
+	request, err := http.NewRequest(method, server.URL+path, nil)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	response, err := server.Client().Do(request)
+	if err != nil {
+		t.Fatalf("request %s %s: %v", method, path, err)
+	}
+	defer func() {
+		_ = response.Body.Close()
+	}()
+	payload, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	return response.StatusCode, payload
+}
+
 
 func decode[T any](t *testing.T, raw []byte) T {
 	t.Helper()
@@ -521,10 +544,10 @@ func TestDevHost_QuotaEnforcementAndInterception(t *testing.T) {
 func TestDevHost_V1ModelsAndModelRestrictions(t *testing.T) {
 	_, server := newTestHost(t)
 
-	// 1. Verify GET /v1/models returns model catalog
-	status, body := call(t, server, http.MethodGet, "/v1/models", "", false)
+	// 1. Verify GET /models and GET /v1/models return model catalog when no keys are configured
+	status, body := call(t, server, http.MethodGet, "/models", "", false)
 	if status != http.StatusOK {
-		t.Fatalf("GET /v1/models status = %d: %s", status, body)
+		t.Fatalf("GET /models status = %d: %s", status, body)
 	}
 	var modelResp struct {
 		Data []struct {
@@ -533,13 +556,30 @@ func TestDevHost_V1ModelsAndModelRestrictions(t *testing.T) {
 	}
 	_ = json.Unmarshal(body, &modelResp)
 	if len(modelResp.Data) == 0 {
-		t.Fatal("expected at least 1 model in catalog")
+		t.Fatal("expected at least 1 model in catalog from /models")
+	}
+
+	status, _ = call(t, server, http.MethodGet, "/v1/models", "", false)
+	if status != http.StatusOK {
+		t.Fatalf("GET /v1/models status = %d", status)
 	}
 
 	// 2. Prepare key with allowed_models = ["gpt-5.6"]
 	apiKey := "sk-model-restrict"
 	keyHash := remarks.Index(apiKey)
 	_, _ = call(t, server, http.MethodPut, "/v0/management/api-keys", `["`+apiKey+`"]`, true)
+
+	// 2.1 Once keys are configured, unauthenticated requests or requests with management key are rejected
+	if unauthStatus, _ := call(t, server, http.MethodGet, "/models", "", false); unauthStatus != http.StatusUnauthorized {
+		t.Fatalf("GET /models without key status = %d, want 401", unauthStatus)
+	}
+	if mgmtStatus, _ := call(t, server, http.MethodGet, "/models", "", true); mgmtStatus != http.StatusUnauthorized {
+		t.Fatalf("GET /models with management key status = %d, want 401", mgmtStatus)
+	}
+	// 2.2 Authenticated with the valid client API key succeeds
+	if authedStatus, authedBody := callWithToken(t, server, http.MethodGet, "/models", apiKey); authedStatus != http.StatusOK {
+		t.Fatalf("GET /models with client key status = %d: %s", authedStatus, authedBody)
+	}
 
 	quotaPayload := fmt.Sprintf(`{"hash":%q,"enabled":true,"strategy":"token","window":"daily","limit_value":10000,"allowed_models":["gpt-5.6"]}`, keyHash)
 	if status, body := call(t, server, http.MethodPut, "/v0/management/plugins/cpa-secret-manager/quota", quotaPayload, true); status != http.StatusOK {

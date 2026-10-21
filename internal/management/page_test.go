@@ -455,6 +455,11 @@ func TestPage_ModernQuotaComponentsContract(t *testing.T) {
 		t.Fatal("allowed models should be rendered by the shared chip grid")
 	}
 
+	style := extractPageStyle(t)
+	if !strings.Contains(style, ".chip-check") || !strings.Contains(style, "max-width: 0") || !strings.Contains(style, ".chip.is-selected .chip-check") {
+		t.Fatal("the chip check icon should collapse to zero width when unselected to keep text centered")
+	}
+
 	if !strings.Contains(PageHTML, `id="key-form-quota-duration-unit"`) || !strings.Contains(PageHTML, `id="key-form-quota-duration-sec"`) {
 		t.Fatal("window duration should use the shared listbox with a resolved-seconds field")
 	}
@@ -955,5 +960,60 @@ func TestPage_RenderKeysCleansBodyBeforeAppend(t *testing.T) {
 	script := extractPageScript(t)
 	if !strings.Contains(script, "body.textContent = '';") {
 		t.Fatal("renderKeys must clear body.textContent before appending rows to prevent duplicate items on refresh")
+	}
+}
+
+func TestPage_HostModelsDiscoveryContract(t *testing.T) {
+	script := extractPageScript(t)
+	for _, token := range []string{
+		"var HOST_MODELS_PATH = '/models';",
+		"function extractModelIds",
+		"function fetchHostModels",
+		"function loadAvailableModels",
+	} {
+		if !strings.Contains(script, token) {
+			t.Fatalf("page script missing %s", token)
+		}
+	}
+
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed; skipping runtime JS evaluation test")
+	}
+
+	extractFn := regexp.MustCompile(`(?s)function extractModelIds\(.*?\n\}`).FindString(script)
+	if extractFn == "" {
+		t.Fatal("cannot find function extractModelIds in script")
+	}
+
+	testRunner := extractFn + `
+var test1 = extractModelIds({ object: 'list', data: [{ id: 'gpt-5.6' }, { id: 'claude-sonnet-4-6' }] });
+if (test1.length !== 2 || test1[0] !== 'gpt-5.6' || test1[1] !== 'claude-sonnet-4-6') {
+  console.error('failed test1:', test1);
+  process.exit(1);
+}
+
+var test2 = extractModelIds({ models: ['gemini-2.5-pro', 'gemini-4-argon'] });
+if (test2.length !== 2 || test2[0] !== 'gemini-2.5-pro' || test2[1] !== 'gemini-4-argon') {
+  console.error('failed test2:', test2);
+  process.exit(1);
+}
+
+var test3 = extractModelIds([{ name: 'named-model' }, 'raw-model', '', null, { id: 'id-model' }]);
+if (test3.length !== 3 || test3[0] !== 'named-model' || test3[1] !== 'raw-model' || test3[2] !== 'id-model') {
+  console.error('failed test3:', test3);
+  process.exit(1);
+}
+
+var testEmpty = extractModelIds(null);
+if (!Array.isArray(testEmpty) || testEmpty.length !== 0) {
+  console.error('failed testEmpty:', testEmpty);
+  process.exit(1);
+}
+`
+	cmd := exec.Command(nodePath, "-e", testRunner)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("node test runner failed: %v, output: %s", err, string(output))
 	}
 }

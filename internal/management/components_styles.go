@@ -948,7 +948,7 @@ input[readonly] {
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  justify-content: center;
   min-height: 26px;
   padding: 0 10px;
   border: 1px solid var(--border-color);
@@ -959,7 +959,8 @@ input[readonly] {
   font-size: 12px;
   line-height: 1.2;
   user-select: none;
-  transition: background 120ms, border-color 120ms, color 120ms;
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms, color 120ms, box-shadow 120ms;
 }
 
 .chip:hover {
@@ -972,19 +973,26 @@ input[readonly] {
   background: var(--accent-blue-soft);
   border-color: var(--accent-blue);
   color: var(--accent-blue-text);
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .chip-check {
   display: inline-block;
-  width: 10px;
-  font-size: 10px;
+  width: 0;
+  max-width: 0;
+  margin-right: 0;
+  font-size: 11px;
+  line-height: 1;
   opacity: 0;
+  overflow: hidden;
   transform: scale(0.6);
-  transition: opacity 120ms, transform 120ms;
+  transition: width 140ms ease, margin-right 140ms ease, opacity 120ms ease, transform 140ms ease;
 }
 
 .chip.is-selected .chip-check {
+  width: 11px;
+  max-width: 11px;
+  margin-right: 5px;
   opacity: 1;
   transform: scale(1);
 }
