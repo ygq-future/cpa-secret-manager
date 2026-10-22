@@ -32,6 +32,7 @@ const ThemePaletteCSS = `
   --bg-card: #ffffff;
   --bg-subtle: #f1f5f9;
   --bg-hover: rgba(15, 23, 42, 0.04);
+  --bg-expanded: rgba(2, 132, 199, 0.06);
   --bg-overlay: rgba(15, 23, 42, 0.45);
   --border-color: #e2e8f0;
   --border-subtle: #f1f5f9;
@@ -91,6 +92,7 @@ const ThemePaletteCSS = `
     --bg-card: #1f1f23;
     --bg-subtle: #27272a;
     --bg-hover: rgba(255, 255, 255, 0.055);
+    --bg-expanded: rgba(56, 189, 248, 0.075);
     --bg-overlay: rgba(0, 0, 0, 0.7);
     --border-color: #27272a;
     --border-subtle: #27272a;
@@ -145,6 +147,7 @@ const ThemePaletteCSS = `
   --bg-card: #ffffff;
   --bg-subtle: #f4f4f5;
   --bg-hover: rgba(15, 23, 42, 0.04);
+  --bg-expanded: rgba(2, 132, 199, 0.06);
   --bg-overlay: rgba(15, 23, 42, 0.45);
   --border-color: #e4e4e7;
   --border-subtle: #f4f4f5;
@@ -204,6 +207,7 @@ const ThemePaletteCSS = `
   --bg-card: #1f1f23;
   --bg-subtle: #27272a;
   --bg-hover: rgba(255, 255, 255, 0.055);
+  --bg-expanded: rgba(56, 189, 248, 0.075);
   --bg-overlay: rgba(0, 0, 0, 0.7);
   --border-color: #27272a;
   --border-subtle: #27272a;

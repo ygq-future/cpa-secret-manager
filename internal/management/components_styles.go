@@ -1488,11 +1488,12 @@ table.data-table {
   position: sticky;
   top: 0;
   z-index: 2;
-  background: var(--bg-subtle);
+  background: var(--bg-card);
   color: var(--text-tertiary);
   font-size: 12px;
   font-weight: 650;
   white-space: nowrap;
+  border-bottom: 1px solid var(--border-color);
 }
 
 [lang="en-US"] .data-table thead th {

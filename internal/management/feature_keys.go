@@ -59,12 +59,12 @@ var keysFeature = pageFeature{
               <tr>
                 <th data-i18n="keys.column.key">Key</th>
                 <th class="col-remark" data-i18n="keys.column.remark">Remark</th>
-                <th class="num" data-i18n="keys.column.last_seen">Last seen</th>
-                <th class="num" data-i18n="keys.column.requests">Requests</th>
-                <th class="num" data-i18n="keys.column.failed">Failed</th>
+                <th class="num th-sortable" data-sort="last_seen"><span class="th-sort-inner"><span data-i18n="keys.column.last_seen">Last seen</span><span class="th-sort-icon" aria-hidden="true"><svg class="sort-caret-up" viewBox="0 0 10 5" fill="none"><path d="M1 4L5 1L9 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><svg class="sort-caret-down" viewBox="0 0 10 5" fill="none"><path d="M1 1L5 4L9 1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></th>
+                <th class="num th-sortable" data-sort="requests"><span class="th-sort-inner"><span data-i18n="keys.column.requests">Requests</span><span class="th-sort-icon" aria-hidden="true"><svg class="sort-caret-up" viewBox="0 0 10 5" fill="none"><path d="M1 4L5 1L9 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><svg class="sort-caret-down" viewBox="0 0 10 5" fill="none"><path d="M1 1L5 4L9 1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></th>
+                <th class="num th-sortable" data-sort="failed"><span class="th-sort-inner"><span data-i18n="keys.column.failed">Failed</span><span class="th-sort-icon" aria-hidden="true"><svg class="sort-caret-up" viewBox="0 0 10 5" fill="none"><path d="M1 4L5 1L9 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><svg class="sort-caret-down" viewBox="0 0 10 5" fill="none"><path d="M1 1L5 4L9 1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></th>
                 <th class="num" data-i18n="keys.column.input">Input</th>
                 <th class="num" data-i18n="keys.column.output">Output</th>
-                <th class="num" data-i18n="keys.column.total">Total</th>
+                <th class="num th-sortable" data-sort="total"><span class="th-sort-inner"><span data-i18n="keys.column.total">Total</span><span class="th-sort-icon" aria-hidden="true"><svg class="sort-caret-up" viewBox="0 0 10 5" fill="none"><path d="M1 4L5 1L9 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><svg class="sort-caret-down" viewBox="0 0 10 5" fill="none"><path d="M1 1L5 4L9 1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></th>
                 <th class="num" data-i18n="keys.column.models">Models</th>
                 <th data-i18n="keys.column.actions">Actions</th>
               </tr>
@@ -105,8 +105,8 @@ var keysFeature = pageFeature{
 .empty-row:hover td { background: transparent; }
 
 .data-table tbody tr.key-row.is-expanded td {
-  background-color: var(--bg-hover);
-  border-bottom: 1px dashed var(--border-color);
+  background-color: var(--bg-expanded);
+  border-bottom: 1px solid var(--border-color);
 }
 
 /* The detail row is a sunken well: the page canvas sits below the card, and the
@@ -118,6 +118,18 @@ var keysFeature = pageFeature{
   border-top: none;
   border-bottom: 1px solid var(--border-color);
   background: var(--bg-inset);
+}
+
+table.detail-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-sm);
+  font-size: 12px;
 }
 
 .detail-panel {
@@ -188,6 +200,78 @@ table.detail-table {
 .detail-table .model-name {
   font-family: var(--font-mono);
   font-size: 11.5px;
+}
+
+.th-sortable {
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.th-sortable:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-hover);
+}
+
+.th-sort-inner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.th-sort-icon {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 10px;
+  height: 12px;
+  vertical-align: middle;
+}
+
+.th-sort-icon svg {
+  width: 8px;
+  height: 4px;
+  display: block;
+  transition: opacity 0.15s ease, transform 0.15s ease, color 0.15s ease;
+}
+
+.sort-caret-up,
+.sort-caret-down {
+  opacity: 0.38;
+  color: var(--text-tertiary);
+}
+
+.th-sortable:hover .sort-caret-up,
+.th-sortable:hover .sort-caret-down {
+  opacity: 0.8;
+  color: var(--text-secondary);
+}
+
+.th-sortable.is-sorted {
+  color: var(--text-primary);
+}
+
+.th-sortable.is-sorted:not(.is-asc) .sort-caret-down {
+  opacity: 1;
+  color: var(--accent-blue);
+  transform: translateY(0.5px);
+}
+
+.th-sortable.is-sorted:not(.is-asc) .sort-caret-up {
+  opacity: 0.12;
+}
+
+.th-sortable.is-sorted.is-asc .sort-caret-up {
+  opacity: 1;
+  color: var(--accent-blue);
+  transform: translateY(-0.5px);
+}
+
+.th-sortable.is-sorted.is-asc .sort-caret-down {
+  opacity: 0.12;
 }
 `,
 	scripts: `
@@ -552,15 +636,44 @@ function setStatText(id, value, formatter) {
   }
 }
 
+function toggleKeySort(field) {
+  if (!state.sort || state.sort.field !== field) {
+    state.sort = { field: field, order: 'desc' };
+  } else if (state.sort.order === 'desc') {
+    state.sort = { field: field, order: 'asc' };
+  } else {
+    state.sort = { field: 'last_seen', order: 'desc' };
+  }
+  writeStoredSort(state.sort);
+  renderKeys();
+}
+
+function updateSortHeaders() {
+  var sortHeaders = document.querySelectorAll('#keys-table-wrap th.th-sortable');
+  for (var i = 0; i < sortHeaders.length; i++) {
+    var th = sortHeaders[i];
+    var field = th.getAttribute('data-sort');
+    var isSorted = !!(state.sort && state.sort.field === field);
+    th.classList.toggle('is-sorted', isSorted);
+    th.classList.toggle('is-asc', isSorted && state.sort.order === 'asc');
+    if (isSorted) {
+      th.setAttribute('aria-sort', state.sort.order === 'asc' ? 'ascending' : 'descending');
+    } else {
+      th.setAttribute('aria-sort', 'none');
+    }
+  }
+}
+
 function renderKeys() {
   initDateRange();
   var body = byId('keys-body');
   if (!body) {
     return;
   }
+  updateSortHeaders();
   body.textContent = '';
   var filter = readFilter();
-  var shown = 0;
+  var indices = [];
   for (var index = 0; index < state.keys.length; index++) {
     var value = state.keys[index];
     var item = state.entries[index] || {};
@@ -568,14 +681,50 @@ function renderKeys() {
     if (filter && value.toLowerCase().indexOf(filter) < 0 && remark.toLowerCase().indexOf(filter) < 0) {
       continue;
     }
-    shown++;
-    var models = item.usage && Array.isArray(item.usage.models) ? item.usage.models : [];
-    body.appendChild(buildKeyRow(index, value, remark, item.usage));
-    if (isModelsExpanded(value, models)) {
-      body.appendChild(buildUsageDetailRow(index, item.usage));
-    }
+    indices.push(index);
   }
 
+  if (state.sort && state.sort.field && (state.sort.order === 'asc' || state.sort.order === 'desc')) {
+    var sortField = state.sort.field;
+    var isAsc = state.sort.order === 'asc';
+    indices.sort(function (a, b) {
+      var itemA = state.entries[a] || {};
+      var itemB = state.entries[b] || {};
+      var valA = 0;
+      var valB = 0;
+      if (sortField === 'last_seen') {
+        valA = itemA.last_seen ? new Date(itemA.last_seen).getTime() : 0;
+        valB = itemB.last_seen ? new Date(itemB.last_seen).getTime() : 0;
+      } else if (sortField === 'requests') {
+        valA = (itemA.usage && itemA.usage.requests) || 0;
+        valB = (itemB.usage && itemB.usage.requests) || 0;
+      } else if (sortField === 'failed') {
+        valA = (itemA.usage && itemA.usage.failed) || 0;
+        valB = (itemB.usage && itemB.usage.failed) || 0;
+      } else if (sortField === 'total') {
+        valA = (itemA.usage && itemA.usage.total) || 0;
+        valB = (itemB.usage && itemB.usage.total) || 0;
+      }
+      if (valA !== valB) {
+        return isAsc ? (valA > valB ? 1 : -1) : (valA < valB ? 1 : -1);
+      }
+      return a - b;
+    });
+  }
+
+  var shown = 0;
+  for (var k = 0; k < indices.length; k++) {
+    var idx = indices[k];
+    var val = state.keys[idx];
+    var itm = state.entries[idx] || {};
+    var rem = typeof itm.remark === 'string' ? itm.remark : '';
+    shown++;
+    var models = itm.usage && Array.isArray(itm.usage.models) ? itm.usage.models : [];
+    body.appendChild(buildKeyRow(idx, val, rem, itm.usage));
+    if (isModelsExpanded(val, models)) {
+      body.appendChild(buildUsageDetailRow(idx, itm.usage));
+    }
+  }
   if (shown === 0) {
     body.appendChild(buildEmptyRow(filter ? t('keys.empty_filter') : t('keys.empty')));
   }
@@ -883,7 +1032,7 @@ function buildUsageDetailRow(index, usage) {
     empty.textContent = t('keys.detail_empty');
     panel.appendChild(empty);
   } else {
-    panel.appendChild(buildModelTable(models));
+    panel.appendChild(buildModelTable(models, index));
   }
 
   cell.appendChild(panel);
@@ -891,7 +1040,7 @@ function buildUsageDetailRow(index, usage) {
   return row;
 }
 
-function buildModelTable(models) {
+function buildModelTable(models, keyIndex) {
   var columns = [
     ['model', 'keys.column.model', false],
     ['requests', 'keys.column.requests', false],
@@ -929,6 +1078,24 @@ function buildModelTable(models) {
       if (cellIndex === 0) {
         cell.className = 'model-name';
         cell.textContent = model[key] ? String(model[key]) : t('keys.unknown_model');
+      } else if (key === 'failed') {
+        cell.className = 'num';
+        var failedVal = model[key] || 0;
+        if (failedVal > 0) {
+          var failBadge = document.createElement('span');
+          failBadge.className = 'badge badge-danger badge-clickable';
+          failBadge.textContent = formatNumber(failedVal);
+          failBadge.title = t('failures.view_details');
+          failBadge.addEventListener('click', (function (mName) {
+            return function (e) {
+              e.stopPropagation();
+              openFailuresModal(keyIndex, mName);
+            };
+          })(model.model || ''));
+          cell.appendChild(failBadge);
+        } else {
+          cell.textContent = '0';
+        }
       } else {
         cell.className = 'num';
         cell.textContent = (columns[cellIndex][2] ? formatTokenValue : formatNumber)(model[key] || 0);
@@ -2022,7 +2189,7 @@ function handleDateClick(selectedDate) {
 
 // The failure viewer is rebuilt on every open. Its two filters are shared
 // listboxes, its records are plain components.
-function openFailuresModal(index) {
+function openFailuresModal(index, initialModel) {
   var container = byId('failures-content');
   if (!container) return;
   container.textContent = '';
@@ -2033,6 +2200,7 @@ function openFailuresModal(index) {
   var startISO = state.dateRange && state.dateRange.start ? state.dateRange.start.toISOString() : '';
   var endISO = state.dateRange && state.dateRange.end ? state.dateRange.end.toISOString() : '';
   var initialHash = (index >= 0 && state.entries[index]) ? state.entries[index].hash : '';
+  var targetModel = typeof initialModel === 'string' ? initialModel : '';
 
   var rangeTag = byId('failures-range-tag');
   if (rangeTag) {
@@ -2065,14 +2233,20 @@ function openFailuresModal(index) {
     value: initialHash,
     titleKey: 'failures.filter_key',
     onChange: function (hash) {
+      targetModel = '';
       loadFailures(hash);
     }
   });
 
+  var initialModelOpts = [{ value: '', label: t('failures.all_models') }];
+  if (targetModel) {
+    initialModelOpts.push({ value: targetModel, label: targetModel });
+  }
+
   var modelSelect = mountSelect({
     container: document.createElement('div'),
-    options: [{ value: '', label: t('failures.all_models') }],
-    value: '',
+    options: initialModelOpts,
+    value: targetModel,
     titleKey: 'failures.filter_model',
     onChange: function () {
       renderItems();
@@ -2184,20 +2358,28 @@ function openFailuresModal(index) {
           modelSet[currentItems[i].model] = true;
         }
       }
+      if (targetModel) {
+        modelSet[targetModel] = true;
+      }
       var newModelOpts = [{ value: '', label: t('failures.all_models') }];
       var models = Object.keys(modelSet).sort();
       for (var m = 0; m < models.length; m++) {
         newModelOpts.push({ value: models[m], label: models[m] });
       }
       modelSelect.setOptions(newModelOpts);
-      // A model filter that the new result set no longer offers would silently
-      // hide every record; fall back to "all models".
+      var currentModelVal = modelSelect.getValue() || targetModel;
+      var matched = false;
       for (var n = 0; n < newModelOpts.length; n++) {
-        if (newModelOpts[n].value === modelSelect.getValue()) {
-          return renderItems();
+        if (newModelOpts[n].value === currentModelVal) {
+          matched = true;
+          break;
         }
       }
-      modelSelect.setValue('');
+      if (matched && currentModelVal) {
+        modelSelect.setValue(currentModelVal);
+      } else {
+        modelSelect.setValue('');
+      }
       renderItems();
     })
     .catch(function (err) {
@@ -2242,6 +2424,18 @@ function bindKeysEvents() {
     });
   }
 
+
+  var sortHeaders = document.querySelectorAll('#keys-table-wrap th.th-sortable');
+  for (var s = 0; s < sortHeaders.length; s++) {
+    (function (th) {
+      th.addEventListener('click', function () {
+        var sortField = th.getAttribute('data-sort');
+        if (sortField) {
+          toggleKeySort(sortField);
+        }
+      });
+    })(sortHeaders[s]);
+  }
   bindClick('key-form-models-all', function () {
     if (modelMultiSelect) {
       modelMultiSelect.setSelected(state.availableModels || []);

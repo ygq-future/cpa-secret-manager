@@ -20,6 +20,7 @@ var REFRESH_INTERVAL_MS = 15000;
 var LANGUAGE_STORAGE_KEY = 'cpa-secret-manager-language';
 var TOKEN_UNIT_STORAGE_KEY = 'cpa-secret-manager-token-unit';
 var RANGE_STORAGE_KEY = 'cpa-secret-manager-range';
+var KEYS_SORT_STORAGE_KEY = 'cpa-secret-manager-keys-sort';
 var MANUAL_KEY_STORAGE = 'cpa-secret-manager-key';
 var HOST_AUTH_STORAGE_KEY = 'cli-proxy-auth';
 var HOST_THEME_STORAGE_KEY = 'cli-proxy-theme';
@@ -61,6 +62,7 @@ var state = {
   lastKeysSignature: null,
   themeObserver: null,
   dateRange: null,
+  sort: null,
   selects: [],
   openSelect: null
 };
@@ -135,6 +137,30 @@ function readStoredTokenUnit() {
   }
   return 0;
 }
+var DEFAULT_KEYS_SORT = { field: 'last_seen', order: 'desc' };
+
+function readStoredSort() {
+  var stored = readStorage(window, 'localStorage', KEYS_SORT_STORAGE_KEY);
+  if (!stored) {
+    return DEFAULT_KEYS_SORT;
+  }
+  try {
+    var parsed = JSON.parse(stored);
+    if (parsed && typeof parsed.field === 'string' && (parsed.order === 'asc' || parsed.order === 'desc')) {
+      return { field: parsed.field, order: parsed.order };
+    }
+  } catch (error) {}
+  return DEFAULT_KEYS_SORT;
+}
+
+function writeStoredSort(sort) {
+  if (sort && sort.field && (sort.order === 'asc' || sort.order === 'desc')) {
+    writeStorage(window, 'localStorage', KEYS_SORT_STORAGE_KEY, JSON.stringify(sort));
+  } else {
+    writeStorage(window, 'localStorage', KEYS_SORT_STORAGE_KEY, '');
+  }
+}
+
 
 
 function normalizeKey(value) {
@@ -841,6 +867,7 @@ function startAutoRefresh() {
 
 function initializeApp() {
   state.tokenUnit = readStoredTokenUnit();
+  state.sort = readStoredSort();
   state.language = detectLanguage();
   applyLanguage();
   syncTheme();

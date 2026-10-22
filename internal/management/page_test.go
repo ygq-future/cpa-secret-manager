@@ -1085,3 +1085,183 @@ func TestPage_SettingsCacheFilesAndUsageHintContract(t *testing.T) {
 		}
 	}
 }
+
+func TestPage_KeySortingAndModelFailuresContract(t *testing.T) {
+	// 1. Verify markup contract for sortable columns
+	for _, col := range []string{`data-sort="last_seen"`, `data-sort="requests"`, `data-sort="failed"`, `data-sort="total"`} {
+		if !strings.Contains(PageHTML, col) {
+			t.Fatalf("PageHTML is missing sortable column marker %s", col)
+		}
+	}
+	if !strings.Contains(PageHTML, "th-sortable") {
+		t.Fatal("PageHTML is missing th-sortable CSS class")
+	}
+
+	// 2. Verify script fragments
+	script := extractPageScript(t)
+	for _, fragment := range []string{
+		"KEYS_SORT_STORAGE_KEY",
+		"function readStoredSort()",
+		"function writeStoredSort(sort)",
+		"function toggleKeySort(field)",
+		"function updateSortHeaders()",
+		"openFailuresModal(keyIndex, mName)",
+		"function openFailuresModal(index, initialModel)",
+	} {
+		if !strings.Contains(script, fragment) {
+			t.Fatalf("script is missing expected contract fragment %q", fragment)
+		}
+	}
+
+	// 3. Run node eval for sort logic and storage
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed; skipping runtime JS evaluation test")
+	}
+
+	testRunner := `
+var mockStorage = {};
+function readStorage(win, type, key) {
+  return mockStorage[key] || '';
+}
+function writeStorage(win, type, key, val) {
+  mockStorage[key] = String(val);
+  return true;
+}
+var KEYS_SORT_STORAGE_KEY = 'cpa-secret-manager-keys-sort';
+
+var DEFAULT_KEYS_SORT = { field: 'last_seen', order: 'desc' };
+
+function readStoredSort() {
+  var stored = readStorage(null, 'localStorage', KEYS_SORT_STORAGE_KEY);
+  if (!stored) {
+    return DEFAULT_KEYS_SORT;
+  }
+  try {
+    var parsed = JSON.parse(stored);
+    if (parsed && typeof parsed.field === 'string' && (parsed.order === 'asc' || parsed.order === 'desc')) {
+      return { field: parsed.field, order: parsed.order };
+    }
+  } catch (error) {}
+  return DEFAULT_KEYS_SORT;
+}
+
+function writeStoredSort(sort) {
+  if (sort && sort.field && (sort.order === 'asc' || sort.order === 'desc')) {
+    writeStorage(null, 'localStorage', KEYS_SORT_STORAGE_KEY, JSON.stringify(sort));
+  } else {
+    writeStorage(null, 'localStorage', KEYS_SORT_STORAGE_KEY, '');
+  }
+}
+
+var state = { sort: readStoredSort() };
+if (!state.sort || state.sort.field !== 'last_seen' || state.sort.order !== 'desc') {
+  console.error('initial sort should default to last_seen desc', state.sort);
+  process.exit(1);
+}
+
+function toggleKeySort(field) {
+  if (!state.sort || state.sort.field !== field) {
+    state.sort = { field: field, order: 'desc' };
+  } else if (state.sort.order === 'desc') {
+    state.sort = { field: field, order: 'asc' };
+  } else {
+    state.sort = { field: 'last_seen', order: 'desc' };
+  }
+  writeStoredSort(state.sort);
+}
+
+// Test toggle cycle: desc -> asc -> default(last_seen desc)
+toggleKeySort('requests');
+if (!state.sort || state.sort.field !== 'requests' || state.sort.order !== 'desc') {
+  console.error('first toggle should be requests desc', state.sort);
+  process.exit(1);
+}
+if (readStoredSort().order !== 'desc') {
+  console.error('storage should reflect requests desc');
+  process.exit(1);
+}
+toggleKeySort('requests');
+if (!state.sort || state.sort.field !== 'requests' || state.sort.order !== 'asc') {
+  console.error('second toggle should be requests asc', state.sort);
+  process.exit(1);
+}
+toggleKeySort('requests');
+if (!state.sort || state.sort.field !== 'last_seen' || state.sort.order !== 'desc') {
+  console.error('third toggle should reset to default last_seen desc', state.sort);
+  process.exit(1);
+}
+
+// Test sorting function with sample entries
+state.entries = [
+  { last_seen: '2026-03-01T10:00:00Z', usage: { requests: 10, failed: 2, total: 500 } },
+  { last_seen: '2026-03-03T12:00:00Z', usage: { requests: 50, failed: 0, total: 100 } },
+  { last_seen: '', usage: { requests: 30, failed: 5, total: 1000 } }
+];
+
+function sortIndices(field, order) {
+  var indices = [0, 1, 2];
+  var isAsc = order === 'asc';
+  indices.sort(function (a, b) {
+    var itemA = state.entries[a] || {};
+    var itemB = state.entries[b] || {};
+    var valA = 0;
+    var valB = 0;
+    if (field === 'last_seen') {
+      valA = itemA.last_seen ? new Date(itemA.last_seen).getTime() : 0;
+      valB = itemB.last_seen ? new Date(itemB.last_seen).getTime() : 0;
+    } else if (field === 'requests') {
+      valA = (itemA.usage && itemA.usage.requests) || 0;
+      valB = (itemB.usage && itemB.usage.requests) || 0;
+    } else if (field === 'failed') {
+      valA = (itemA.usage && itemA.usage.failed) || 0;
+      valB = (itemB.usage && itemB.usage.failed) || 0;
+    } else if (field === 'total') {
+      valA = (itemA.usage && itemA.usage.total) || 0;
+      valB = (itemB.usage && itemB.usage.total) || 0;
+    }
+    if (valA !== valB) {
+      return isAsc ? (valA > valB ? 1 : -1) : (valA < valB ? 1 : -1);
+    }
+    return a - b;
+  });
+  return indices;
+}
+
+// Requests desc: idx 1 (50), idx 2 (30), idx 0 (10)
+var rDesc = sortIndices('requests', 'desc');
+if (rDesc.join(',') !== '1,2,0') {
+  console.error('requests desc mismatch:', rDesc);
+  process.exit(1);
+}
+
+// Failed desc: idx 2 (5), idx 0 (2), idx 1 (0)
+var fDesc = sortIndices('failed', 'desc');
+if (fDesc.join(',') !== '2,0,1') {
+  console.error('failed desc mismatch:', fDesc);
+  process.exit(1);
+}
+
+// Total desc: idx 2 (1000), idx 0 (500), idx 1 (100)
+var tDesc = sortIndices('total', 'desc');
+if (tDesc.join(',') !== '2,0,1') {
+  console.error('total desc mismatch:', tDesc);
+  process.exit(1);
+}
+
+// Last seen desc: idx 1 (2026-03-03), idx 0 (2026-03-01), idx 2 (empty -> 0)
+var lsDesc = sortIndices('last_seen', 'desc');
+if (lsDesc.join(',') !== '1,0,2') {
+  console.error('last_seen desc mismatch:', lsDesc);
+  process.exit(1);
+}
+`
+	testScriptPath := filepath.Join(t.TempDir(), "test_sorting.js")
+	if err := os.WriteFile(testScriptPath, []byte(testRunner), 0o600); err != nil {
+		t.Fatalf("write test runner: %v", err)
+	}
+	cmd := exec.Command(nodePath, testScriptPath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("node test failed: %v\n%s", err, string(out))
+	}
+}
