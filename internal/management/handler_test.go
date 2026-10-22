@@ -87,7 +87,13 @@ func TestNormalizePath_ReducesHostPrefixes(t *testing.T) {
 }
 
 func TestHandler_SettingsRoundTrip(t *testing.T) {
-	backend := &stubBackend{settings: Settings{UsageEnabled: true, StatePath: "data/x.json"}}
+	backend := &stubBackend{settings: Settings{
+		UsageEnabled: true,
+		StatePath:    "data/x.json",
+		CacheFiles: []CacheFile{
+			{Key: "state", Name: "State Cache", Path: "data/x.json", SizeBytes: 123, Exists: true},
+		},
+	}}
 	handler := NewHandler(backend)
 
 	recorder := httptest.NewRecorder()
@@ -99,8 +105,8 @@ func TestHandler_SettingsRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode settings: %v", err)
 	}
-	if got.StatePath != "data/x.json" || !got.UsageEnabled {
-		t.Fatalf("settings = %+v, want the backend payload", got)
+	if got.StatePath != "data/x.json" || !got.UsageEnabled || len(got.CacheFiles) != 1 || got.CacheFiles[0].SizeBytes != 123 {
+		t.Fatalf("settings = %+v, want the backend payload with cache files", got)
 	}
 
 	recorder = httptest.NewRecorder()

@@ -6,6 +6,7 @@ package runtime
 import (
 	"context"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -139,6 +140,7 @@ func (r *Runtime) Settings(_ context.Context) (management.Settings, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
+	statePath := r.cfg.StatePath
 	settings := management.Settings{
 		UsageEnabled:  true,
 		RetentionDays: state.DefaultRetentionDays,
@@ -148,15 +150,49 @@ func (r *Runtime) Settings(_ context.Context) (management.Settings, error) {
 		cfg := r.store.AppConfig()
 		settings.UsageEnabled = cfg.UsageEnabled
 		settings.RetentionDays = cfg.RetentionDays
-		settings.StatePath = r.store.Path()
+		if storePath := strings.TrimSpace(r.store.Path()); storePath != "" {
+			statePath = storePath
+		}
 	}
+	settings.StatePath = statePath
 	if len(r.configWarnings) > 0 {
 		settings.ConfigWarnings = append([]string(nil), r.configWarnings...)
 	}
 	if r.stateErr != nil {
 		settings.StateWarning = r.stateErr.Error()
 	}
+	settings.CacheFiles = probeCacheFiles(statePath)
 	return settings, nil
+}
+
+func probeCacheFiles(statePath string) []management.CacheFile {
+	trimmed := strings.TrimSpace(statePath)
+	if trimmed == "" {
+		return nil
+	}
+	specs := []struct {
+		key  string
+		name string
+		path string
+	}{
+		{key: "state", name: "State Cache", path: trimmed},
+		{key: "buckets", name: "Usage Buckets", path: BucketsPath(trimmed)},
+		{key: "errors", name: "Error Logs", path: ErrorsPath(trimmed)},
+	}
+	out := make([]management.CacheFile, 0, len(specs))
+	for _, spec := range specs {
+		cf := management.CacheFile{
+			Key:  spec.key,
+			Name: spec.name,
+			Path: spec.path,
+		}
+		if info, err := os.Stat(spec.path); err == nil && !info.IsDir() {
+			cf.Exists = true
+			cf.SizeBytes = info.Size()
+		}
+		out = append(out, cf)
+	}
+	return out
 }
 
 // UpdateSettings implements management.Backend.

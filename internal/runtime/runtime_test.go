@@ -233,6 +233,39 @@ func TestSettings_SurfaceCorruptStateWarning(t *testing.T) {
 	}
 }
 
+func TestSettings_ReportsCacheFiles(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+	if err := os.WriteFile(statePath, []byte(`{"version":1}`), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	rt := registerRuntime(t, statePath)
+
+	status, body := managementCall(t, rt, "GET", management.PathSettings, nil)
+	if status != 200 {
+		t.Fatalf("GET settings status = %d, want 200", status)
+	}
+	var settings management.Settings
+	if err := json.Unmarshal(body, &settings); err != nil {
+		t.Fatalf("decode settings: %v", err)
+	}
+	if len(settings.CacheFiles) != 3 {
+		t.Fatalf("got %d cache files, want 3", len(settings.CacheFiles))
+	}
+	stateFile := settings.CacheFiles[0]
+	if stateFile.Key != "state" || !stateFile.Exists || stateFile.SizeBytes <= 0 {
+		t.Fatalf("state file info unexpected: %+v", stateFile)
+	}
+	bucketsFile := settings.CacheFiles[1]
+	if bucketsFile.Key != "buckets" || bucketsFile.Exists {
+		t.Fatalf("buckets file info unexpected: %+v", bucketsFile)
+	}
+	errorsFile := settings.CacheFiles[2]
+	if errorsFile.Key != "errors" || errorsFile.Exists {
+		t.Fatalf("errors file info unexpected: %+v", errorsFile)
+	}
+}
+
 func TestReconfigure_SwitchesStateFile(t *testing.T) {
 	first := filepath.Join(t.TempDir(), "first.json")
 	second := filepath.Join(t.TempDir(), "second.json")

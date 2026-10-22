@@ -549,6 +549,7 @@ function activateTab(name) {
   }
   if (name === 'settings') {
     renderSettings();
+    loadSettings().catch(function () {});
   }
 }
 

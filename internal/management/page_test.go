@@ -1062,3 +1062,26 @@ func TestPage_DefaultsAndMaskedKeyContract(t *testing.T) {
 		}
 	}
 }
+
+func TestPage_SettingsCacheFilesAndUsageHintContract(t *testing.T) {
+	if strings.Contains(PageHTML, `data-i18n="settings.usage_hint"`) {
+		t.Fatal("settings.usage_hint should be removed from page markup")
+	}
+	if !strings.Contains(PageHTML, `id="settings-cache-files"`) {
+		t.Fatal("settings page markup should include settings-cache-files container")
+	}
+	if !strings.Contains(PageHTML, `data-i18n="settings.cache_files_title"`) {
+		t.Fatal("settings page markup should include cache files title")
+	}
+
+	script := extractPageScript(t)
+	for _, fragment := range []string{
+		"renderCacheFiles()",
+		"function formatBytes(bytes)",
+		"loadSettings().catch",
+	} {
+		if !strings.Contains(script, fragment) {
+			t.Fatalf("script is missing expected cache files contract fragment %q", fragment)
+		}
+	}
+}

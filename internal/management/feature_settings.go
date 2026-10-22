@@ -10,7 +10,6 @@ var settingsFeature = pageFeature{
         <div class="card">
           <div class="card-body">
             <h2 class="card-title" data-i18n="settings.usage_title">Usage tracking</h2>
-            <p class="card-sub" data-i18n="settings.usage_hint">Usage counters are cumulative and start with the first request the plugin observes.</p>
             <div class="switch-row">
               <div class="switch-text">
                 <span class="switch-label" data-i18n="settings.usage_toggle">Collect token usage</span>
@@ -42,12 +41,17 @@ var settingsFeature = pageFeature{
         <div class="card">
           <div class="card-body">
             <h2 class="card-title" data-i18n="settings.state_title">State</h2>
-            <dl class="kv">
-              <dt data-i18n="settings.state_path">State file</dt>
-              <dd id="settings-state-path" class="path">—</dd>
-              <dt data-i18n="settings.key_status">Management key</dt>
-              <dd id="settings-key-status">—</dd>
-            </dl>
+            <div class="state-meta-row">
+              <span class="state-meta-label" data-i18n="settings.key_status">Management key</span>
+              <span id="settings-key-status" class="state-meta-badge">—</span>
+            </div>
+            <div class="settings-files-section">
+              <div class="settings-files-header">
+                <span class="settings-files-title" data-i18n="settings.cache_files_title">Cache files</span>
+              </div>
+              <div id="settings-cache-files" class="cache-files-list"></div>
+            </div>
+
             <div id="settings-warning" class="alert" hidden>
               {{ICON:warning}}
               <span id="settings-warning-text"></span>
@@ -57,7 +61,129 @@ var settingsFeature = pageFeature{
       </div>
     </section>
 `,
-	styles: ``,
+	styles: `
+.state-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.state-meta-label {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 650;
+}
+.state-meta-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+.state-meta-badge.is-ready {
+  color: var(--accent-green-text);
+  background: var(--accent-green-soft);
+  border-color: var(--accent-green-border);
+}
+.state-meta-badge.is-missing {
+  color: var(--accent-amber-text);
+  background: var(--accent-amber-soft);
+  border-color: var(--accent-amber-border);
+}
+.settings-files-section {
+  margin-top: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.settings-files-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.settings-files-title {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 650;
+}
+.cache-files-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cache-file-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 14px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.cache-file-item:hover {
+  border-color: var(--border-focus);
+  background: var(--bg-hover);
+}
+.cache-file-meta {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.cache-file-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.cache-file-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.cache-file-path {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cache-file-size {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+}
+.cache-file-size.is-missing {
+  color: var(--text-tertiary);
+  background: transparent;
+  border-style: dashed;
+  font-weight: 500;
+  font-family: inherit;
+  font-size: 12px;
+}
+@media (max-width: 640px) {
+  .cache-file-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .cache-file-size {
+    align-self: flex-start;
+  }
+}
+`,
 	scripts: `
 function loadSettings() {
   return apiFetch(SETTINGS_PATH).then(function (payload) {
@@ -118,6 +244,82 @@ function setRetentionSaving(saving) {
     syncRetentionSaveState();
   }
 }
+function formatBytes(bytes) {
+  if (typeof bytes !== 'number' || isNaN(bytes) || bytes <= 0) {
+    return '0 B';
+  }
+  var units = ['B', 'KB', 'MB', 'GB'];
+  var i = Math.floor(Math.log(bytes) / Math.log(1024));
+  if (i >= units.length) {
+    i = units.length - 1;
+  }
+  if (i === 0) {
+    return bytes + ' B';
+  }
+  var val = (bytes / Math.pow(1024, i)).toFixed(i === 1 ? 1 : 2);
+  return parseFloat(val) + ' ' + units[i];
+}
+
+function renderCacheFiles() {
+  var container = byId('settings-cache-files');
+  if (!container) return;
+  var files = (state.settings && Array.isArray(state.settings.cache_files)) ? state.settings.cache_files : [];
+  if (files.length === 0 && state.settings && state.settings.state_path) {
+    files = [{
+      key: 'state',
+      name: 'State Cache',
+      path: state.settings.state_path,
+      exists: false,
+      size_bytes: 0
+    }];
+  }
+
+  container.innerHTML = '';
+  var keyMap = {
+    'state': 'settings.file_state',
+    'buckets': 'settings.file_buckets',
+    'errors': 'settings.file_errors'
+  };
+
+  for (var i = 0; i < files.length; i++) {
+    var f = files[i];
+    var item = document.createElement('div');
+    item.className = 'cache-file-item';
+
+    var meta = document.createElement('div');
+    meta.className = 'cache-file-meta';
+
+    var titleRow = document.createElement('div');
+    titleRow.className = 'cache-file-title-row';
+
+    var label = document.createElement('span');
+    label.className = 'cache-file-label';
+    var i18nKey = keyMap[f.key];
+    label.textContent = (i18nKey ? t(i18nKey) : f.name) || f.key;
+    titleRow.appendChild(label);
+
+    var path = document.createElement('div');
+    path.className = 'cache-file-path';
+    path.textContent = f.path;
+    path.title = f.path;
+
+    meta.appendChild(titleRow);
+    meta.appendChild(path);
+
+    var sizeBadge = document.createElement('div');
+    sizeBadge.className = 'cache-file-size';
+    if (f.exists) {
+      sizeBadge.textContent = formatBytes(f.size_bytes);
+    } else {
+      sizeBadge.classList.add('is-missing');
+      sizeBadge.textContent = t('settings.file_not_created');
+    }
+
+    item.appendChild(meta);
+    item.appendChild(sizeBadge);
+    container.appendChild(item);
+  }
+}
 
 function renderSettings() {
   var enabled = usageEnabled();
@@ -131,14 +333,13 @@ function renderSettings() {
     stateLabel.textContent = enabled ? t('settings.usage_on') : t('settings.usage_off');
   }
 
-  var path = byId('settings-state-path');
-  if (path) {
-    path.textContent = state.settings && state.settings.state_path ? state.settings.state_path : '—';
-  }
 
   var keyStatus = byId('settings-key-status');
   if (keyStatus) {
-    keyStatus.textContent = state.managementKey ? t('settings.key_loaded') : t('settings.key_missing');
+    var hasKey = Boolean(state.managementKey);
+    keyStatus.textContent = hasKey ? t('settings.key_loaded') : t('settings.key_missing');
+    keyStatus.classList.toggle('is-ready', hasKey);
+    keyStatus.classList.toggle('is-missing', !hasKey);
   }
 
   var retInput = byId('settings-retention-input');
@@ -165,6 +366,7 @@ function renderSettings() {
   if (warning) {
     warning.hidden = messages.length === 0;
   }
+  renderCacheFiles();
 }
 
 function toggleUsageEnabled() {

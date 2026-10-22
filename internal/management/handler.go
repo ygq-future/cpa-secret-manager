@@ -64,14 +64,24 @@ const (
 	maxRequestBody = 1 << 20
 )
 
+// CacheFile describes a cache or state file on disk and its probed size.
+type CacheFile struct {
+	Key       string `json:"key"`
+	Name      string `json:"name"`
+	Path      string `json:"path"`
+	SizeBytes int64  `json:"size_bytes"`
+	Exists    bool   `json:"exists"`
+}
+
 // Settings is the plugin business configuration exposed to the page.
 type Settings struct {
-	UsageEnabled   bool     `json:"usage_enabled"`
-	RetentionDays  int      `json:"retention_days"`
-	StatePath      string   `json:"state_path"`
-	StateWarning   string   `json:"state_warning,omitempty"`
-	UsageWarning   string   `json:"usage_warning,omitempty"`
-	ConfigWarnings []string `json:"config_warnings,omitempty"`
+	UsageEnabled   bool        `json:"usage_enabled"`
+	RetentionDays  int         `json:"retention_days"`
+	StatePath      string      `json:"state_path"`
+	StateWarning   string      `json:"state_warning,omitempty"`
+	UsageWarning   string      `json:"usage_warning,omitempty"`
+	ConfigWarnings []string    `json:"config_warnings,omitempty"`
+	CacheFiles     []CacheFile `json:"cache_files,omitempty"`
 }
 
 // SettingsUpdate is the request payload for updating business settings.
