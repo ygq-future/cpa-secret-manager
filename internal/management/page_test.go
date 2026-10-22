@@ -450,9 +450,18 @@ func TestPage_ModernQuotaComponentsContract(t *testing.T) {
 			t.Fatalf("window duration should no longer carry %s", dropped)
 		}
 	}
+	if !strings.Contains(PageHTML, `id="key-form-models-container"`) || !strings.Contains(templateScriptComponents, "function mountMultiSelect") {
+		t.Fatal("allowed models should be rendered by the shared searchable multi-select component")
+	}
 
-	if !strings.Contains(PageHTML, `id="key-form-models-container"`) || !strings.Contains(templateScriptComponents, "function mountChipGrid") {
-		t.Fatal("allowed models should be rendered by the shared chip grid")
+	if !strings.Contains(PageHTML, `class="quota-calc-inline"`) {
+		t.Fatal("quota limit calculation hint should sit inline next to the input-unit-group")
+	}
+
+	for _, dropped := range []string{"key-form-quota-status", "key-form-chip-field"} {
+		if strings.Contains(PageHTML, dropped) {
+			t.Fatalf("key form should no longer carry %s", dropped)
+		}
 	}
 
 	style := extractPageStyle(t)

@@ -87,10 +87,6 @@ const shellModals = `  </main>
           <button id="key-form-generate" class="btn btn-secondary" type="button" data-i18n="key_form.generate">Regenerate</button>
         </div>
       </div>
-      <div class="field" id="key-form-chip-field" hidden>
-        <span class="field-label" data-i18n="key_form.key_label">Key</span>
-        <code id="key-form-key" class="key-value">—</code>
-      </div>
       <div class="field">
         <label for="key-form-remark" data-i18n="key_form.remark">Remark</label>
         <textarea id="key-form-remark" maxlength="200" data-i18n-placeholder="key_form.remark_placeholder" autocomplete="off" spellcheck="false" data-bwignore="true" data-lpignore="true" data-1p-ignore></textarea>
@@ -105,7 +101,6 @@ const shellModals = `  </main>
           {{TOGGLE_QUOTA}}
         </div>
         <div id="key-form-quota-fields" class="quota-fields" hidden>
-          <div id="key-form-quota-status" class="quota-status-banner" hidden></div>
           <div class="field-row">
             <div class="field flex-1">
               <span class="field-label" id="key-form-quota-window-label" data-i18n="key_form.quota_window">Time window period</span>
@@ -122,9 +117,12 @@ const shellModals = `  </main>
           </div>
           <div class="field">
             <label for="key-form-quota-limit-val" data-i18n="key_form.quota_limit">Token Limit</label>
-            <div class="input-unit-group">
-              <input id="key-form-quota-limit-val" class="unit-input" type="number" min="0" step="any" inputmode="decimal" placeholder="0">
-              <div id="key-form-quota-limit-unit"></div>
+            <div class="quota-limit-row">
+              <div class="input-unit-group">
+                <input id="key-form-quota-limit-val" class="unit-input" type="number" min="0" step="any" inputmode="decimal" placeholder="0">
+                <div id="key-form-quota-limit-unit"></div>
+              </div>
+              <span id="key-form-quota-calc-hint" class="quota-calc-inline" hidden></span>
             </div>
             <input id="key-form-quota-limit" type="hidden" value="0">
             <div class="action-row">
@@ -135,7 +133,6 @@ const shellModals = `  </main>
               <button type="button" class="pill" data-val="10" data-unit="1000000">10M</button>
               <button type="button" class="pill" data-val="50" data-unit="1000000">50M</button>
             </div>
-            <p id="key-form-quota-calc-hint" class="hint" data-i18n="key_form.quota_limit_hint">Max total tokens in current window (0 = unlimited)</p>
           </div>
           <div class="field">
             <div class="row-between">

@@ -751,6 +751,30 @@ input[readonly] {
   min-width: 120px;
 }
 
+/* --- quota limit row & inline calc --- */
+.quota-limit-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.quota-limit-row .input-unit-group {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.quota-calc-inline {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 550;
+  white-space: nowrap;
+}
+
+.quota-calc-inline[hidden] {
+  display: none !important;
+}
 /* --- listbox (the page's own <select>) --- */
 .select {
   position: relative;
@@ -932,6 +956,275 @@ input[readonly] {
 
 .toggle-switch input:focus-visible + .toggle-slider {
   box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+/* --- multi-select searchable combobox --- */
+.multi-select {
+  position: relative;
+  min-width: 0;
+  width: 100%;
+}
+
+.multi-select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  height: 38px;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 150ms, box-shadow 150ms, background 150ms;
+  user-select: none;
+}
+
+.multi-select-trigger:hover {
+  border-color: var(--text-secondary);
+}
+
+.multi-select.is-open .multi-select-trigger {
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.multi-select-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.multi-select-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.multi-select-label.is-placeholder {
+  color: var(--text-tertiary);
+}
+
+.multi-select-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 650;
+  background: var(--accent-blue-soft);
+  color: var(--accent-blue-text);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.multi-select-arrow {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  transition: transform 150ms var(--ease-emphasized);
+}
+
+.multi-select.is-open .multi-select-arrow {
+  transform: rotate(180deg);
+}
+
+.multi-select-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 120;
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-lg);
+  gap: 6px;
+}
+
+.multi-select-menu.is-dropup {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+.multi-select-search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.multi-select-search-wrap > .icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+
+.multi-select-search-wrap input[type="text"].multi-select-search-input,
+input[type="text"].multi-select-search-input {
+  width: 100%;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 30px 0 32px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+  font-size: 12.5px;
+  outline: none;
+  transition: border-color 150ms, box-shadow 150ms, background 150ms;
+}
+
+.multi-select-search-wrap input[type="text"].multi-select-search-input:focus,
+input[type="text"].multi-select-search-input:focus {
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+  background: var(--bg-card);
+}
+
+.multi-select-clear-btn {
+  position: absolute;
+  right: 7px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 120ms, color 120ms;
+}
+
+.multi-select-clear-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.multi-select-clear-btn .icon {
+  width: 10px;
+  height: 10px;
+  position: static;
+  transform: none;
+  color: inherit;
+}
+
+.multi-select-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 4px 4px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.multi-select-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.multi-select-options {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 160px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.multi-select-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 12.5px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 120ms, color 120ms;
+}
+
+.multi-select-option:hover {
+  background: var(--bg-hover);
+}
+
+.multi-select-option.is-selected {
+  background: var(--accent-blue-soft);
+  color: var(--accent-blue-text);
+  font-weight: 550;
+}
+
+.multi-select-checkbox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  background: var(--bg-card);
+  flex: 0 0 auto;
+  transition: border-color 120ms, background 120ms;
+}
+
+.multi-select-option.is-selected .multi-select-checkbox {
+  border-color: var(--accent-blue);
+  background: var(--accent-blue);
+  color: var(--text-inverse);
+}
+
+.multi-select-check-icon {
+  width: 11px;
+  height: 11px;
+  display: none;
+}
+
+.multi-select-option.is-selected .multi-select-check-icon {
+  display: block;
+}
+
+.multi-select-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 auto;
+}
+
+.multi-select-empty {
+  padding: 16px 8px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-tertiary);
 }
 
 /* --- chips --- */

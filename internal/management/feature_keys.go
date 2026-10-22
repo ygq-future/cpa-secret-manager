@@ -1024,17 +1024,13 @@ function flashCopied(button) {
 }
 
 // setKeyFormMode switches the dialog between "add" (a key is typed or
-// generated) and "edit" (the key is immutable and shown masked; only the remark
-// can change).
+// generated) and "edit" (editing key has its key field hidden; only remark
+// and quota rules can change).
 function setKeyFormMode(mode) {
   var valueField = byId('key-form-value-field');
-  var chipField = byId('key-form-chip-field');
   var valueInput = byId('key-form-value');
   if (valueField) {
     valueField.hidden = mode === 'edit';
-  }
-  if (chipField) {
-    chipField.hidden = mode !== 'edit';
   }
   if (valueInput) {
     valueInput.required = mode !== 'edit';
@@ -1126,22 +1122,20 @@ function loadAvailableModels(force) {
 }
 
 
-// modelChipGrid is the shared chip grid of the key form. The selection is read
-// from the component instead of from the DOM, so no feature re-implements the
-// chip markup.
-var modelChipGrid = null;
-var modelChipToken = 0;
+// modelMultiSelect is the shared multi-select combobox of the key form.
+var modelMultiSelect = null;
+var modelMultiToken = 0;
 
 function renderModelsSelection(allowedModels) {
   var container = byId('key-form-models-container');
   if (!container) {
     return;
   }
-  var token = ++modelChipToken;
+  var token = ++modelMultiToken;
   var allowed = Array.isArray(allowedModels) ? allowedModels : [];
   loadAvailableModels().then(function (models) {
     // A slower earlier load must never overwrite the selection of a newer dialog.
-    if (token !== modelChipToken) {
+    if (token !== modelMultiToken) {
       return;
     }
     var set = {};
@@ -1152,7 +1146,7 @@ function renderModelsSelection(allowedModels) {
       if (allowed[a]) set[allowed[a]] = true;
     }
     var allNames = Object.keys(set).sort();
-    modelChipGrid = mountChipGrid({
+    modelMultiSelect = mountMultiSelect({
       container: container,
       items: allNames.map(function (name) {
         return { value: name, label: name };
@@ -1162,7 +1156,7 @@ function renderModelsSelection(allowedModels) {
   });
 }
 function readSelectedModels() {
-  return modelChipGrid ? modelChipGrid.getSelected() : [];
+  return modelMultiSelect ? modelMultiSelect.getSelected() : [];
 }
 
 // The quota form uses three shared components: two listboxes and the chip grid.
@@ -1223,25 +1217,6 @@ function updateQuotaDurationField() {
   }
 }
 
-function setQuotaStatusBanner(quota) {
-  var status = byId('key-form-quota-status');
-  if (!status) {
-    return;
-  }
-  if (!quota || !quota.enabled) {
-    status.hidden = true;
-    status.textContent = '';
-    return;
-  }
-  status.hidden = false;
-  status.className = 'quota-status-banner' + (quota.exceeded ? ' is-exceeded' : '');
-  status.textContent = tf('key_form.quota_current_status', {
-    used: formatTokenValue(quota.used_value),
-    limit: formatTokenValue(quota.limit_value),
-    reset: formatTimestamp(quota.reset_at)
-  });
-}
-
 function resetQuotaForm() {
   var enabled = byId('key-form-quota-enabled');
   if (enabled) {
@@ -1257,7 +1232,6 @@ function resetQuotaForm() {
   updateQuotaDurationField();
   setQuotaDurationValues(3600);
   setQuotaInputValues(0);
-  setQuotaStatusBanner(null);
   renderModelsSelection([]);
 }
 
@@ -1280,7 +1254,6 @@ function applyQuotaForm(quota) {
   updateQuotaDurationField();
   setQuotaDurationValues(quota.duration_sec || 3600);
   setQuotaInputValues(quota.limit_value || 0);
-  setQuotaStatusBanner(quota);
   renderModelsSelection(quota.allowed_models || []);
 }
 
@@ -1339,7 +1312,8 @@ function syncQuotaInput() {
   if (!isFinite(num) || num <= 0) {
     hiddenInput.value = '0';
     if (hint) {
-      hint.textContent = t('key_form.quota_limit_hint');
+      hint.hidden = true;
+      hint.textContent = '';
     }
     return;
   }
@@ -1347,6 +1321,7 @@ function syncQuotaInput() {
   var total = Math.round(num * multiplier);
   hiddenInput.value = String(total);
   if (hint) {
+    hint.hidden = false;
     hint.textContent = tf('key_form.quota_limit_calc', {
       total: formatNumber(total),
       scaled: formatTokenValue(total)
@@ -1450,10 +1425,6 @@ function openEditKeyForm(index) {
   var title = byId('key-form-title');
   if (title) {
     title.textContent = t('key_form.edit_title');
-  }
-  var chip = byId('key-form-key');
-  if (chip) {
-    chip.textContent = maskKey(state.keys[index] || '');
   }
   var entry = state.entries[index] || {};
   var remark = byId('key-form-remark');
@@ -2272,13 +2243,13 @@ function bindKeysEvents() {
   }
 
   bindClick('key-form-models-all', function () {
-    if (modelChipGrid) {
-      modelChipGrid.setSelected(state.availableModels || []);
+    if (modelMultiSelect) {
+      modelMultiSelect.setSelected(state.availableModels || []);
     }
   });
   bindClick('key-form-models-none', function () {
-    if (modelChipGrid) {
-      modelChipGrid.setSelected([]);
+    if (modelMultiSelect) {
+      modelMultiSelect.setSelected([]);
     }
   });
 
