@@ -229,7 +229,7 @@ func (s *Store) Save() error {
 		Failures:      s.entries,
 	}
 
-	data, err := json.MarshalIndent(doc, "", "  ")
+	data, err := json.Marshal(doc)
 	if err != nil {
 		return fmt.Errorf("errorslog: encode: %w", err)
 	}

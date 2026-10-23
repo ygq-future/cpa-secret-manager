@@ -103,7 +103,7 @@ func (s *BucketStore) Backup() error {
 		return errors.New("state: nil bucket store")
 	}
 	s.mu.RLock()
-	data, err := json.MarshalIndent(s.doc, "", "  ")
+	data, err := json.Marshal(s.doc)
 	s.mu.RUnlock()
 	if err != nil {
 		return fmt.Errorf("state: encode bucket document: %w", err)
@@ -118,7 +118,7 @@ func (s *BucketStore) SaveAtomic() error {
 		return errors.New("state: nil bucket store")
 	}
 	s.mu.RLock()
-	data, err := json.MarshalIndent(s.doc, "", "  ")
+	data, err := json.Marshal(s.doc)
 	s.mu.RUnlock()
 	if err != nil {
 		return fmt.Errorf("state: encode bucket document: %w", err)

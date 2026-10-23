@@ -176,7 +176,7 @@ func (s *Store) Backup() error {
 		return nil
 	}
 	s.mu.RLock()
-	raw, err := json.MarshalIndent(s.doc, "", "  ")
+	raw, err := json.Marshal(s.doc)
 	path := s.path
 	s.mu.RUnlock()
 	if err != nil {
@@ -329,7 +329,7 @@ func (s *Store) SaveAtomic() error {
 		return errors.New("state: nil store")
 	}
 	doc := s.Snapshot()
-	data, err := json.MarshalIndent(doc, "", "  ")
+	data, err := json.Marshal(doc)
 	if err != nil {
 		return fmt.Errorf("state: encode document: %w", err)
 	}
