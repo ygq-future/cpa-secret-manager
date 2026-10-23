@@ -610,6 +610,20 @@ function handleEscape(event) {
   closeConfirm();
 }
 
+function setGlobalLoading(loading, message) {
+  var overlay = byId('global-loading');
+  if (!overlay) return;
+  if (loading) {
+    var textNode = byId('global-loading-text');
+    if (textNode && message) {
+      textNode.textContent = message;
+    }
+    overlay.hidden = false;
+  } else {
+    overlay.hidden = true;
+  }
+}
+
 function showToast(message, type) {
   var toast = byId('toast');
   if (!toast) {

@@ -440,22 +440,18 @@ func TestPage_ModernQuotaComponentsContract(t *testing.T) {
 		}
 	}
 
-	if !strings.Contains(PageHTML, `class="pill" data-val="500" data-unit="1000"`) {
-		t.Fatal("quota limit should provide preset pills from the shared .pill component")
+	if !strings.Contains(PageHTML, `id="key-form-quota-limits-row"`) {
+		t.Fatal("quota token limit and cost limit should sit on the same line")
 	}
-	// The duration field is value + unit only: shortcuts and the resolved-seconds
-	// hint were dropped by design.
-	for _, dropped := range []string{"data-duration=", "quota-duration-calc-hint"} {
+	// The limit field is manual input: shortcuts and the resolved calculation
+	// hint were dropped by design per user preference.
+	for _, dropped := range []string{"data-duration=", "quota-duration-calc-hint", "quota-calc-inline", "data-val="} {
 		if strings.Contains(PageHTML, dropped) {
-			t.Fatalf("window duration should no longer carry %s", dropped)
+			t.Fatalf("quota form should no longer carry %s", dropped)
 		}
 	}
 	if !strings.Contains(PageHTML, `id="key-form-models-container"`) || !strings.Contains(templateScriptComponents, "function mountMultiSelect") {
 		t.Fatal("allowed models should be rendered by the shared searchable multi-select component")
-	}
-
-	if !strings.Contains(PageHTML, `class="quota-calc-inline"`) {
-		t.Fatal("quota limit calculation hint should sit inline next to the input-unit-group")
 	}
 
 	for _, dropped := range []string{"key-form-quota-status", "key-form-chip-field"} {
@@ -1263,5 +1259,32 @@ if (lsDesc.join(',') !== '1,0,2') {
 	cmd := exec.Command(nodePath, testScriptPath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("node test failed: %v\n%s", err, string(out))
+	}
+}
+
+func TestPage_SettingsLayoutStructure(t *testing.T) {
+	markup := settingsFeature.markup
+	openDivs := strings.Count(markup, "<div")
+	closeDivs := strings.Count(markup, "</div>")
+	if openDivs != closeDivs {
+		t.Fatalf("settings markup div tag mismatch: %d open vs %d close", openDivs, closeDivs)
+	}
+	openSections := strings.Count(markup, "<section")
+	closeSections := strings.Count(markup, "</section>")
+	if openSections != closeSections {
+		t.Fatalf("settings markup section tag mismatch: %d open vs %d close", openSections, closeSections)
+	}
+	for _, token := range []string{
+		"settings-layout",
+		"settings-col-main",
+		"settings-col-side",
+		"settings-pricing-model-select",
+		"settings-pricing-add",
+		"settings-retention-input",
+		"settings-cache-files",
+	} {
+		if !strings.Contains(markup, token) {
+			t.Fatalf("settings markup missing %s", token)
+		}
 	}
 }

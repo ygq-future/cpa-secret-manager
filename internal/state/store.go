@@ -19,6 +19,30 @@ import (
 // its "usage" section ignored.
 const SchemaVersion = 2
 
+// ModelPrice specifies per-million-token pricing for input, output (including reasoning), and cached tokens.
+type ModelPrice struct {
+	Input  float64 `json:"input"`
+	Output float64 `json:"output"`
+	Cache  float64 `json:"cache"`
+}
+
+// UnmarshalJSON supports both legacy float64 numbers and new 3-tier pricing structs.
+func (mp *ModelPrice) UnmarshalJSON(data []byte) error {
+	var single float64
+	if err := json.Unmarshal(data, &single); err == nil {
+		mp.Input = single
+		mp.Output = single
+		mp.Cache = single
+		return nil
+	}
+	type alias ModelPrice
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*mp = ModelPrice(a)
+	return nil
+}
 // AppConfig carries plugin-owned business settings that must not live in the
 // host config.yaml, see ADR-0001.
 type AppConfig struct {
@@ -26,6 +50,22 @@ type AppConfig struct {
 	UsageEnabled bool `json:"usage_enabled"`
 	// RetentionDays controls how many days of data to retain (1-365, default 30).
 	RetentionDays int `json:"retention_days"`
+	// ModelPrices maps model names to their 3-tier pricing (input, output, cache).
+	ModelPrices map[string]ModelPrice `json:"model_prices,omitempty"`
+}
+
+// Clone returns a deep copy of the business settings.
+func (cfg AppConfig) Clone() AppConfig {
+	res := cfg
+	if len(cfg.ModelPrices) > 0 {
+		res.ModelPrices = make(map[string]ModelPrice, len(cfg.ModelPrices))
+		for k, v := range cfg.ModelPrices {
+			res.ModelPrices[k] = v
+		}
+	} else if cfg.ModelPrices != nil {
+		res.ModelPrices = make(map[string]ModelPrice)
+	}
+	return res
 }
 
 // DefaultRetentionDays is the default data retention period in days.
@@ -37,9 +77,12 @@ const (
 	MaxRetentionDays = 365
 )
 
-// DefaultAppConfig returns the canonical business defaults.
 func DefaultAppConfig() AppConfig {
-	return AppConfig{UsageEnabled: true, RetentionDays: DefaultRetentionDays}
+	return AppConfig{
+		UsageEnabled:  true,
+		RetentionDays: DefaultRetentionDays,
+		ModelPrices:   make(map[string]ModelPrice),
+	}
 }
 
 // Document is the persisted plugin state. It only ever describes keys the host
@@ -105,7 +148,7 @@ func (s *Store) AppConfig() AppConfig {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.doc.AppConfig
+	return s.doc.AppConfig.Clone()
 }
 
 // SetAppConfig replaces the business settings.
@@ -120,7 +163,7 @@ func (s *Store) SetAppConfig(cfg AppConfig) {
 	} else if cfg.RetentionDays > MaxRetentionDays {
 		cfg.RetentionDays = MaxRetentionDays
 	}
-	s.doc.AppConfig = cfg
+	s.doc.AppConfig = cfg.Clone()
 }
 
 // Backup writes the current document to <path>.bak so a destructive change - a
@@ -339,10 +382,14 @@ func applyDefaults(doc Document, raw []byte) Document {
 	if doc.AppConfig.RetentionDays < MinRetentionDays || doc.AppConfig.RetentionDays > MaxRetentionDays {
 		doc.AppConfig.RetentionDays = DefaultRetentionDays
 	}
+	if doc.AppConfig.ModelPrices == nil {
+		doc.AppConfig.ModelPrices = make(map[string]ModelPrice)
+	}
 	return doc
 }
 
 func (doc Document) clone() Document {
+	doc.AppConfig = doc.AppConfig.Clone()
 	if len(doc.Remarks) > 0 {
 		remarksCopy := make(map[string]remarks.Entry, len(doc.Remarks))
 		for hash, entry := range doc.Remarks {

@@ -778,11 +778,18 @@ func (h *devHost) handleV1Models(w http.ResponseWriter, r *http.Request) {
 	models := []string{
 		"gpt-5.6",
 		"gpt-5.5",
+		"gpt-4o",
+		"gpt-4o-mini",
+		"o1",
+		"o3-mini",
 		"claude-3-7-sonnet",
 		"claude-3-5-sonnet",
+		"claude-3-5-haiku",
 		"gemini-2.5-pro",
 		"gemini-2.5-flash",
 		"deepseek-r1",
+		"deepseek-chat",
+		"qwen-max",
 	}
 	type modelItem struct {
 		ID     string `json:"id"`

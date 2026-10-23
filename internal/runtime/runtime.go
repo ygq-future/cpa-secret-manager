@@ -150,6 +150,7 @@ func (r *Runtime) Settings(_ context.Context) (management.Settings, error) {
 		cfg := r.store.AppConfig()
 		settings.UsageEnabled = cfg.UsageEnabled
 		settings.RetentionDays = cfg.RetentionDays
+		settings.ModelPrices = toQuotaModelPrices(cfg.ModelPrices)
 		if storePath := strings.TrimSpace(r.store.Path()); storePath != "" {
 			statePath = storePath
 		}
@@ -213,6 +214,10 @@ func (r *Runtime) UpdateSettings(_ context.Context, update management.SettingsUp
 	}
 	if update.RetentionDays != nil {
 		current.RetentionDays = *update.RetentionDays
+	}
+	if update.ModelPrices != nil {
+		current.ModelPrices = toStateModelPrices(*update.ModelPrices)
+		r.quota.SetModelPrices(*update.ModelPrices)
 	}
 	store.SetAppConfig(current)
 	// Persisting right away also applies the new retention window: shrinking it
@@ -508,6 +513,9 @@ func (r *Runtime) SetQuota(_ context.Context, update management.QuotaUpdate) err
 	if update.LimitValue < 0 {
 		return management.NewInvalidRequest("limit_value cannot be negative")
 	}
+	if update.LimitCost < 0 {
+		return management.NewInvalidRequest("limit_cost cannot be negative")
+	}
 	strategy := update.Strategy
 	if strategy == "" {
 		strategy = quota.StrategyTypeToken
@@ -524,10 +532,10 @@ func (r *Runtime) SetQuota(_ context.Context, update management.QuotaUpdate) err
 		Window:        window,
 		DurationSec:   update.DurationSec,
 		LimitValue:    update.LimitValue,
+		LimitCost:     update.LimitCost,
 		AllowedModels: update.AllowedModels,
 		UpdatedAt:     r.clock.Now().UTC(),
 	}
-
 	r.quota.SetRule(rule)
 	return r.persistStateLocked(store)
 }
@@ -582,12 +590,22 @@ func (r *Runtime) buildQuotaSummary(hash string, rule quota.Rule) *management.Qu
 	now := r.clock.Now().UTC()
 	wStart, wEnd := quota.CalculateWindow(rule.Window, rule.DurationSec, now)
 	state, hasState := r.quota.GetState(hash)
-	var used int64
+	var usedTokens int64
+	var usedCost float64
 	if hasState && state.WindowStart.Equal(wStart) && state.WindowEnd.Equal(wEnd) {
-		used = state.UsedValue
+		usedTokens = state.UsedValue
+		usedCost = state.UsedCost
 	}
 
-	exceeded := rule.Enabled && rule.LimitValue > 0 && used >= rule.LimitValue
+	exceeded := false
+	if rule.Enabled {
+		if (rule.Strategy == quota.StrategyTypeToken || rule.Strategy == quota.StrategyTypeDual) && rule.LimitValue > 0 && usedTokens >= rule.LimitValue {
+			exceeded = true
+		}
+		if (rule.Strategy == quota.StrategyTypeCost || rule.Strategy == quota.StrategyTypeDual) && rule.LimitCost > 0 && usedCost >= rule.LimitCost {
+			exceeded = true
+		}
+	}
 
 	return &management.QuotaSummary{
 		Enabled:       rule.Enabled,
@@ -595,7 +613,9 @@ func (r *Runtime) buildQuotaSummary(hash string, rule quota.Rule) *management.Qu
 		Window:        rule.Window,
 		DurationSec:   rule.DurationSec,
 		LimitValue:    rule.LimitValue,
-		UsedValue:     used,
+		UsedValue:     usedTokens,
+		LimitCost:     rule.LimitCost,
+		UsedCost:      usedCost,
 		AllowedModels: rule.AllowedModels,
 		WindowStart:   formatTimestamp(wStart),
 		WindowEnd:     formatTimestamp(wEnd),
@@ -684,6 +704,7 @@ func (r *Runtime) loadState(path string) {
 	store, err := state.Load(path)
 	if store != nil {
 		r.quota.Import(store.QuotaRules(), store.QuotaStates())
+		r.quota.SetModelPrices(toQuotaModelPrices(store.AppConfig().ModelPrices))
 	}
 	var errorsStore *errorslog.Store
 	var bucketStore *state.BucketStore
@@ -888,4 +909,34 @@ func formatTimestamp(value time.Time) string {
 		return ""
 	}
 	return value.UTC().Format(time.RFC3339)
+}
+
+func toQuotaModelPrices(prices map[string]state.ModelPrice) map[string]quota.ModelPrice {
+	if prices == nil {
+		return nil
+	}
+	res := make(map[string]quota.ModelPrice, len(prices))
+	for k, v := range prices {
+		res[k] = quota.ModelPrice{
+			Input:  v.Input,
+			Output: v.Output,
+			Cache:  v.Cache,
+		}
+	}
+	return res
+}
+
+func toStateModelPrices(prices map[string]quota.ModelPrice) map[string]state.ModelPrice {
+	if prices == nil {
+		return nil
+	}
+	res := make(map[string]state.ModelPrice, len(prices))
+	for k, v := range prices {
+		res[k] = state.ModelPrice{
+			Input:  v.Input,
+			Output: v.Output,
+			Cache:  v.Cache,
+		}
+	}
+	return res
 }

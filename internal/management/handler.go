@@ -75,19 +75,21 @@ type CacheFile struct {
 
 // Settings is the plugin business configuration exposed to the page.
 type Settings struct {
-	UsageEnabled   bool        `json:"usage_enabled"`
-	RetentionDays  int         `json:"retention_days"`
-	StatePath      string      `json:"state_path"`
-	StateWarning   string      `json:"state_warning,omitempty"`
-	UsageWarning   string      `json:"usage_warning,omitempty"`
-	ConfigWarnings []string    `json:"config_warnings,omitempty"`
-	CacheFiles     []CacheFile `json:"cache_files,omitempty"`
+	UsageEnabled   bool                        `json:"usage_enabled"`
+	RetentionDays  int                         `json:"retention_days"`
+	ModelPrices    map[string]quota.ModelPrice `json:"model_prices,omitempty"`
+	StatePath      string                      `json:"state_path"`
+	StateWarning   string                      `json:"state_warning,omitempty"`
+	UsageWarning   string                      `json:"usage_warning,omitempty"`
+	ConfigWarnings []string                    `json:"config_warnings,omitempty"`
+	CacheFiles     []CacheFile                 `json:"cache_files,omitempty"`
 }
 
 // SettingsUpdate is the request payload for updating business settings.
 type SettingsUpdate struct {
-	UsageEnabled  *bool `json:"usage_enabled"`
-	RetentionDays *int  `json:"retention_days"`
+	UsageEnabled  *bool                        `json:"usage_enabled"`
+	RetentionDays *int                         `json:"retention_days"`
+	ModelPrices   *map[string]quota.ModelPrice `json:"model_prices,omitempty"`
 }
 
 // FailuresRequest specifies query parameters for error log retrieval.
@@ -124,6 +126,8 @@ type QuotaSummary struct {
 	DurationSec   int64              `json:"duration_sec,omitempty"`
 	LimitValue    int64              `json:"limit_value"`
 	UsedValue     int64              `json:"used_value"`
+	LimitCost     float64            `json:"limit_cost,omitempty"`
+	UsedCost      float64            `json:"used_cost,omitempty"`
 	AllowedModels []string           `json:"allowed_models,omitempty"`
 	WindowStart   string             `json:"window_start,omitempty"`
 	WindowEnd     string             `json:"window_end,omitempty"`
@@ -140,6 +144,7 @@ type QuotaUpdate struct {
 	Window        quota.WindowType   `json:"window"`
 	DurationSec   int64              `json:"duration_sec,omitempty"`
 	LimitValue    int64              `json:"limit_value"`
+	LimitCost     float64            `json:"limit_cost,omitempty"`
 	AllowedModels []string           `json:"allowed_models,omitempty"`
 }
 
@@ -295,8 +300,8 @@ func (h *Handler) serveSettings(w http.ResponseWriter, r *http.Request) {
 		if !decodeBody(w, r, &update) {
 			return
 		}
-		if update.UsageEnabled == nil && update.RetentionDays == nil {
-			writeJSON(w, http.StatusBadRequest, errorBody("invalid_request", "usage_enabled or retention_days is required"))
+		if update.UsageEnabled == nil && update.RetentionDays == nil && update.ModelPrices == nil {
+			writeJSON(w, http.StatusBadRequest, errorBody("invalid_request", "at least one of usage_enabled, retention_days, or model_prices is required"))
 			return
 		}
 		if h.fail(w, h.backend.UpdateSettings(r.Context(), update)) {

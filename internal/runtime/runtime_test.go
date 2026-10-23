@@ -1047,3 +1047,80 @@ func TestHandle_RequestInterceptBefore_AllowedModels(t *testing.T) {
 		t.Fatalf("response body = %s, want not permitted error", respDenied.ResponseBody)
 	}
 }
+
+func TestHandle_RequestInterceptBefore_DualAndCostQuota(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	rt := registerRuntime(t, statePath)
+
+	// 1. Update settings to add model price: gpt-4o = In 2.5, Out 5.0, Cache 1.25 / 1M
+	settingsUpdate := `{"model_prices":{"gpt-4o":{"input":2.5,"output":5.0,"cache":1.25}}}`
+	if status, _ := managementCall(t, rt, http.MethodPut, management.RouteSettings, []byte(settingsUpdate)); status != http.StatusOK {
+		t.Fatalf("PUT settings status = %d, want 200", status)
+	}
+
+	apiKey := "sk-test-dual-key"
+	keyHash := remarks.Index(apiKey)
+
+	// 2. Configure dual quota rule: 1M tokens, 2.0 cost
+	quotaBody := fmt.Sprintf(`{"hash":"%s","enabled":true,"strategy":"dual","window":"daily","limit_value":1000000,"limit_cost":2.0}`, keyHash)
+	if status, _ := managementCall(t, rt, http.MethodPut, management.RouteQuota, []byte(quotaBody)); status != http.StatusOK {
+		t.Fatalf("PUT quota status = %d, want 200", status)
+	}
+
+	// 3. Request unpriced model -> blocked with 403
+	reqUnpriced, _ := json.Marshal(map[string]any{
+		"headers": map[string][]string{"Authorization": {"Bearer " + apiKey}},
+		"model":   "unpriced-model",
+	})
+	env := decodeEnvelope(t, rt.Handle(context.Background(), MethodRequestInterceptBefore, reqUnpriced))
+	var respUnpriced RequestInterceptResponse
+	_ = json.Unmarshal(env.Result, &respUnpriced)
+	if !respUnpriced.Terminate || respUnpriced.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected unpriced model blocked with 403, got %+v", respUnpriced)
+	}
+	if !strings.Contains(respUnpriced.ResponseBody, "no configured price") {
+		t.Fatalf("expected no configured price error, got: %s", respUnpriced.ResponseBody)
+	}
+
+	// 4. Request priced model before usage -> allowed
+	reqPriced, _ := json.Marshal(map[string]any{
+		"headers": map[string][]string{"Authorization": {"Bearer " + apiKey}},
+		"model":   "gpt-4o",
+	})
+	env = decodeEnvelope(t, rt.Handle(context.Background(), MethodRequestInterceptBefore, reqPriced))
+	var respPriced RequestInterceptResponse
+	_ = json.Unmarshal(env.Result, &respPriced)
+	if respPriced.Terminate {
+		t.Fatal("expected priced model allowed under quota")
+	}
+
+	// 5. Inject usage: 500,000 output tokens of gpt-4o (500K < 1M token limit, but cost = 2.5 > 2.0 limit)
+	usageRecord := []byte(fmt.Sprintf(`{"APIKey":%q,"Model":"gpt-4o","detail":{"output_tokens":500000,"total_tokens":500000}}`, apiKey))
+	rt.Handle(context.Background(), MethodUsageHandle, usageRecord)
+	// 6. Request now should be blocked due to cost limit exceeded
+	env = decodeEnvelope(t, rt.Handle(context.Background(), MethodRequestInterceptBefore, reqPriced))
+	var respExceeded RequestInterceptResponse
+	_ = json.Unmarshal(env.Result, &respExceeded)
+	if !respExceeded.Terminate || respExceeded.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected cost exceeded request blocked with 403, got %+v", respExceeded)
+	}
+	if !strings.Contains(respExceeded.ResponseBody, "cost limit exceeded") {
+		t.Fatalf("expected cost limit exceeded message, got: %s", respExceeded.ResponseBody)
+	}
+
+	// 7. Verify Resolve contains quota data
+	resolvePayload := fmt.Sprintf(`{"keys":[%q]}`, apiKey)
+	var resolveResult management.ResolveResult
+	if status, body := managementCall(t, rt, http.MethodPost, management.RouteResolve, []byte(resolvePayload)); status != http.StatusOK {
+		t.Fatalf("resolve status = %d, want 200: %s", status, body)
+	} else if err := json.Unmarshal(body, &resolveResult); err != nil {
+		t.Fatalf("decode resolve result: %v", err)
+	}
+	q := resolveResult.Items[0].Quota
+	if q == nil || !q.Exceeded {
+		t.Fatalf("expected quota exceeded in resolve result, got %+v", q)
+	}
+	if q.UsedCost < 2.49 || q.UsedCost > 2.51 {
+		t.Fatalf("expected UsedCost ~ 2.5, got %f", q.UsedCost)
+	}
+}

@@ -270,3 +270,135 @@ func TestManager_AllowedModels(t *testing.T) {
 		t.Fatalf("unexpected reason: %q", dec.Reason)
 	}
 }
+
+func TestManager_CostStrategy(t *testing.T) {
+	mgr := NewManager()
+	now := time.Date(2026, 10, 19, 10, 0, 0, 0, time.UTC)
+
+	// Configure prices: gpt-4o = In 2.0, Out 8.0, Cache 1.0 per 1M tokens
+	mgr.SetModelPrices(map[string]ModelPrice{
+		"gpt-4o": {Input: 2.0, Output: 8.0, Cache: 1.0},
+		"claude": {Input: 3.0, Output: 15.0, Cache: 0.3},
+	})
+	mgr.SetRule(Rule{
+		Hash:      "h_cost",
+		Enabled:   true,
+		Strategy:  StrategyTypeCost,
+		Window:    WindowTypeDaily,
+		LimitCost: 1.0, // limit: 1.0 cost
+	})
+
+	// 1. Unpriced model -> rejected
+	dec := mgr.Check(context.Background(), "h_cost", "unpriced-model", now)
+	if dec.Allowed {
+		t.Fatal("expected unpriced model to be rejected under cost strategy")
+	}
+
+	// 2. Priced model before usage -> allowed
+	dec = mgr.Check(context.Background(), "h_cost", "gpt-4o", now)
+	if !dec.Allowed {
+		t.Fatalf("expected priced model allowed, got %+v", dec)
+	}
+
+	// 3. Record: 100,000 Input ($0.2) + 20,000 Output/Reasoning ($0.16) + 100,000 CacheRead ($0.1) = $0.46
+	mgr.Record(usage.Record{
+		Hash:  "h_cost",
+		Model: "gpt-4o",
+		At:    now,
+		Detail: usage.Detail{
+			Input:     100000,
+			Output:    10000,
+			Reasoning: 10000,
+			CacheRead: 100000,
+			Total:     220000,
+		},
+	})
+
+	// Still under 1.0 limit ($0.46 < $1.0)
+	dec = mgr.Check(context.Background(), "h_cost", "gpt-4o", now)
+	if !dec.Allowed {
+		t.Fatalf("expected allowed at 0.46/1.0 cost, got %+v", dec)
+	}
+	if dec.UsedCost < 0.459 || dec.UsedCost > 0.461 {
+		t.Fatalf("expected UsedCost ~ 0.46, got %f", dec.UsedCost)
+	}
+	// 4. Record 100,000 Output ($0.8) -> total $1.26 >= 1.0 -> rejected
+	mgr.Record(usage.Record{
+		Hash:  "h_cost",
+		Model: "gpt-4o",
+		At:    now.Add(time.Minute),
+		Detail: usage.Detail{
+			Output: 100000,
+			Total:  100000,
+		},
+	})
+	// Now cost is 1.1 >= 1.0 -> rejected
+	dec = mgr.Check(context.Background(), "h_cost", "gpt-4o", now.Add(2*time.Minute))
+	if dec.Allowed {
+		t.Fatalf("expected rejected at 1.1/1.0 cost, got %+v", dec)
+	}
+}
+
+func TestManager_DualRuleStrategy(t *testing.T) {
+	mgr := NewManager()
+	now := time.Date(2026, 10, 19, 10, 0, 0, 0, time.UTC)
+
+	mgr.SetModelPrices(map[string]ModelPrice{
+		"gpt-4o": {Input: 5.0, Output: 10.0, Cache: 2.5},
+	})
+	// Rule: Limit 1,000,000 tokens AND 5.0 cost.
+	// Either exceeding blocks the request.
+	mgr.SetRule(Rule{
+		Hash:       "h_dual",
+		Enabled:    true,
+		Strategy:   StrategyTypeDual,
+		Window:     WindowTypeDaily,
+		LimitValue: 1000000, // 1M tokens
+		LimitCost:  5.0,     // 5.0 cost
+	})
+
+	// Case A: Cost exceeds first
+	// 600,000 tokens of gpt-4o -> 600K tokens (< 1M tokens limit), but cost is 6.0 (>= 5.0 limit)
+	mgr.Record(usage.Record{
+		Hash:  "h_dual",
+		Model: "gpt-4o",
+		At:    now,
+		Detail: usage.Detail{
+			Total: 600000,
+		},
+	})
+
+	dec := mgr.Check(context.Background(), "h_dual", "gpt-4o", now)
+	if dec.Allowed {
+		t.Fatal("expected dual rule blocked due to cost limit exceeded")
+	}
+
+	// Case B: Token exceeds first (with cheap model)
+	mgr2 := NewManager()
+	mgr2.SetModelPrices(map[string]ModelPrice{
+		"cheap-model": {Input: 1.0, Output: 1.0, Cache: 0.5},
+	})
+	mgr2.SetRule(Rule{
+		Hash:       "h_dual2",
+		Enabled:    true,
+		Strategy:   StrategyTypeDual,
+		Window:     WindowTypeDaily,
+		LimitValue: 500000, // 500K tokens
+		LimitCost:  10.0,   // 10.0 cost
+	})
+
+	// 600,000 tokens of cheap-model -> 600K tokens (>= 500K limit), but cost is 0.6 (< 10.0)
+	mgr2.Record(usage.Record{
+		Hash:  "h_dual2",
+		Model: "cheap-model",
+		At:    now,
+		Detail: usage.Detail{
+			Total: 600000,
+		},
+	})
+
+	dec2 := mgr2.Check(context.Background(), "h_dual2", "cheap-model", now)
+	if dec2.Allowed {
+		t.Fatal("expected dual rule blocked due to token limit exceeded")
+	}
+}

@@ -741,11 +741,30 @@ function renderKeys() {
   renderStats();
 }
 
-// quotaBadgeTitle spells out the three parts of a quota badge: the usage of the
-// current window, the limit and the reset instant. Both numbers go through
-// formatTokenValue, which degrades the unit to the value, so a 1K usage against a
-// 1M limit reads "1K", never "0M".
+// formatCostValue formats a cost number with dollar sign and 2 decimals.
+function formatCostValue(val) {
+  var num = Number(val) || 0;
+  return '$' + num.toFixed(2);
+}
+
+// quotaBadgeTitle spells out the badge tooltip for token, cost, or dual rules.
 function quotaBadgeTitle(quota) {
+  if (quota.strategy === 'cost') {
+    return tf('keys.quota_cost_badge_title', {
+      used: formatCostValue(quota.used_cost),
+      limit: formatCostValue(quota.limit_cost),
+      reset: formatTimestamp(quota.reset_at)
+    });
+  }
+  if (quota.strategy === 'dual') {
+    return tf('keys.quota_dual_badge_title', {
+      usedTokens: formatTokenValue(quota.used_value),
+      limitTokens: formatTokenValue(quota.limit_value),
+      usedCost: formatCostValue(quota.used_cost),
+      limitCost: formatCostValue(quota.limit_cost),
+      reset: formatTimestamp(quota.reset_at)
+    });
+  }
   return tf('keys.quota_badge_title', {
     used: formatTokenValue(quota.used_value),
     limit: formatTokenValue(quota.limit_value),
@@ -753,16 +772,20 @@ function quotaBadgeTitle(quota) {
   });
 }
 
-// buildQuotaBadge renders the quota tag: a gauge glyph plus "used / limit". Both
-// numbers go through formatTokenValue, which degrades the unit to the value, so a
-// 1K usage against a 1M limit reads "1K", never "0M".
+// buildQuotaBadge renders the quota tag: gauge glyph plus used / limit.
 function buildQuotaBadge(quota) {
   var badge = document.createElement('span');
   badge.className = 'badge-quota';
   badge.title = quotaBadgeTitle(quota);
   badge.appendChild(iconMarkup('quota', ''));
   var text = document.createElement('span');
-  text.textContent = formatTokenValue(quota.used_value) + ' / ' + formatTokenValue(quota.limit_value);
+  if (quota.strategy === 'cost') {
+    text.textContent = formatCostValue(quota.used_cost) + ' / ' + formatCostValue(quota.limit_cost);
+  } else if (quota.strategy === 'dual') {
+    text.textContent = formatTokenValue(quota.used_value) + ' / ' + formatTokenValue(quota.limit_value) + ' | ' + formatCostValue(quota.used_cost) + ' / ' + formatCostValue(quota.limit_cost);
+  } else {
+    text.textContent = formatTokenValue(quota.used_value) + ' / ' + formatTokenValue(quota.limit_value);
+  }
   badge.appendChild(text);
   return badge;
 }
@@ -836,7 +859,7 @@ function buildKeyRow(index, value, remark, usage) {
       exText.textContent = t('keys.quota_exceeded');
       exBadge.appendChild(exText);
       tagRow.appendChild(exBadge);
-    } else if (entryQuota.limit_value > 0) {
+    } else if ((entryQuota.strategy === 'token' && entryQuota.limit_value > 0) || (entryQuota.strategy === 'cost' && entryQuota.limit_cost > 0) || (entryQuota.strategy === 'dual' && (entryQuota.limit_value > 0 || entryQuota.limit_cost > 0))) {
       tagRow.appendChild(buildQuotaBadge(entryQuota));
     }
     if (entryQuota.reset_at) {
@@ -1293,34 +1316,164 @@ function loadAvailableModels(force) {
 var modelMultiSelect = null;
 var modelMultiToken = 0;
 
+function isCostModeActive() {
+  var costBtn = byId('key-form-quota-mode-cost');
+  return Boolean(costBtn && costBtn.getAttribute('aria-checked') === 'true');
+}
+
+function isTokenModeActive() {
+  var tokenBtn = byId('key-form-quota-mode-token');
+  return Boolean(tokenBtn && tokenBtn.getAttribute('aria-checked') === 'true');
+}
+
+function setQuotaModeActive(which, active) {
+  var btn = byId(which === 'token' ? 'key-form-quota-mode-token' : 'key-form-quota-mode-cost');
+  if (btn) {
+    btn.setAttribute('aria-checked', active ? 'true' : 'false');
+    btn.classList.toggle('is-active', active);
+  }
+}
+
+function syncQuotaModeUI(overrideAllowed) {
+  var isToken = isTokenModeActive();
+  var isCost = isCostModeActive();
+  var tokenBtn = byId('key-form-quota-mode-token');
+  var costBtn = byId('key-form-quota-mode-cost');
+  var tokenSection = byId('key-form-quota-token-section');
+  var costSection = byId('key-form-quota-cost-section');
+  var dualHint = byId('key-form-quota-dual-hint');
+  var modelsHint = byId('key-form-quota-models-hint');
+
+  if (tokenBtn) tokenBtn.classList.toggle('is-active', isToken);
+  if (costBtn) costBtn.classList.toggle('is-active', isCost);
+  if (tokenSection) tokenSection.hidden = !isToken;
+  if (costSection) costSection.hidden = !isCost;
+  if (dualHint) dualHint.hidden = !(isToken && isCost);
+
+  if (modelsHint) {
+    modelsHint.textContent = isCost ? t('key_form.quota_cost_hint') : t('key_form.quota_models_hint');
+  }
+
+  var currentAllowed = overrideAllowed !== undefined ? overrideAllowed : readSelectedModels();
+  renderModelsSelection(currentAllowed);
+}
+
 function renderModelsSelection(allowedModels) {
   var container = byId('key-form-models-container');
+  var alertBox = byId('key-form-quota-no-priced-alert');
   if (!container) {
     return;
   }
   var token = ++modelMultiToken;
   var allowed = Array.isArray(allowedModels) ? allowedModels : [];
-  loadAvailableModels().then(function (models) {
-    // A slower earlier load must never overwrite the selection of a newer dialog.
-    if (token !== modelMultiToken) {
+
+  if (isCostModeActive()) {
+    var prices = (state.settings && state.settings.model_prices) || {};
+    var pricedModels = Object.keys(prices).sort();
+    if (pricedModels.length === 0) {
+      container.innerHTML = '';
+      if (alertBox) alertBox.hidden = false;
+      modelMultiSelect = null;
       return;
     }
-    var set = {};
-    for (var i = 0; i < (models || []).length; i++) {
-      if (models[i]) set[models[i]] = true;
-    }
+    if (alertBox) alertBox.hidden = true;
+    var filteredAllowed = [];
     for (var a = 0; a < allowed.length; a++) {
-      if (allowed[a]) set[allowed[a]] = true;
+      if (prices[allowed[a]] !== undefined) {
+        filteredAllowed.push(allowed[a]);
+      }
     }
-    var allNames = Object.keys(set).sort();
     modelMultiSelect = mountMultiSelect({
       container: container,
-      items: allNames.map(function (name) {
+      items: pricedModels.map(function (name) {
         return { value: name, label: name };
       }),
-      selected: allowed
+      selected: filteredAllowed
     });
-  });
+  } else {
+    if (alertBox) alertBox.hidden = true;
+    loadAvailableModels().then(function (models) {
+      if (token !== modelMultiToken) {
+        return;
+      }
+      var set = {};
+      for (var i = 0; i < (models || []).length; i++) {
+        if (models[i]) set[models[i]] = true;
+      }
+      for (var j = 0; j < allowed.length; j++) {
+        if (allowed[j]) set[allowed[j]] = true;
+      }
+      var allNames = Object.keys(set).sort();
+      modelMultiSelect = mountMultiSelect({
+        container: container,
+        items: allNames.map(function (name) {
+          return { value: name, label: name };
+        }),
+        selected: allowed
+      });
+    });
+  }
+}
+
+function resetQuotaForm() {
+  var enabled = byId('key-form-quota-enabled');
+  if (enabled) {
+    enabled.checked = false;
+  }
+  var fields = byId('key-form-quota-fields');
+  if (fields) {
+    fields.hidden = true;
+  }
+  if (quotaWindowSelect) {
+    quotaWindowSelect.setValue('daily');
+  }
+  updateQuotaDurationField();
+  setQuotaDurationValues(3600);
+  setQuotaInputValues(0);
+  var costInput = byId('key-form-quota-cost-val');
+  if (costInput) costInput.value = '';
+  setQuotaModeActive('token', true);
+  setQuotaModeActive('cost', false);
+  syncQuotaModeUI([]);
+}
+
+function applyQuotaForm(quota) {
+  if (!quota || !quota.enabled) {
+    resetQuotaForm();
+    return;
+  }
+  var enabled = byId('key-form-quota-enabled');
+  if (enabled) {
+    enabled.checked = true;
+  }
+  var fields = byId('key-form-quota-fields');
+  if (fields) {
+    fields.hidden = false;
+  }
+  if (quotaWindowSelect) {
+    quotaWindowSelect.setValue(quota.window || 'daily');
+  }
+  updateQuotaDurationField();
+  setQuotaDurationValues(quota.duration_sec || 3600);
+  setQuotaInputValues(quota.limit_value || 0);
+
+  var costInput = byId('key-form-quota-cost-val');
+  if (costInput) {
+    costInput.value = quota.limit_cost > 0 ? String(quota.limit_cost) : '';
+  }
+
+  if (quota.strategy === 'dual') {
+    setQuotaModeActive('token', true);
+    setQuotaModeActive('cost', true);
+  } else if (quota.strategy === 'cost') {
+    setQuotaModeActive('token', false);
+    setQuotaModeActive('cost', true);
+  } else {
+    setQuotaModeActive('token', true);
+    setQuotaModeActive('cost', false);
+  }
+
+  syncQuotaModeUI(quota.allowed_models || []);
 }
 function readSelectedModels() {
   return modelMultiSelect ? modelMultiSelect.getSelected() : [];
@@ -1384,45 +1537,6 @@ function updateQuotaDurationField() {
   }
 }
 
-function resetQuotaForm() {
-  var enabled = byId('key-form-quota-enabled');
-  if (enabled) {
-    enabled.checked = false;
-  }
-  var fields = byId('key-form-quota-fields');
-  if (fields) {
-    fields.hidden = true;
-  }
-  if (quotaWindowSelect) {
-    quotaWindowSelect.setValue('daily');
-  }
-  updateQuotaDurationField();
-  setQuotaDurationValues(3600);
-  setQuotaInputValues(0);
-  renderModelsSelection([]);
-}
-
-function applyQuotaForm(quota) {
-  if (!quota || !quota.enabled) {
-    resetQuotaForm();
-    return;
-  }
-  var enabled = byId('key-form-quota-enabled');
-  if (enabled) {
-    enabled.checked = true;
-  }
-  var fields = byId('key-form-quota-fields');
-  if (fields) {
-    fields.hidden = false;
-  }
-  if (quotaWindowSelect) {
-    quotaWindowSelect.setValue(quota.window || 'daily');
-  }
-  updateQuotaDurationField();
-  setQuotaDurationValues(quota.duration_sec || 3600);
-  setQuotaInputValues(quota.limit_value || 0);
-  renderModelsSelection(quota.allowed_models || []);
-}
 
 // The duration field mirrors the token limit field: a value plus a unit listbox.
 // The wire value stays seconds.
@@ -1472,28 +1586,16 @@ function setQuotaDurationValues(seconds) {
 function syncQuotaInput() {
   var valInput = byId('key-form-quota-limit-val');
   var hiddenInput = byId('key-form-quota-limit');
-  var hint = byId('key-form-quota-calc-hint');
   if (!valInput || !hiddenInput || !quotaUnitSelect) return;
 
   var num = parseFloat(valInput.value);
   if (!isFinite(num) || num <= 0) {
     hiddenInput.value = '0';
-    if (hint) {
-      hint.hidden = true;
-      hint.textContent = '';
-    }
     return;
   }
   var multiplier = parseInt(quotaUnitSelect.getValue(), 10) || 1;
   var total = Math.round(num * multiplier);
   hiddenInput.value = String(total);
-  if (hint) {
-    hint.hidden = false;
-    hint.textContent = tf('key_form.quota_limit_calc', {
-      total: formatNumber(total),
-      scaled: formatTokenValue(total)
-    });
-  }
 }
 
 function setQuotaInputValues(tokens) {
@@ -1535,16 +1637,28 @@ function saveQuotaForm(targetKey) {
   var durationSec = qDuration ? parseInt(qDuration.value, 10) || 3600 : 3600;
   var qLimit = byId('key-form-quota-limit');
   var limitValue = qLimit ? parseInt(qLimit.value, 10) || 0 : 0;
+  var costInput = byId('key-form-quota-cost-val');
+  var limitCost = costInput ? parseFloat(costInput.value) || 0 : 0;
   var selectedModels = readSelectedModels();
+
+  var isToken = isTokenModeActive();
+  var isCost = isCostModeActive();
+  var strategy = 'token';
+  if (isToken && isCost) {
+    strategy = 'dual';
+  } else if (isCost) {
+    strategy = 'cost';
+  }
 
   if (enabled) {
     var payload = {
       key: targetKey,
       enabled: true,
-      strategy: 'token',
+      strategy: strategy,
       window: windowType,
       duration_sec: durationSec,
-      limit_value: limitValue,
+      limit_value: isToken ? limitValue : 0,
+      limit_cost: isCost ? limitCost : 0,
       allowed_models: selectedModels
     };
     return apiFetch(QUOTA_PATH, { method: 'PUT', body: JSON.stringify(payload) });
@@ -2467,18 +2581,49 @@ function bindKeysEvents() {
     durationValue.addEventListener('input', syncQuotaDuration);
   }
 
-  var presetPills = document.querySelectorAll('.pill[data-val]');
-  for (var index = 0; index < presetPills.length; index++) {
-    presetPills[index].addEventListener('click', function () {
-      var value = this.getAttribute('data-val');
-      var unit = this.getAttribute('data-unit');
-      if (limitValue) {
-        limitValue.value = value === '0' ? '' : value;
+  var tokenBtn = byId('key-form-quota-mode-token');
+  var costBtn = byId('key-form-quota-mode-cost');
+  function handleModeToggle(which) {
+    var isToken = isTokenModeActive();
+    var isCost = isCostModeActive();
+    if (which === 'token') {
+      var nextToken = !isToken;
+      if (!nextToken && !isCost) return;
+      setQuotaModeActive('token', nextToken);
+    } else {
+      var nextCost = !isCost;
+      if (!isToken && !nextCost) return;
+      setQuotaModeActive('cost', nextCost);
+    }
+    syncQuotaModeUI();
+  }
+  if (tokenBtn) {
+    tokenBtn.addEventListener('click', function () {
+      handleModeToggle('token');
+    });
+  }
+  if (costBtn) {
+    costBtn.addEventListener('click', function () {
+      handleModeToggle('cost');
+    });
+  }
+
+  var quotaCostInput = byId('key-form-quota-cost-val');
+  if (quotaCostInput) {
+    quotaCostInput.addEventListener('input', function () {
+      var val = quotaCostInput.value;
+      if (val.indexOf('.') !== -1) {
+        var parts = val.split('.');
+        if (parts[1].length > 2) {
+          quotaCostInput.value = parts[0] + '.' + parts[1].slice(0, 2);
+        }
       }
-      if (quotaUnitSelect && unit) {
-        quotaUnitSelect.setValue(unit);
+    });
+    quotaCostInput.addEventListener('blur', function () {
+      var val = parseFloat(quotaCostInput.value);
+      if (!isNaN(val) && val >= 0) {
+        quotaCostInput.value = val.toFixed(2);
       }
-      syncQuotaInput();
     });
   }
 

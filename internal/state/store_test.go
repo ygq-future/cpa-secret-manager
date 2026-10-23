@@ -16,9 +16,7 @@ func TestLoad_MissingFileYieldsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v, want nil for a missing file", err)
 	}
-	if got := store.AppConfig(); got != DefaultAppConfig() {
-		t.Fatalf("AppConfig() = %+v, want %+v", got, DefaultAppConfig())
-	}
+	assertDefaultAppConfig(t, store.AppConfig())
 	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
 		t.Fatalf("Load() created %s on read; want lazy creation", path)
 	}
@@ -54,6 +52,52 @@ func TestSaveAtomic_RoundTripsDocument(t *testing.T) {
 	}
 }
 
+func TestSaveAtomic_RoundTripsModelPrices(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "deep", "state.json")
+
+	store, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	store.SetAppConfig(AppConfig{
+		UsageEnabled:  true,
+		RetentionDays: 30,
+		ModelPrices: map[string]ModelPrice{
+			"gpt-4o": {Input: 2.5, Output: 10.0, Cache: 1.25},
+			"claude-3-5-sonnet": {Input: 3.0, Output: 15.0, Cache: 0.3},
+		},
+	})
+	if err := store.SaveAtomic(); err != nil {
+		t.Fatalf("SaveAtomic() error = %v", err)
+	}
+
+	reloaded, reloadErr := Load(path)
+	if reloadErr != nil {
+		t.Fatalf("reload error = %v", reloadErr)
+	}
+	prices := reloaded.AppConfig().ModelPrices
+	if prices["gpt-4o"].Input != 2.5 || prices["gpt-4o"].Output != 10.0 || prices["gpt-4o"].Cache != 1.25 {
+		t.Fatalf("reloaded model prices = %+v, want gpt-4o 3-tier prices", prices)
+	}
+}
+
+func TestLoad_LegacyFloatModelPricesCompatible(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	legacyJSON := `{"schema_version":2,"app_config":{"usage_enabled":true,"retention_days":30,"model_prices":{"claude-sonnet":1.5}}}`
+	if err := os.WriteFile(path, []byte(legacyJSON), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	store, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v, want nil for legacy document", err)
+	}
+	p := store.AppConfig().ModelPrices["claude-sonnet"]
+	if p.Input != 1.5 || p.Output != 1.5 || p.Cache != 1.5 {
+		t.Fatalf("unmarshaled legacy price = %+v, want all 1.5", p)
+	}
+}
+
 func TestLoad_CorruptFileKeepsServiceUsable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
@@ -64,8 +108,13 @@ func TestLoad_CorruptFileKeepsServiceUsable(t *testing.T) {
 	if err == nil {
 		t.Fatal("Load() error = nil, want a decode error for a corrupt document")
 	}
-	if got := store.AppConfig(); got != DefaultAppConfig() {
-		t.Fatalf("AppConfig() = %+v, want defaults after a corrupt document", got)
+	assertDefaultAppConfig(t, store.AppConfig())
+}
+
+func assertDefaultAppConfig(t *testing.T, got AppConfig) {
+	t.Helper()
+	if !got.UsageEnabled || got.RetentionDays != DefaultRetentionDays || len(got.ModelPrices) != 0 {
+		t.Fatalf("AppConfig() = %+v, want defaults", got)
 	}
 }
 

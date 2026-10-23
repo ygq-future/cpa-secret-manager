@@ -116,22 +116,35 @@ const shellModals = `  </main>
             </div>
           </div>
           <div class="field">
-            <label for="key-form-quota-limit-val" data-i18n="key_form.quota_limit">Token Limit</label>
-            <div class="quota-limit-row">
+            <span class="field-label" data-i18n="key_form.quota_mode">Limit Rules</span>
+            <div class="quota-mode-toggles">
+              <button type="button" class="quota-mode-card is-active" id="key-form-quota-mode-token" role="checkbox" aria-checked="true">
+                <span class="quota-mode-indicator"></span>
+                <span class="quota-mode-label" data-i18n="key_form.quota_mode_tokens">Limit Total Tokens</span>
+              </button>
+              <button type="button" class="quota-mode-card" id="key-form-quota-mode-cost" role="checkbox" aria-checked="false">
+                <span class="quota-mode-indicator"></span>
+                <span class="quota-mode-label" data-i18n="key_form.quota_mode_cost">Limit Total Cost</span>
+              </button>
+            </div>
+            <p id="key-form-quota-dual-hint" class="hint text-accent" data-i18n="key_form.quota_dual_hint" hidden>Dual rules active: requests blocked if either tokens or cost exceed the limit.</p>
+          </div>
+          <div class="field-row" id="key-form-quota-limits-row">
+            <div id="key-form-quota-token-section" class="field flex-1">
+              <label for="key-form-quota-limit-val" data-i18n="key_form.quota_limit">Token Limit</label>
               <div class="input-unit-group">
                 <input id="key-form-quota-limit-val" class="unit-input" type="number" min="0" step="any" inputmode="decimal" placeholder="0">
                 <div id="key-form-quota-limit-unit"></div>
               </div>
-              <span id="key-form-quota-calc-hint" class="quota-calc-inline" hidden></span>
+              <input id="key-form-quota-limit" type="hidden" value="0">
             </div>
-            <input id="key-form-quota-limit" type="hidden" value="0">
-            <div class="action-row">
-              <button type="button" class="pill" data-val="0" data-unit="1" data-i18n="quota.preset_unlimited">Unlimited</button>
-              <button type="button" class="pill" data-val="500" data-unit="1000">500K</button>
-              <button type="button" class="pill" data-val="1" data-unit="1000000">1M</button>
-              <button type="button" class="pill" data-val="5" data-unit="1000000">5M</button>
-              <button type="button" class="pill" data-val="10" data-unit="1000000">10M</button>
-              <button type="button" class="pill" data-val="50" data-unit="1000000">50M</button>
+            <div id="key-form-quota-cost-section" class="field flex-1" hidden>
+              <label for="key-form-quota-cost-val" data-i18n="key_form.quota_cost_limit">Cost Limit ($)</label>
+              <div class="input-unit-group">
+                <span class="unit-prefix">$</span>
+                <input id="key-form-quota-cost-val" class="unit-input" type="number" min="0" step="any" inputmode="decimal" placeholder="0.00">
+                <span class="unit-suffix">/ M</span>
+              </div>
             </div>
           </div>
           <div class="field">
@@ -142,8 +155,12 @@ const shellModals = `  </main>
                 <button id="key-form-models-none" class="btn-text" type="button" data-i18n="key_form.quota_clear_all">Clear</button>
               </span>
             </div>
-            <p class="hint" data-i18n="key_form.quota_models_hint">Unchecked allows all available models</p>
+            <p id="key-form-quota-models-hint" class="hint" data-i18n="key_form.quota_models_hint">Unchecked allows all available models</p>
             <div id="key-form-models-container"></div>
+            <div id="key-form-quota-no-priced-alert" class="alert is-warning" hidden>
+              {{ICON:warning}}
+              <span data-i18n="key_form.quota_no_priced_models">No models have configured prices yet. Please add model pricing in Settings first.</span>
+            </div>
           </div>
         </div>
       </div>
@@ -220,6 +237,12 @@ const shellModals = `  </main>
 </div>
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
+<div id="global-loading" class="global-loading" hidden>
+  <div class="global-loading-box">
+    <span class="spinner global-spinner" aria-hidden="true"></span>
+    <span id="global-loading-text" class="global-loading-text" data-i18n="shell.loading">Loading...</span>
+  </div>
+</div>
 `
 
 // shellMarkup is the chrome markup with the version badge resolved. The

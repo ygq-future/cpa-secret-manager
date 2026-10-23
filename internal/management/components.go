@@ -28,6 +28,7 @@ var pageIcons = map[string]string{
 	"calendar": `<rect width="18" height="18" x="3" y="4" rx="2" ry="2"></rect><line x1="16" x2="16" y1="2" y2="6"></line><line x1="8" x2="8" y1="2" y2="6"></line><line x1="3" x2="21" y1="10" y2="10"></line>`,
 	"unit":     `<path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"></path>`,
 	"plus":     `<path d="M12 5v14M5 12h14"></path>`,
+	"save":     `<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline>`,
 	"close":    `<path d="M18 6 6 18M6 6l12 12"></path>`,
 	"copy":     `<rect x="9" y="9" width="12" height="12" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>`,
 	"check":    `<polyline points="20 6 9 17 4 12"></polyline>`,

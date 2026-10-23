@@ -156,21 +156,41 @@ function mountSelect(config) {
     }
     menu.hidden = false;
     container.classList.add('is-open');
+    var fieldParent = container.closest('.field');
+    if (fieldParent) {
+      fieldParent.classList.add('has-open-select');
+    }
     trigger.setAttribute('aria-expanded', 'true');
-    // Flip the popup when the field sits too close to the bottom of the viewport,
     // which happens inside scrollable dialogs.
     menu.classList.remove('is-dropup');
     var rect = menu.getBoundingClientRect();
-    if (rect.bottom > window.innerHeight - 8 && rect.top - rect.height > 8) {
+    var boundaryBottom = window.innerHeight;
+    var modal = container.closest('.modal');
+    if (modal) {
+      var mRect = modal.getBoundingClientRect();
+      boundaryBottom = Math.min(boundaryBottom, mRect.bottom);
+    }
+    if (rect.bottom > boundaryBottom - 8 && rect.top - rect.height > 8) {
       menu.classList.add('is-dropup');
     }
     setActive(indexOfValue(value));
     state.openSelect = component;
+    if (!menu.classList.contains('is-dropup') && modal) {
+      setTimeout(function () {
+        if (!menu.hidden && menu.scrollIntoView) {
+          menu.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+      }, 30);
+    }
   }
 
   function closeMenu() {
     menu.hidden = true;
     container.classList.remove('is-open');
+    var fieldParent = container.closest('.field');
+    if (fieldParent) {
+      fieldParent.classList.remove('has-open-select');
+    }
     trigger.setAttribute('aria-expanded', 'false');
     if (state.openSelect === component) {
       state.openSelect = null;

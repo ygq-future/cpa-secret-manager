@@ -13,21 +13,44 @@ import (
 // Manager coordinates quota rules, window states, and strategy evaluations.
 // It is concurrent-safe and designed with zero host dependencies.
 type Manager struct {
-	mu         sync.RWMutex
-	strategies map[StrategyType]Strategy
-	rules      map[string]Rule
-	states     map[string]WindowState
+	mu          sync.RWMutex
+	strategies  map[StrategyType]Strategy
+	rules       map[string]Rule
+	states      map[string]WindowState
+	modelPrices map[string]ModelPrice
 }
 
 // NewManager initializes a quota manager with standard strategies.
 func NewManager() *Manager {
 	m := &Manager{
-		strategies: make(map[StrategyType]Strategy),
-		rules:      make(map[string]Rule),
-		states:     make(map[string]WindowState),
+		strategies:  make(map[StrategyType]Strategy),
+		rules:       make(map[string]Rule),
+		states:      make(map[string]WindowState),
+		modelPrices: make(map[string]ModelPrice),
 	}
 	m.RegisterStrategy(NewTokenLimitStrategy())
 	return m
+}
+
+// SetModelPrices updates the model pricing table (3-tier prices per 1M tokens).
+func (m *Manager) SetModelPrices(prices map[string]ModelPrice) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.modelPrices = make(map[string]ModelPrice, len(prices))
+	for k, v := range prices {
+		m.modelPrices[strings.ToLower(strings.TrimSpace(k))] = v
+	}
+}
+
+// ModelPrices returns a copy of the active model pricing table.
+func (m *Manager) ModelPrices() map[string]ModelPrice {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	res := make(map[string]ModelPrice, len(m.modelPrices))
+	for k, v := range m.modelPrices {
+		res[k] = v
+	}
+	return res
 }
 
 // RegisterStrategy adds or replaces an evaluation strategy.
@@ -129,6 +152,23 @@ func (m *Manager) Check(ctx context.Context, hash string, model string, now time
 		return Decision{Allowed: true}
 	}
 
+	// Cost and dual strategies require the requested model to have a configured price.
+	if rule.Strategy == StrategyTypeCost || rule.Strategy == StrategyTypeDual {
+		trimmed := strings.ToLower(strings.TrimSpace(model))
+		if trimmed == "" {
+			return Decision{
+				Allowed: false,
+				Reason:  "model is required for cost-limited key",
+			}
+		}
+		if _, hasPrice := m.modelPrices[trimmed]; !hasPrice {
+			return Decision{
+				Allowed: false,
+				Reason:  fmt.Sprintf("model %q has no configured price for cost-limited key", model),
+			}
+		}
+	}
+
 	if len(rule.AllowedModels) > 0 && !isModelPermitted(rule.AllowedModels, model) {
 		return Decision{
 			Allowed: false,
@@ -136,26 +176,64 @@ func (m *Manager) Check(ctx context.Context, hash string, model string, now time
 		}
 	}
 
-	strategy, hasStrat := m.strategies[rule.Strategy]
-	if !hasStrat {
-		// If strategy is unknown, fail open to avoid accidental blackouts
-		return Decision{Allowed: true}
-	}
-
 	wStart, wEnd := CalculateWindow(rule.Window, rule.DurationSec, now)
 	state, hasState := m.states[hash]
 	if !hasState || !state.WindowStart.Equal(wStart) || !state.WindowEnd.Equal(wEnd) {
-		// New or rotated window
 		state = WindowState{
 			Hash:        hash,
 			WindowStart: wStart,
 			WindowEnd:   wEnd,
 			UsedValue:   0,
+			UsedCost:    0,
 		}
 		m.states[hash] = state
 	}
 
-	return strategy.Evaluate(ctx, rule, state, now)
+	// Token limit check (for token and dual strategies)
+	if rule.Strategy == StrategyTypeToken || rule.Strategy == StrategyTypeDual {
+		if rule.LimitValue > 0 && state.UsedValue >= rule.LimitValue {
+			return Decision{
+				Allowed:    false,
+				Reason:     fmt.Sprintf("token limit exceeded: %d/%d tokens used in current window", state.UsedValue, rule.LimitValue),
+				UsedValue:  state.UsedValue,
+				LimitValue: rule.LimitValue,
+				UsedCost:   state.UsedCost,
+				LimitCost:  rule.LimitCost,
+				ResetAt:    state.WindowEnd,
+			}
+		}
+	}
+
+	// Cost limit check (for cost and dual strategies)
+	if rule.Strategy == StrategyTypeCost || rule.Strategy == StrategyTypeDual {
+		if rule.LimitCost > 0 && state.UsedCost >= rule.LimitCost {
+			return Decision{
+				Allowed:    false,
+				Reason:     fmt.Sprintf("cost limit exceeded: %.4f/%.4f used in current window", state.UsedCost, rule.LimitCost),
+				UsedValue:  state.UsedValue,
+				LimitValue: rule.LimitValue,
+				UsedCost:   state.UsedCost,
+				LimitCost:  rule.LimitCost,
+				ResetAt:    state.WindowEnd,
+			}
+		}
+	}
+
+	// Fallback to registered strategy if non-standard
+	if rule.Strategy != StrategyTypeToken && rule.Strategy != StrategyTypeCost && rule.Strategy != StrategyTypeDual {
+		if strategy, hasStrat := m.strategies[rule.Strategy]; hasStrat {
+			return strategy.Evaluate(ctx, rule, state, now)
+		}
+	}
+
+	return Decision{
+		Allowed:    true,
+		UsedValue:  state.UsedValue,
+		LimitValue: rule.LimitValue,
+		UsedCost:   state.UsedCost,
+		LimitCost:  rule.LimitCost,
+		ResetAt:    state.WindowEnd,
+	}
 }
 
 // Record accounts one request's usage towards the active quota window.
@@ -172,10 +250,6 @@ func (m *Manager) Record(record usage.Record) {
 		return
 	}
 
-	strategy, hasStrat := m.strategies[rule.Strategy]
-	if !hasStrat {
-		return
-	}
 	at := record.At
 	if at.IsZero() {
 		at = time.Now().UTC()
@@ -189,13 +263,34 @@ func (m *Manager) Record(record usage.Record) {
 			WindowStart: wStart,
 			WindowEnd:   wEnd,
 			UsedValue:   0,
+			UsedCost:    0,
 		}
 	}
 
-	strategy.Accumulate(&state, record)
+	tokens := record.Detail.Total
+	if tokens == 0 && (record.Detail.Input > 0 || record.Detail.Output > 0) {
+		tokens = record.Detail.Input + record.Detail.Output
+	}
+	state.UsedValue += tokens
+
+	if p, ok := m.modelPrices[strings.ToLower(strings.TrimSpace(record.Model))]; ok {
+		inTokens := record.Detail.Input + record.Detail.CacheCreation
+		outTokens := record.Detail.Output + record.Detail.Reasoning
+		if outTokens == 0 && tokens > 0 && inTokens == 0 {
+			outTokens = tokens
+		}
+		cacheTokens := record.Detail.CacheRead + record.Detail.Cached
+		cachePrice := p.Cache
+		if cachePrice == 0 && p.Input > 0 {
+			cachePrice = p.Input
+		}
+		cost := (float64(inTokens)*p.Input + float64(outTokens)*p.Output + float64(cacheTokens)*cachePrice) / 1000000.0
+		state.UsedCost += cost
+	}
+	state.RequestCount++
+	state.LastAccess = at
 	m.states[record.Hash] = state
 }
-
 func isModelPermitted(allowed []string, model string) bool {
 	if len(allowed) == 0 {
 		return true
