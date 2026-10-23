@@ -362,10 +362,10 @@ function refreshAll(options) {
   if (!settings.silent) {
     setStatus(t('shell.loading'), false);
   }
-  return loadSettings()
+  return loadKeys()
     .then(function () {
       initDateRange();
-      return loadKeys();
+      return loadSettings();
     })
     .then(function () {
       setStatus(tf('shell.updated_at', { time: new Date().toLocaleTimeString() }), false);
@@ -1253,9 +1253,6 @@ function fetchHostModels() {
   var headers = {};
   if (clientKey) {
     headers['Authorization'] = 'Bearer ' + clientKey;
-  } else if (state.managementKey) {
-    headers['Authorization'] = 'Bearer ' + state.managementKey;
-    headers['X-Management-Key'] = state.managementKey;
   }
 
   return window.fetch(V1_MODELS_PATH, {
@@ -1278,11 +1275,7 @@ function loadAvailableModels(force) {
   }
   return fetchHostModels()
     .catch(function () {
-      return apiFetch(MODELS_PATH).then(function (payload) {
-        return extractModelIds(payload);
-      }).catch(function () {
-        return [];
-      });
+      return [];
     })
     .then(function (models) {
       var set = {};

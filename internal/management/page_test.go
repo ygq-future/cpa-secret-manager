@@ -1009,6 +1009,26 @@ func TestPage_HostModelsDiscoveryContract(t *testing.T) {
 			t.Fatalf("page script missing %s", token)
 		}
 	}
+	fetchHostModelsFn := regexp.MustCompile(`(?s)function fetchHostModels\(.*?\n\}`).FindString(script)
+	if fetchHostModelsFn == "" {
+		t.Fatal("cannot find function fetchHostModels in script")
+	}
+	if strings.Contains(fetchHostModelsFn, "managementKey") || strings.Contains(fetchHostModelsFn, "X-Management-Key") {
+		t.Fatalf("fetchHostModels must NEVER send managementKey or X-Management-Key to /v1/models:\n%s", fetchHostModelsFn)
+	}
+	if strings.Contains(script, "var MODELS_PATH") || strings.Contains(script, "PLUGIN_BASE + '/models'") {
+		t.Fatal("MODELS_PATH should be removed because plugin does not serve a /models endpoint")
+	}
+	loadAvailableModelsFn := regexp.MustCompile(`(?s)function loadAvailableModels\(.*?\n\}`).FindString(script)
+	if strings.Contains(loadAvailableModelsFn, "apiFetch") {
+		t.Fatalf("loadAvailableModels fallback must not call apiFetch:\n%s", loadAvailableModelsFn)
+	}
+	refreshAllFn := regexp.MustCompile(`(?s)function refreshAll\(options\)\s*\{.*?\n\}`).FindString(script)
+	keysIndex := strings.Index(refreshAllFn, "loadKeys()")
+	settingsIndex := strings.Index(refreshAllFn, "loadSettings()")
+	if keysIndex < 0 || settingsIndex < 0 || keysIndex > settingsIndex {
+		t.Fatalf("refreshAll must loadKeys() before loadSettings() so state.keys is available:\n%s", refreshAllFn)
+	}
 
 	nodePath, err := exec.LookPath("node")
 	if err != nil {

@@ -614,7 +614,9 @@ function renderSettings() {
   }
   renderCacheFiles();
   renderPricingList();
-  initPricingModelSelect();
+  if (state.activeTab === 'settings') {
+    initPricingModelSelect();
+  }
 }
 
 function toggleUsageEnabled() {
@@ -878,7 +880,6 @@ function bindSettingsEvents() {
   bindDecimalInput('settings-pricing-input');
   bindDecimalInput('settings-pricing-output');
   bindDecimalInput('settings-pricing-cache');
-  initPricingModelSelect();
 }
 `,
 }
