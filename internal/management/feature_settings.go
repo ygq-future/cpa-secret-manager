@@ -890,16 +890,6 @@ var helpFeature = pageFeature{
       <div class="scroll-area">
         <div class="card">
           <div class="card-body">
-            <h2 class="card-title" data-i18n="help.install_title">Installation</h2>
-            <ul class="help-list">
-              <li data-i18n="help.install_body"></li>
-              <li data-i18n="help.config_body"></li>
-              <li data-i18n="help.version_body"></li>
-            </ul>
-          </div>
-        </div>
-        <div class="card">
-          <div class="card-body">
             <h2 class="card-title" data-i18n="help.keys_title">API keys</h2>
             <ul class="help-list">
               <li data-i18n="help.keys_body"></li>
@@ -912,23 +902,33 @@ var helpFeature = pageFeature{
             <h2 class="card-title" data-i18n="help.usage_title">Token usage</h2>
             <ul class="help-list">
               <li data-i18n="help.usage_body"></li>
+              <li data-i18n="help.usage_window_body"></li>
             </ul>
           </div>
         </div>
         <div class="card">
           <div class="card-body">
-            <h2 class="card-title" data-i18n="help.privacy_title">Privacy</h2>
+            <h2 class="card-title" data-i18n="help.quota_title">Quotas &amp; Pricing</h2>
+            <ul class="help-list">
+              <li data-i18n="help.quota_pricing_body"></li>
+              <li data-i18n="help.quota_limits_body"></li>
+            </ul>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-body">
+            <h2 class="card-title" data-i18n="help.diagnostics_title">Diagnostics</h2>
+            <ul class="help-list">
+              <li data-i18n="help.diagnostics_body"></li>
+            </ul>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-body">
+            <h2 class="card-title" data-i18n="help.privacy_title">Privacy &amp; Storage</h2>
             <ul class="help-list">
               <li data-i18n="help.privacy_body"></li>
               <li data-i18n="help.state_body"></li>
-            </ul>
-          </div>
-        </div>
-        <div class="card">
-          <div class="card-body">
-            <h2 class="card-title" data-i18n="help.theme_title">Appearance</h2>
-            <ul class="help-list">
-              <li data-i18n="help.theme_body"></li>
             </ul>
           </div>
         </div>
