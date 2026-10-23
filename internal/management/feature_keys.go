@@ -733,10 +733,10 @@ function renderKeys() {
   renderStats();
 }
 
-// formatCostValue formats a cost number with dollar sign and 2 decimals.
+// formatCostValue formats a cost number with dollar sign and 3 decimals.
 function formatCostValue(val) {
   var num = Number(val) || 0;
-  return '$' + num.toFixed(2);
+  return '$' + num.toFixed(3);
 }
 
 // quotaBadgeTitle spells out the badge tooltip for token, cost, or dual rules.
@@ -2641,15 +2641,15 @@ function bindKeysEvents() {
       var val = quotaCostInput.value;
       if (val.indexOf('.') !== -1) {
         var parts = val.split('.');
-        if (parts[1].length > 2) {
-          quotaCostInput.value = parts[0] + '.' + parts[1].slice(0, 2);
+        if (parts[1].length > 3) {
+          quotaCostInput.value = parts[0] + '.' + parts[1].slice(0, 3);
         }
       }
     });
     quotaCostInput.addEventListener('blur', function () {
       var val = parseFloat(quotaCostInput.value);
       if (!isNaN(val) && val >= 0) {
-        quotaCostInput.value = val.toFixed(2);
+        quotaCostInput.value = val.toFixed(3);
       }
     });
   }

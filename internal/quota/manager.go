@@ -274,12 +274,21 @@ func (m *Manager) Record(record usage.Record) {
 	state.UsedValue += tokens
 
 	if p, ok := m.modelPrices[strings.ToLower(strings.TrimSpace(record.Model))]; ok {
-		inTokens := record.Detail.Input + record.Detail.CacheCreation
+		cacheTokens := record.Detail.CacheRead + record.Detail.Cached
+		uncachedInput := record.Detail.Input
+		totalComponents := record.Detail.Input + record.Detail.Output + record.Detail.Reasoning + cacheTokens
+		if record.Detail.Total == 0 || record.Detail.Total < totalComponents {
+			if uncachedInput >= cacheTokens {
+				uncachedInput -= cacheTokens
+			} else {
+				uncachedInput = 0
+			}
+		}
+		inTokens := uncachedInput + record.Detail.CacheCreation
 		outTokens := record.Detail.Output + record.Detail.Reasoning
-		if outTokens == 0 && tokens > 0 && inTokens == 0 {
+		if outTokens == 0 && tokens > 0 && inTokens == 0 && cacheTokens == 0 {
 			outTokens = tokens
 		}
-		cacheTokens := record.Detail.CacheRead + record.Detail.Cached
 		cachePrice := p.Cache
 		if cachePrice == 0 && p.Input > 0 {
 			cachePrice = p.Input

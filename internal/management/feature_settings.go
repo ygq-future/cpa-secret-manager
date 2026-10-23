@@ -16,17 +16,17 @@ var settingsFeature = pageFeature{
                 <div id="settings-pricing-model-select" class="pricing-select-wrap"></div>
                 <div class="input-unit-group">
                   <span class="unit-prefix">$</span>
-                  <input id="settings-pricing-input" class="unit-input" type="number" min="0" step="any" inputmode="decimal" placeholder="0.00" data-i18n-placeholder="settings.model_price_placeholder" title="Input ($/M)">
+                  <input id="settings-pricing-input" class="unit-input" type="number" min="0" step="any" inputmode="decimal" placeholder="0.000" data-i18n-placeholder="settings.model_price_placeholder" title="Input ($/M)">
                   <span class="unit-suffix is-in" data-i18n="settings.tag_input">In</span>
                 </div>
                 <div class="input-unit-group">
                   <span class="unit-prefix">$</span>
-                  <input id="settings-pricing-output" class="unit-input" type="number" min="0" step="any" inputmode="decimal" placeholder="0.00" data-i18n-placeholder="settings.model_price_placeholder" title="Output ($/M)">
+                  <input id="settings-pricing-output" class="unit-input" type="number" min="0" step="any" inputmode="decimal" placeholder="0.000" data-i18n-placeholder="settings.model_price_placeholder" title="Output ($/M)">
                   <span class="unit-suffix is-out" data-i18n="settings.tag_output">Out</span>
                 </div>
                 <div class="input-unit-group">
                   <span class="unit-prefix">$</span>
-                  <input id="settings-pricing-cache" class="unit-input" type="number" min="0" step="any" inputmode="decimal" placeholder="0.00" data-i18n-placeholder="settings.model_price_placeholder" title="Cache ($/M)">
+                  <input id="settings-pricing-cache" class="unit-input" type="number" min="0" step="any" inputmode="decimal" placeholder="0.000" data-i18n-placeholder="settings.model_price_placeholder" title="Cache ($/M)">
                   <span class="unit-suffix is-cache" data-i18n="settings.tag_cache">Cache</span>
                 </div>
                 <button id="settings-pricing-add" class="btn btn-secondary pricing-save-btn" type="button" aria-busy="false" data-i18n-title="settings.save_price" title="Save Price">
@@ -714,17 +714,17 @@ function renderPricingList() {
       bottomRow.className = 'pricing-item-bottom';
       var inBadge = document.createElement('span');
       inBadge.className = 'pricing-tag-tier';
-      inBadge.textContent = t('settings.tag_input') + ' $' + ((price && price.input) || 0).toFixed(2);
+      inBadge.textContent = t('settings.tag_input') + ' $' + ((price && price.input) || 0).toFixed(3);
       bottomRow.appendChild(inBadge);
 
       var outBadge = document.createElement('span');
       outBadge.className = 'pricing-tag-tier is-out';
-      outBadge.textContent = t('settings.tag_output') + ' $' + ((price && price.output) || 0).toFixed(2);
+      outBadge.textContent = t('settings.tag_output') + ' $' + ((price && price.output) || 0).toFixed(3);
       bottomRow.appendChild(outBadge);
 
       var cacheBadge = document.createElement('span');
       cacheBadge.className = 'pricing-tag-tier is-cache';
-      cacheBadge.textContent = t('settings.tag_cache') + ' $' + ((price && price.cache) || 0).toFixed(2);
+      cacheBadge.textContent = t('settings.tag_cache') + ' $' + ((price && price.cache) || 0).toFixed(3);
       bottomRow.appendChild(cacheBadge);
 
       item.appendChild(topRow);
@@ -734,32 +734,71 @@ function renderPricingList() {
   }
 }
 
+function syncPricingInputs(model) {
+  var inInput = byId('settings-pricing-input');
+  var outInput = byId('settings-pricing-output');
+  var cacheInput = byId('settings-pricing-cache');
+  if (!inInput || !outInput || !cacheInput) return;
+  if (!model) {
+    inInput.value = '0.000';
+    outInput.value = '0.000';
+    cacheInput.value = '0.000';
+    return;
+  }
+  var prices = (state.settings && state.settings.model_prices) || {};
+  var price = prices[model];
+  if (price) {
+    inInput.value = (price.input !== undefined) ? Number(price.input).toFixed(3) : '0.000';
+    outInput.value = (price.output !== undefined) ? Number(price.output).toFixed(3) : '0.000';
+    cacheInput.value = (price.cache !== undefined) ? Number(price.cache).toFixed(3) : '0.000';
+  } else {
+    inInput.value = '0.000';
+    outInput.value = '0.000';
+    cacheInput.value = '0.000';
+  }
+}
+
 function editPricingModel(model, price) {
   if (pricingModelSelect) {
     pricingModelSelect.setValue(model);
   }
+  syncPricingInputs(model);
   var inInput = byId('settings-pricing-input');
-  var outInput = byId('settings-pricing-output');
-  var cacheInput = byId('settings-pricing-cache');
-  if (inInput) inInput.value = (price && price.input !== undefined) ? Number(price.input).toFixed(2) : '0.00';
-  if (outInput) outInput.value = (price && price.output !== undefined) ? Number(price.output).toFixed(2) : '0.00';
-  if (cacheInput) cacheInput.value = (price && price.cache !== undefined) ? Number(price.cache).toFixed(2) : '0.00';
   if (inInput) inInput.focus();
 }
 
 var pricingModelSelect = null;
+var pricingLoadedModels = [];
+
+function buildPricingModelOptions(models) {
+  var prices = (state.settings && state.settings.model_prices) || {};
+  var opts = (models || []).map(function (m) {
+    return {
+      value: m,
+      label: m,
+      configured: Boolean(prices[m])
+    };
+  });
+  if (opts.length === 0) {
+    opts = [{ value: '', label: t('settings.pricing_empty'), configured: false }];
+  }
+  return opts;
+}
+
+function refreshPricingModelOptions() {
+  if (pricingModelSelect && pricingLoadedModels.length > 0) {
+    var opts = buildPricingModelOptions(pricingLoadedModels);
+    pricingModelSelect.setOptions(opts);
+  }
+}
 
 function initPricingModelSelect() {
   var container = byId('settings-pricing-model-select');
   if (!container) return;
   if (typeof loadAvailableModels !== 'function') return;
   loadAvailableModels().then(function (models) {
-    var opts = (models || []).map(function (m) {
-      return { value: m, label: m };
-    });
-    if (opts.length === 0) {
-      opts = [{ value: '', label: t('settings.pricing_empty') }];
-    }
+    pricingLoadedModels = models || [];
+    var opts = buildPricingModelOptions(pricingLoadedModels);
     var currentVal = pricingModelSelect ? pricingModelSelect.getValue() : (opts[0] ? opts[0].value : '');
     var exists = opts.some(function (o) { return o.value === currentVal; });
     if (!exists) {
@@ -768,11 +807,16 @@ function initPricingModelSelect() {
     pricingModelSelect = mountSelect({
       container: container,
       options: opts,
-      value: currentVal
+      value: currentVal,
+      searchable: true,
+      searchPlaceholder: t('key_form.quota_models_search'),
+      onChange: function (selectedModel) {
+        syncPricingInputs(selectedModel);
+      }
     });
+    syncPricingInputs(currentVal);
   });
 }
-
 function addPricingModel() {
   if (!pricingModelSelect) return;
   var model = pricingModelSelect.getValue();
@@ -799,14 +843,13 @@ function addPricingModel() {
     }
   }
   current[model] = {
-    input: Math.round(inVal * 100) / 100,
-    output: Math.round(outVal * 100) / 100,
-    cache: Math.round(cacheVal * 100) / 100
+    input: Math.round(inVal * 1000) / 1000,
+    output: Math.round(outVal * 1000) / 1000,
+    cache: Math.round(cacheVal * 1000) / 1000
   };
   saveModelPrices(current).then(function () {
-    inInput.value = '';
-    outInput.value = '';
-    cacheInput.value = '';
+    var selected = pricingModelSelect ? pricingModelSelect.getValue() : '';
+    syncPricingInputs(selected);
   });
 }
 
@@ -828,9 +871,17 @@ function saveModelPrices(prices) {
       if (!state.settings) state.settings = {};
       state.settings.model_prices = prices;
       renderPricingList();
+      refreshPricingModelOptions();
       showToast(t('settings.price_saved'), 'success');
+      var selected = pricingModelSelect ? pricingModelSelect.getValue() : '';
+      syncPricingInputs(selected);
       if (typeof loadAvailableModels === 'function') {
-        loadAvailableModels();
+        loadAvailableModels().then(function (m) {
+          if (m) {
+            pricingLoadedModels = m;
+            refreshPricingModelOptions();
+          }
+        });
       }
     })
     .catch(function (error) {
@@ -862,15 +913,15 @@ function bindSettingsEvents() {
       var val = el.value;
       if (val.indexOf('.') !== -1) {
         var parts = val.split('.');
-        if (parts[1].length > 2) {
-          el.value = parts[0] + '.' + parts[1].slice(0, 2);
+        if (parts[1].length > 3) {
+          el.value = parts[0] + '.' + parts[1].slice(0, 3);
         }
       }
     });
     el.addEventListener('blur', function () {
       var val = parseFloat(el.value);
       if (!isNaN(val) && val >= 0) {
-        el.value = val.toFixed(2);
+        el.value = val.toFixed(3);
       }
     });
     el.addEventListener('keydown', function (e) {

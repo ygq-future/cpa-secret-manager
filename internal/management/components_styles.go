@@ -1002,6 +1002,7 @@ input[readonly] {
 .select-option {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   min-height: 34px;
   padding: 8px 12px;
   border-radius: var(--radius-sm);
@@ -1009,11 +1010,25 @@ input[readonly] {
   font-size: 13px;
   line-height: 18px;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   cursor: pointer;
   user-select: none;
   transition: background 120ms, color 120ms;
+}
+
+.select-option-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select-option-check {
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+  margin-left: 8px;
+  color: var(--accent-green);
 }
 
 .select-option:hover,
@@ -1025,6 +1040,103 @@ input[readonly] {
   font-weight: 650;
 }
 
+
+.select-menu.has-search {
+  max-height: 260px;
+  overflow-y: hidden;
+  padding: 4px;
+}
+
+.select-search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding-bottom: 4px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.select-search-wrap > .icon {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 13px;
+  height: 13px;
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+
+.select-search-wrap input[type="text"].select-search-input,
+input[type="text"].select-search-input {
+  width: 100%;
+  height: 30px;
+  min-height: 30px;
+  padding: 0 26px 0 28px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+  font-family: var(--font-mono, inherit);
+  font-size: 12px;
+  outline: none;
+  transition: border-color 150ms, box-shadow 150ms, background 150ms;
+}
+
+.select-search-wrap input[type="text"].select-search-input:focus,
+input[type="text"].select-search-input:focus {
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+  background: var(--bg-card);
+}
+
+.select-clear-btn {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 120ms, color 120ms;
+}
+
+.select-clear-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.select-clear-btn .icon {
+  width: 9px;
+  height: 9px;
+}
+
+.select-options-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.select-empty {
+  padding: 10px 12px;
+  font-size: 12.5px;
+  color: var(--text-tertiary);
+  text-align: center;
+  user-select: none;
+}
 /* --- toggle switch --- */
 .switch-row {
   display: flex;

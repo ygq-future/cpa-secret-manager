@@ -52,8 +52,13 @@ function mountSelect(config) {
   var options = config.options || [];
   var value = config.value === undefined ? (options[0] ? options[0].value : '') : config.value;
   var onChange = config.onChange;
+  var isSearchable = Boolean(config.searchable);
+  var searchQuery = '';
 
   container.className = container.className ? container.className + ' select' : 'select';
+  if (isSearchable) {
+    container.classList.add('is-searchable');
+  }
   container.textContent = '';
 
   var trigger = document.createElement('button');
@@ -80,9 +85,50 @@ function mountSelect(config) {
   }
 
   var menu = document.createElement('div');
-  menu.className = 'select-menu';
+  menu.className = 'select-menu' + (isSearchable ? ' has-search' : '');
   menu.setAttribute('role', 'listbox');
   menu.hidden = true;
+
+  var searchInput = null;
+  var clearBtn = null;
+  var searchWrap = null;
+  var optionsList = document.createElement('div');
+  optionsList.className = 'select-options-list';
+
+  if (isSearchable) {
+    searchWrap = document.createElement('div');
+    searchWrap.className = 'select-search-wrap';
+
+    var searchIcon = iconMarkup('search', 'icon');
+    if (searchIcon) {
+      searchWrap.appendChild(searchIcon);
+    }
+
+    searchInput = document.createElement('input');
+    searchInput.type = 'text';
+    searchInput.className = 'select-search-input';
+    searchInput.placeholder = config.searchPlaceholder || t('key_form.quota_models_search');
+    searchInput.autocomplete = 'off';
+    searchInput.spellcheck = false;
+    searchInput.setAttribute('data-bwignore', 'true');
+    searchInput.setAttribute('data-lpignore', 'true');
+    searchInput.setAttribute('data-1p-ignore', 'true');
+    searchWrap.appendChild(searchInput);
+
+    clearBtn = document.createElement('button');
+    clearBtn.type = 'button';
+    clearBtn.className = 'select-clear-btn';
+    var clearIcon = iconMarkup('close', 'icon');
+    if (clearIcon) {
+      clearBtn.appendChild(clearIcon);
+    }
+    clearBtn.title = t('keys.filter_clear');
+    clearBtn.hidden = true;
+    searchWrap.appendChild(clearBtn);
+
+    menu.appendChild(searchWrap);
+  }
+  menu.appendChild(optionsList);
 
   container.appendChild(trigger);
   container.appendChild(menu);
@@ -97,7 +143,7 @@ function mountSelect(config) {
   }
 
   function optionNodes() {
-    return menu.querySelectorAll('.select-option');
+    return optionsList.querySelectorAll('.select-option');
   }
 
   function indexOfValue(target) {
@@ -114,26 +160,117 @@ function mountSelect(config) {
     label.textContent = index >= 0 ? optionLabel(options[index]) : '';
   }
 
+  function filteredOptions() {
+    if (!isSearchable || !searchQuery) {
+      return options;
+    }
+    var query = searchQuery.trim().toLowerCase();
+    if (!query) {
+      return options;
+    }
+    return options.filter(function (opt) {
+      var lbl = optionLabel(opt);
+      var val = String(opt.value || '');
+      return lbl.toLowerCase().indexOf(query) >= 0 || val.toLowerCase().indexOf(query) >= 0;
+    });
+  }
+
   function renderMenu() {
-    menu.textContent = '';
-    for (var index = 0; index < options.length; index++) {
-      var option = options[index];
-      var node = document.createElement('div');
-      node.className = 'select-option' + (option.value === value ? ' is-selected' : '');
-      node.setAttribute('role', 'option');
-      node.setAttribute('aria-selected', option.value === value ? 'true' : 'false');
-      node.setAttribute('data-value', option.value);
-      node.textContent = optionLabel(option);
-      node.addEventListener('click', (function (selected) {
-        return function (event) {
-          event.stopPropagation();
-          choose(selected);
-        };
-      })(option.value));
-      menu.appendChild(node);
+    optionsList.textContent = '';
+    var list = filteredOptions();
+    if (list.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'select-empty';
+      empty.textContent = t('key_form.quota_models_empty');
+      optionsList.appendChild(empty);
+      activeIndex = -1;
+    } else {
+      for (var index = 0; index < list.length; index++) {
+        var option = list[index];
+        var node = document.createElement('div');
+        node.className = 'select-option' + (option.value === value ? ' is-selected' : '');
+        node.setAttribute('role', 'option');
+        node.setAttribute('aria-selected', option.value === value ? 'true' : 'false');
+        node.setAttribute('data-value', option.value);
+        var labelSpan = document.createElement('span');
+        labelSpan.className = 'select-option-label';
+        labelSpan.textContent = optionLabel(option);
+        node.appendChild(labelSpan);
+        if (option.configured) {
+          var checkIcon = iconMarkup('check', 'select-option-check');
+          if (checkIcon) {
+            node.appendChild(checkIcon);
+          }
+        }
+        node.addEventListener('click', (function (selected) {
+          return function (event) {
+            event.stopPropagation();
+            choose(selected);
+          };
+        })(option.value));
+        optionsList.appendChild(node);
+      }
+      activeIndex = -1;
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].value === value) {
+          activeIndex = i;
+          break;
+        }
+      }
     }
     updateTriggerLabel();
-    activeIndex = indexOfValue(value);
+  }
+
+  if (isSearchable && searchInput) {
+    searchInput.addEventListener('input', function (event) {
+      event.stopPropagation();
+      searchQuery = this.value;
+      if (clearBtn) {
+        clearBtn.hidden = !searchQuery;
+      }
+      renderMenu();
+      setActive(0);
+    });
+    if (clearBtn) {
+      clearBtn.addEventListener('click', function (event) {
+        event.stopPropagation();
+        searchInput.value = '';
+        searchQuery = '';
+        clearBtn.hidden = true;
+        renderMenu();
+        searchInput.focus();
+      });
+    }
+    searchInput.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        closeMenu();
+        trigger.focus();
+        return;
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        event.stopPropagation();
+        var nodes = optionNodes();
+        if (activeIndex >= 0 && nodes[activeIndex]) {
+          choose(nodes[activeIndex].getAttribute('data-value'));
+        } else if (nodes.length > 0) {
+          choose(nodes[0].getAttribute('data-value'));
+        }
+        return;
+      }
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        setActive(activeIndex + 1);
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        setActive(activeIndex - 1);
+        return;
+      }
+    });
   }
 
   function setActive(index) {
@@ -154,6 +291,16 @@ function mountSelect(config) {
     if (state.openSelect && state.openSelect !== component) {
       state.openSelect.close();
     }
+    if (isSearchable) {
+      searchQuery = '';
+      if (searchInput) {
+        searchInput.value = '';
+      }
+      if (clearBtn) {
+        clearBtn.hidden = true;
+      }
+      renderMenu();
+    }
     menu.hidden = false;
     container.classList.add('is-open');
     var fieldParent = container.closest('.field');
@@ -161,7 +308,6 @@ function mountSelect(config) {
       fieldParent.classList.add('has-open-select');
     }
     trigger.setAttribute('aria-expanded', 'true');
-    // which happens inside scrollable dialogs.
     menu.classList.remove('is-dropup');
     var rect = menu.getBoundingClientRect();
     var boundaryBottom = window.innerHeight;
@@ -175,7 +321,13 @@ function mountSelect(config) {
     }
     setActive(indexOfValue(value));
     state.openSelect = component;
-    if (!menu.classList.contains('is-dropup') && modal) {
+    if (isSearchable && searchInput) {
+      setTimeout(function () {
+        if (!menu.hidden && searchInput) {
+          searchInput.focus();
+        }
+      }, 30);
+    } else if (!menu.classList.contains('is-dropup') && modal) {
       setTimeout(function () {
         if (!menu.hidden && menu.scrollIntoView) {
           menu.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -203,7 +355,7 @@ function mountSelect(config) {
     renderMenu();
     closeMenu();
     trigger.focus();
-    if (changed && onChange) {
+    if (onChange) {
       onChange(next);
     }
   }
@@ -219,6 +371,9 @@ function mountSelect(config) {
 
   container.addEventListener('keydown', function (event) {
     var key = event.key;
+    if (isSearchable && event.target === searchInput) {
+      return;
+    }
     if (key === 'Escape') {
       if (menu.hidden) {
         return;

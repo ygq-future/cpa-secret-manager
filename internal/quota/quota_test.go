@@ -402,3 +402,50 @@ func TestManager_DualRuleStrategy(t *testing.T) {
 		t.Fatal("expected dual rule blocked due to token limit exceeded")
 	}
 }
+
+func TestManager_CostCalculation_DeductsCachedTokensFromInput(t *testing.T) {
+	mgr := NewManager()
+	mgr.SetModelPrices(map[string]ModelPrice{
+		"gemini-3.8-flash-high": {Input: 0.75, Output: 3.75, Cache: 0.07},
+	})
+	now := time.Now().UTC()
+	mgr.SetRule(Rule{
+		Hash:      "h_gemini",
+		Enabled:   true,
+		Strategy:  StrategyTypeCost,
+		Window:    WindowTypeDaily,
+		LimitCost: 200.0,
+	})
+
+	// In standard Gemini telemetry, promptTokenCount (Input) includes cachedContentTokenCount (CacheRead).
+	// Total = 587,000,000 (Input) + 684,000 (Output) + 1,000,000 (Reasoning) = 588,684,000.
+	// CacheRead (479,000,000) is a subset of Input.
+	mgr.Record(usage.Record{
+		Hash:  "h_gemini",
+		Model: "gemini-3.8-flash-high",
+		At:    now,
+		Detail: usage.Detail{
+			Input:     587000000,
+			Output:    684000,
+			Reasoning: 1000000,
+			CacheRead: 479000000,
+			Total:     588684000,
+		},
+	})
+
+	st, ok := mgr.GetState("h_gemini")
+	if !ok {
+		t.Fatal("expected state for h_gemini")
+	}
+
+	// Expected calculation:
+	// uncachedInput = 587M - 479M = 108M -> 108 * 0.75 = $81.00
+	// cache = 479M * 0.07 = $33.53
+	// output = 1.684M * 3.75 = $6.315
+	// total = 81.00 + 33.53 + 6.315 = $120.845
+	// Without the fix, it would be 587 * 0.75 + 479 * 0.07 + 1.684 * 3.75 = $480.095
+	const wantCost = 120.845
+	if diff := st.UsedCost - wantCost; diff < -0.01 || diff > 0.01 {
+		t.Fatalf("UsedCost = %f, want ~%f (uncached input deduction failed)", st.UsedCost, wantCost)
+	}
+}

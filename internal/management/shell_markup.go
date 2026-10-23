@@ -142,7 +142,7 @@ const shellModals = `  </main>
               <label for="key-form-quota-cost-val" data-i18n="key_form.quota_cost_limit">Cost Limit ($)</label>
               <div class="input-unit-group">
                 <span class="unit-prefix">$</span>
-                <input id="key-form-quota-cost-val" class="unit-input" type="number" min="0.01" step="any" inputmode="decimal" placeholder="0.00">
+                <input id="key-form-quota-cost-val" class="unit-input" type="number" min="0.001" step="any" inputmode="decimal" placeholder="0.000">
                 <span class="unit-suffix">/ M</span>
               </div>
             </div>

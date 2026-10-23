@@ -1323,3 +1323,74 @@ func TestPage_SettingsLayoutStructure(t *testing.T) {
 		}
 	}
 }
+
+func TestPage_PricingSelectSearchableAndSyncInputs(t *testing.T) {
+	// 1. Verify components script supports searchable select
+	for _, token := range []string{
+		"isSearchable",
+		"select-search-wrap",
+		"select-search-input",
+		"select-options-list",
+		"select-empty",
+	} {
+		if !strings.Contains(templateScriptComponents, token) {
+			t.Fatalf("templateScriptComponents missing searchable select token %q", token)
+		}
+	}
+
+	// 2. Verify styles contain styling for search input and options container
+	for _, token := range []string{
+		".select-menu.has-search",
+		".select-search-wrap",
+		".select-search-input",
+		".select-options-list",
+	} {
+		if !strings.Contains(templateStyleComponents, token) {
+			t.Fatalf("templateStyleComponents missing select search style %q", token)
+		}
+	}
+
+	// 3. Verify settings script initializes pricing select with searchable: true and syncPricingInputs
+	script := settingsFeature.scripts
+	for _, token := range []string{
+		"syncPricingInputs",
+		"searchable: true",
+		"syncPricingInputs(selectedModel)",
+		"syncPricingInputs(currentVal)",
+	} {
+		if !strings.Contains(script, token) {
+			t.Fatalf("settings feature script missing pricing linkage token %q", token)
+		}
+	}
+
+	// 4. Verify 3 decimal precision in pricing input, formatCostValue and syncPricingInputs
+	for _, token := range []string{
+		"toFixed(3)",
+		"0.000",
+		"Math.round(inVal * 1000) / 1000",
+	} {
+		if !strings.Contains(script, token) {
+			t.Fatalf("settings feature script missing 3-decimal token %q", token)
+		}
+	}
+	if !strings.Contains(keysFeature.scripts, "toFixed(3)") {
+		t.Fatal("keys feature script missing toFixed(3) for formatCostValue")
+	}
+
+	// 5. Verify option.configured check icon in components and settings
+	if !strings.Contains(templateScriptComponents, "select-option-check") {
+		t.Fatal("components script missing select-option-check class")
+	}
+	if !strings.Contains(templateStyleComponents, ".select-option-check") {
+		t.Fatal("components style missing .select-option-check rule")
+	}
+	for _, token := range []string{
+		"buildPricingModelOptions",
+		"refreshPricingModelOptions",
+		"configured: Boolean(prices[m])",
+	} {
+		if !strings.Contains(script, token) {
+			t.Fatalf("settings script missing configured option token %q", token)
+		}
+	}
+}
