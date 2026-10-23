@@ -133,7 +133,7 @@ const shellModals = `  </main>
             <div id="key-form-quota-token-section" class="field flex-1">
               <label for="key-form-quota-limit-val" data-i18n="key_form.quota_limit">Token Limit</label>
               <div class="input-unit-group">
-                <input id="key-form-quota-limit-val" class="unit-input" type="number" min="0" step="any" inputmode="decimal" placeholder="0">
+                <input id="key-form-quota-limit-val" class="unit-input" type="number" min="1" step="any" inputmode="decimal" placeholder="0">
                 <div id="key-form-quota-limit-unit"></div>
               </div>
               <input id="key-form-quota-limit" type="hidden" value="0">
@@ -142,7 +142,7 @@ const shellModals = `  </main>
               <label for="key-form-quota-cost-val" data-i18n="key_form.quota_cost_limit">Cost Limit ($)</label>
               <div class="input-unit-group">
                 <span class="unit-prefix">$</span>
-                <input id="key-form-quota-cost-val" class="unit-input" type="number" min="0" step="any" inputmode="decimal" placeholder="0.00">
+                <input id="key-form-quota-cost-val" class="unit-input" type="number" min="0.01" step="any" inputmode="decimal" placeholder="0.00">
                 <span class="unit-suffix">/ M</span>
               </div>
             </div>

@@ -286,52 +286,9 @@ var settingsFeature = pageFeature{
 .pricing-add-bar .input-unit-group {
   flex: 1;
   min-width: 72px;
-  height: 36px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  align-items: center;
-  transition: border-color 150ms ease, box-shadow 150ms ease;
-}
-.pricing-add-bar .input-unit-group:hover {
-  border-color: var(--text-tertiary);
-}
-.pricing-add-bar .input-unit-group:focus-within {
-  border-color: var(--accent-blue);
-  box-shadow: 0 0 0 3px var(--focus-ring);
-}
-.pricing-add-bar .input-unit-group .unit-prefix {
-  background: transparent;
-  border: none;
-  padding: 0 2px 0 8px;
-  color: var(--text-tertiary);
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  font-weight: 600;
 }
 .pricing-add-bar .input-unit-group .unit-input {
-  background: transparent;
-  border: none;
-  padding: 0 2px;
-  min-width: 0;
-  width: 100%;
-  height: 100%;
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-.pricing-add-bar .input-unit-group .unit-suffix {
-  border: none;
-  border-radius: var(--radius-sm);
-  margin-right: 4px;
-  padding: 2px 6px;
-  height: 20px;
-  font-size: 11px;
-  font-weight: 600;
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  flex-shrink: 0;
+  padding: 0 4px;
 }
 .pricing-add-bar .input-unit-group .unit-suffix.is-out {
   color: var(--accent-blue-text);

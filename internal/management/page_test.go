@@ -460,6 +460,12 @@ func TestPage_ModernQuotaComponentsContract(t *testing.T) {
 		}
 	}
 
+	if !strings.Contains(script, "function validateQuotaForm") {
+		t.Fatal("key form should carry validateQuotaForm to reject zero/empty limits")
+	}
+	if !strings.Contains(script, "'error.quota_limit_required'") || !strings.Contains(script, "'error.quota_cost_required'") {
+		t.Fatal("key form should reference quota limit and cost required validation messages")
+	}
 	style := extractPageStyle(t)
 	if !strings.Contains(style, ".chip-check") || !strings.Contains(style, "max-width: 0") || !strings.Contains(style, ".chip.is-selected .chip-check") {
 		t.Fatal("the chip check icon should collapse to zero width when unselected to keep text centered")
@@ -775,6 +781,12 @@ func TestPage_DetailRowIsRecessed(t *testing.T) {
 	if count := strings.Count(style, "--bg-inset:"); count != 4 {
 		t.Fatalf("--bg-inset declared %d times, want once per theme block", count)
 	}
+	if !strings.Contains(style, ".data-table > thead > tr > th") {
+		t.Fatal("the main table thead should be specifically selected to avoid sticky collision with nested tables")
+	}
+	if !strings.Contains(style, ".detail-table thead th {\n  position: static;") {
+		t.Fatal("nested detail table thead must stay static so it never obscures the sticky main table header")
+	}
 }
 
 // TestPage_QuotaBadgeExplainsItself pins the remark-column quota tags: both tags
@@ -827,11 +839,11 @@ func TestPage_RemarkTagsShareOneShape(t *testing.T) {
 	}
 	for _, declaration := range []string{
 		"display: inline-flex",
-		"min-height: 26px",
-		"padding: 0 11px",
+		"min-height: 18px",
+		"padding: 0 6px",
 		"border-radius: var(--radius-pill)",
-		"font-size: 13px",
-		"font-weight: 650",
+		"font-size: 11.5px",
+		"font-weight: 600",
 	} {
 		if !strings.Contains(metrics[1], declaration) {
 			t.Fatalf("shared tag metrics are missing %q", declaration)
@@ -849,6 +861,9 @@ func TestPage_RemarkTagsShareOneShape(t *testing.T) {
 	}
 	if !strings.Contains(script, "remarkText.textContent") {
 		t.Fatal("the remark text should live in its own span so the nudge applies")
+	}
+	if !strings.Contains(style, ".data-table td.remark {\n  padding-top: 0;\n  padding-bottom: 0;\n}") {
+		t.Fatal("the remark table cell should strip vertical padding to fit multiline tags without inflating row height")
 	}
 }
 

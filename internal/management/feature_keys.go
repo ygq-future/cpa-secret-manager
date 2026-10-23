@@ -168,17 +168,6 @@ table.detail-table {
   color: var(--text-secondary);
 }
 
-table.detail-table {
-  width: 100%;
-  border-collapse: separate;
-  border-spacing: 0;
-  overflow: hidden;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: var(--bg-card);
-  font-size: 12px;
-}
-
 .detail-table th,
 .detail-table td {
   padding: 6px 10px;
@@ -188,6 +177,9 @@ table.detail-table {
 }
 
 .detail-table thead th {
+  position: static;
+  top: auto;
+  z-index: auto;
   background: var(--bg-tertiary);
   color: var(--text-secondary);
   font-size: 11px;
@@ -1629,6 +1621,39 @@ function setQuotaInputValues(tokens) {
   syncQuotaInput();
 }
 
+function validateQuotaForm() {
+  var qEnabled = byId('key-form-quota-enabled');
+  if (!qEnabled || !qEnabled.checked) {
+    return true;
+  }
+  var isToken = isTokenModeActive();
+  var isCost = isCostModeActive();
+  if (isToken) {
+    var qLimit = byId('key-form-quota-limit');
+    var limitValue = qLimit ? parseInt(qLimit.value, 10) || 0 : 0;
+    if (limitValue <= 0) {
+      showToast(t('error.quota_limit_required'), 'error');
+      var valInput = byId('key-form-quota-limit-val');
+      if (valInput) {
+        valInput.focus();
+      }
+      return false;
+    }
+  }
+  if (isCost) {
+    var costInput = byId('key-form-quota-cost-val');
+    var limitCost = costInput ? parseFloat(costInput.value) || 0 : 0;
+    if (limitCost <= 0) {
+      showToast(t('error.quota_cost_required'), 'error');
+      if (costInput) {
+        costInput.focus();
+      }
+      return false;
+    }
+  }
+  return true;
+}
+
 function saveQuotaForm(targetKey) {
   var qEnabled = byId('key-form-quota-enabled');
   var enabled = qEnabled ? qEnabled.checked : false;
@@ -1651,6 +1676,12 @@ function saveQuotaForm(targetKey) {
   }
 
   if (enabled) {
+    if (isToken && limitValue <= 0) {
+      return Promise.reject(new Error(t('error.quota_limit_required')));
+    }
+    if (isCost && limitCost <= 0) {
+      return Promise.reject(new Error(t('error.quota_cost_required')));
+    }
     var payload = {
       key: targetKey,
       enabled: true,
@@ -1759,6 +1790,9 @@ function copyToClipboard(value) {
 }
 
 function saveKeyForm() {
+  if (!validateQuotaForm()) {
+    return;
+  }
   var remarkInput = byId('key-form-remark');
   var remark = remarkInput ? remarkInput.value.trim() : '';
 

@@ -936,12 +936,25 @@ func TestHandle_RequestInterceptBefore_QuotaEnforcement(t *testing.T) {
 		t.Fatal("expected terminate = false before quota rule configured")
 	}
 
-	// 2. Configure quota rule via Management API: 1000 tokens / daily
+	// 2. Zero limit rejection: limit_value <= 0 or limit_cost <= 0 when enabled must return 400
+	zeroTokenBody := fmt.Sprintf(`{"hash":"%s","enabled":true,"strategy":"token","limit_value":0}`, keyHash)
+	if status, _ := managementCall(t, rt, http.MethodPut, management.RouteQuota, []byte(zeroTokenBody)); status != http.StatusBadRequest {
+		t.Fatalf("PUT quota with limit_value=0 status = %d, want 400", status)
+	}
+	zeroCostBody := fmt.Sprintf(`{"hash":"%s","enabled":true,"strategy":"cost","limit_cost":0}`, keyHash)
+	if status, _ := managementCall(t, rt, http.MethodPut, management.RouteQuota, []byte(zeroCostBody)); status != http.StatusBadRequest {
+		t.Fatalf("PUT quota with limit_cost=0 status = %d, want 400", status)
+	}
+	zeroDualBody := fmt.Sprintf(`{"hash":"%s","enabled":true,"strategy":"dual","limit_value":1000,"limit_cost":0}`, keyHash)
+	if status, _ := managementCall(t, rt, http.MethodPut, management.RouteQuota, []byte(zeroDualBody)); status != http.StatusBadRequest {
+		t.Fatalf("PUT dual quota with limit_cost=0 status = %d, want 400", status)
+	}
+
+	// 2b. Configure quota rule via Management API: 1000 tokens / daily
 	quotaBody := fmt.Sprintf(`{"hash":"%s","enabled":true,"strategy":"token","window":"daily","limit_value":1000}`, keyHash)
 	if status, _ := managementCall(t, rt, http.MethodPut, management.RouteQuota, []byte(quotaBody)); status != http.StatusOK {
 		t.Fatalf("PUT quota status = %d, want 200", status)
 	}
-
 	// 3. Intercept before usage -> still allowed
 	env = decodeEnvelope(t, rt.Handle(context.Background(), MethodRequestInterceptBefore, reqPayload))
 	if !env.OK {

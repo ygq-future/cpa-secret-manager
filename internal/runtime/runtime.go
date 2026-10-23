@@ -510,12 +510,6 @@ func (r *Runtime) SetQuota(_ context.Context, update management.QuotaUpdate) err
 		return management.NewInvalidRequest("key or hash is required")
 	}
 
-	if update.LimitValue < 0 {
-		return management.NewInvalidRequest("limit_value cannot be negative")
-	}
-	if update.LimitCost < 0 {
-		return management.NewInvalidRequest("limit_cost cannot be negative")
-	}
 	strategy := update.Strategy
 	if strategy == "" {
 		strategy = quota.StrategyTypeToken
@@ -523,6 +517,21 @@ func (r *Runtime) SetQuota(_ context.Context, update management.QuotaUpdate) err
 	window := update.Window
 	if window == "" {
 		window = quota.WindowTypeDaily
+	}
+
+	if update.LimitValue < 0 {
+		return management.NewInvalidRequest("limit_value cannot be negative")
+	}
+	if update.LimitCost < 0 {
+		return management.NewInvalidRequest("limit_cost cannot be negative")
+	}
+	if update.Enabled {
+		if (strategy == quota.StrategyTypeToken || strategy == quota.StrategyTypeDual) && update.LimitValue <= 0 {
+			return management.NewInvalidRequest("limit_value must be greater than 0")
+		}
+		if (strategy == quota.StrategyTypeCost || strategy == quota.StrategyTypeDual) && update.LimitCost <= 0 {
+			return management.NewInvalidRequest("limit_cost must be greater than 0")
+		}
 	}
 
 	rule := quota.Rule{
