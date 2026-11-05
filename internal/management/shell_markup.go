@@ -62,15 +62,17 @@ const shellModals = `  </main>
 
 <div id="key-modal" class="modal-backdrop">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="key-modal-title">
-    <h2 id="key-modal-title" data-i18n="key_modal.title">Management key</h2>
-    <p class="hint" data-i18n="key_modal.hint">The key stays in this browser tab.</p>
+    <div class="row-between modal-header-row">
+      <h2 id="key-modal-title" data-i18n="key_modal.title">CPA 管理密钥认证</h2>
+      <button id="key-modal-close" class="btn btn-secondary btn-icon" type="button" aria-label="Close">✕</button>
+    </div>
+    <p class="hint" data-i18n="key_modal.hint">CPA 原生管理界面下请输入 config.yaml 中的 Management Key；若在 CPA-Plus 等增强面板中，请输入 CPA-Plus 登录密码（通常为 cpamp_... 格式）。</p>
     <div class="field">
-      <label for="key-modal-input" data-i18n="key_modal.field">Management key</label>
-      <input id="key-modal-input" type="password" autocomplete="new-password" spellcheck="false" data-lpignore="true" data-1p-ignore data-bwignore>
+      <input id="key-modal-input" type="password" placeholder="Management Key" autocomplete="off" spellcheck="false">
     </div>
     <div class="modal-actions">
       <button id="key-modal-cancel" class="btn btn-secondary" type="button" data-i18n="shell.cancel">Cancel</button>
-      <button id="key-modal-save" class="btn btn-primary" type="button" data-i18n="shell.save">Save</button>
+      <button id="key-modal-save" class="btn btn-primary" type="button" data-i18n="key_modal.save">Save & Verify</button>
     </div>
   </div>
 </div>

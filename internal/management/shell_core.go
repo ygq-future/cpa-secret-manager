@@ -194,7 +194,7 @@ function decodeOfficialValue(raw) {
   }
 }
 
-function extractKeyFromStored(raw) {
+function extractOfficialKey(raw) {
   if (!raw) {
     return '';
   }
@@ -203,21 +203,19 @@ function extractKeyFromStored(raw) {
     return '';
   }
   var trimmed = decoded.trim();
-  var first = trimmed.charAt(0);
-  if (first !== '{' && first !== '[' && first !== '"') {
-    return normalizeKey(trimmed);
+  // Strictly require a JSON object: must start with '{' to prevent treating
+  // foreign JWTs or session tokens as keys.
+  if (trimmed.charAt(0) !== '{') {
+    return '';
   }
   try {
     var parsed = JSON.parse(trimmed);
-    if (typeof parsed === 'string') {
-      return normalizeKey(parsed);
-    }
     if (parsed && typeof parsed === 'object') {
       var payload = parsed.state && typeof parsed.state === 'object' ? parsed.state : parsed;
-      if (typeof payload.managementKey === 'string') {
+      if (typeof payload.managementKey === 'string' && payload.managementKey.trim()) {
         return normalizeKey(payload.managementKey);
       }
-      if (typeof payload.key === 'string') {
+      if (typeof payload.key === 'string' && payload.key.trim()) {
         return normalizeKey(payload.key);
       }
     }
@@ -227,10 +225,47 @@ function extractKeyFromStored(raw) {
   return '';
 }
 
+function extractPlainKey(raw) {
+  if (!raw || typeof raw !== 'string') {
+    return '';
+  }
+  var trimmed = raw.trim();
+  if (!trimmed) {
+    return '';
+  }
+  if (trimmed.charAt(0) === '"') {
+    try {
+      var parsedStr = JSON.parse(trimmed);
+      if (typeof parsedStr === 'string' && parsedStr.trim()) {
+        return normalizeKey(parsedStr);
+      }
+    } catch (_) {}
+  }
+  if (trimmed.charAt(0) === '{') {
+    try {
+      var parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === 'object') {
+        var payload = parsed.state && typeof parsed.state === 'object' ? parsed.state : parsed;
+        if (typeof payload.managementKey === 'string' && payload.managementKey.trim()) {
+          return normalizeKey(payload.managementKey);
+        }
+        if (typeof payload.key === 'string' && payload.key.trim()) {
+          return normalizeKey(payload.key);
+        }
+      }
+    } catch (_) {}
+    return '';
+  }
+  return normalizeKey(trimmed);
+}
+
 function readOfficialManagementKey() {
   var candidates = [hostWindow(), window];
   for (var index = 0; index < candidates.length; index++) {
-    var value = extractKeyFromStored(readStorage(candidates[index], 'localStorage', HOST_AUTH_STORAGE_KEY));
+    if (!candidates[index]) {
+      continue;
+    }
+    var value = extractOfficialKey(readStorage(candidates[index], 'localStorage', HOST_AUTH_STORAGE_KEY));
     if (value) {
       return value;
     }
@@ -239,15 +274,18 @@ function readOfficialManagementKey() {
 }
 
 function readPlainManagementKey() {
-  var candidates = [hostWindow(), window];
-  var names = ['managementKey', 'management_key', 'management-key', 'cpa-management-key'];
+  var candidates = [window, hostWindow()];
+  var names = ['management_key', 'management-key', 'managementKey', 'cpa_management_key', MANUAL_KEY_STORAGE, 'admin_key', 'key'];
   for (var index = 0; index < candidates.length; index++) {
+    if (!candidates[index]) {
+      continue;
+    }
     for (var nameIndex = 0; nameIndex < names.length; nameIndex++) {
-      var value = extractKeyFromStored(readStorage(candidates[index], 'localStorage', names[nameIndex]));
+      var value = extractPlainKey(readStorage(candidates[index], 'localStorage', names[nameIndex]));
       if (value) {
         return value;
       }
-      value = extractKeyFromStored(readStorage(candidates[index], 'sessionStorage', names[nameIndex]));
+      value = extractPlainKey(readStorage(candidates[index], 'sessionStorage', names[nameIndex]));
       if (value) {
         return value;
       }
@@ -258,38 +296,41 @@ function readPlainManagementKey() {
 
 function readKeyFromURL() {
   var sources = [];
+  try {
+    if (window.location && window.location.search) {
+      sources.push(window.location.search);
+    }
+  } catch (_) {}
   var parent = hostWindow();
   if (parent) {
     try {
-      sources.push(parent.location.search);
-    } catch (error) {
-      /* cross-origin parent */
-    }
+      if (parent.location && parent.location.search) {
+        sources.push(parent.location.search);
+      }
+    } catch (_) {}
   }
-  sources.push(window.location.search);
   for (var index = 0; index < sources.length; index++) {
     if (!sources[index]) {
       continue;
     }
-    var params = new window.URLSearchParams(sources[index]);
-    var value = normalizeKey(params.get('key') || params.get('management_key') || params.get('management-key') || '');
-    if (value) {
-      return value;
-    }
+    try {
+      var params = new window.URLSearchParams(sources[index]);
+      var value = normalizeKey(params.get('key') || params.get('management_key') || params.get('management-key') || '');
+      if (value) {
+        return value;
+      }
+    } catch (_) {}
   }
   return '';
 }
 
 function resolveManagementKey() {
-  var key = readOfficialManagementKey();
+  var key = readPlainManagementKey();
   if (!key) {
-    key = readPlainManagementKey();
+    key = readOfficialManagementKey();
   }
   if (!key) {
     key = readKeyFromURL();
-  }
-  if (!key) {
-    key = normalizeKey(readStorage(window, 'sessionStorage', MANUAL_KEY_STORAGE));
   }
   state.managementKey = key;
   return key;
@@ -319,7 +360,15 @@ function saveManagementKey() {
   }
   state.managementKey = value;
   state.authBlocked = false;
+  writeStorage(window, 'localStorage', 'management_key', value);
+  writeStorage(window, 'sessionStorage', 'management_key', value);
+  writeStorage(window, 'localStorage', MANUAL_KEY_STORAGE, value);
   writeStorage(window, 'sessionStorage', MANUAL_KEY_STORAGE, value);
+  var parent = hostWindow();
+  if (parent) {
+    writeStorage(parent, 'localStorage', 'management_key', value);
+    writeStorage(parent, 'sessionStorage', 'management_key', value);
+  }
   closeKeyModal();
   refreshAll({});
 }
@@ -837,8 +886,18 @@ function bindGlobalEvents() {
   });
 
   bindClick('key-modal-cancel', closeKeyModal);
+  bindClick('key-modal-close', closeKeyModal);
   bindClick('key-modal-save', saveManagementKey);
   bindBackdrop('key-modal');
+  var keyModalInput = byId('key-modal-input');
+  if (keyModalInput) {
+    keyModalInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        saveManagementKey();
+      }
+    });
+  }
 
   bindSubmit('key-form', saveKeyForm);
   bindClick('key-form-generate', generateKeyIntoForm);

@@ -615,9 +615,17 @@ func TestPage_ResistsPasswordManagerAutofill(t *testing.T) {
 	}
 
 	keyTag := regexp.MustCompile(`<input id="key-modal-input"[^>]*>`).FindString(PageHTML)
-	for _, attr := range []string{`autocomplete="new-password"`, `data-lpignore="true"`, `data-1p-ignore`, `data-bwignore`} {
+	if keyTag == "" {
+		t.Fatal("management key input not found")
+	}
+	for _, attr := range []string{`type="password"`, `placeholder="Management Key"`, `autocomplete="off"`} {
 		if !strings.Contains(keyTag, attr) {
-			t.Fatalf("management key input should carry %s so the page is not treated as a login form", attr)
+			t.Fatalf("management key input should carry %s for password manager identification", attr)
+		}
+	}
+	for _, forbidden := range []string{`autocomplete="new-password"`, `data-bwignore`} {
+		if strings.Contains(keyTag, forbidden) {
+			t.Fatalf("management key input must not carry %s which causes Bitwarden to trigger password generator or ignore credentials", forbidden)
 		}
 	}
 
@@ -1392,5 +1400,114 @@ func TestPage_PricingSelectSearchableAndSyncInputs(t *testing.T) {
 		if !strings.Contains(script, token) {
 			t.Fatalf("settings script missing configured option token %q", token)
 		}
+	}
+}
+
+func TestPage_ManagementKeyResolutionAndPersistence(t *testing.T) {
+	script := extractPageScript(t)
+
+	// Verify persistence writes to localStorage and sessionStorage under standard management_key
+	for _, token := range []string{
+		"writeStorage(window, 'localStorage', 'management_key', value)",
+		"writeStorage(window, 'sessionStorage', 'management_key', value)",
+		"writeStorage(window, 'localStorage', MANUAL_KEY_STORAGE, value)",
+		"writeStorage(window, 'sessionStorage', MANUAL_KEY_STORAGE, value)",
+		"extractOfficialKey",
+		"extractPlainKey",
+		"readPlainManagementKey",
+		"readOfficialManagementKey",
+	} {
+		if !strings.Contains(script, token) {
+			t.Fatalf("page script missing key persistence/resolution token %q", token)
+		}
+	}
+
+	// Verify modal markup reflects updated title and hint
+	for _, fragment := range []string{
+		`id="key-modal-close"`,
+		`data-i18n="key_modal.title"`,
+		`data-i18n="key_modal.hint"`,
+		`data-i18n="key_modal.save"`,
+	} {
+		if !strings.Contains(PageHTML, fragment) {
+			t.Fatalf("PageHTML missing key modal element/attribute %q", fragment)
+		}
+	}
+
+	// Execute JS evaluation in Node to verify extractOfficialKey and resolveManagementKey behavior
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed; skipping runtime JS evaluation test")
+	}
+
+	testRunner := `
+var window = { location: { search: '' } };
+global.window = window;
+var mockLocalStorage = {};
+var mockSessionStorage = {};
+var state = { managementKey: '', authBlocked: false };
+var HOST_AUTH_STORAGE_KEY = 'cli-proxy-auth';
+var MANUAL_KEY_STORAGE = 'cpa-secret-manager-key';
+var ENC_PREFIX = 'enc::v1::';
+var STORAGE_SALT = 'cli-proxy-api-webui::secure-storage';
+
+function hostWindow() { return null; }
+function readStorage(source, kind, key) {
+  if (kind === 'localStorage') return mockLocalStorage[key] || '';
+  if (kind === 'sessionStorage') return mockSessionStorage[key] || '';
+  return '';
+}
+function writeStorage(source, kind, key, value) {
+  if (kind === 'localStorage') {
+    if (value === '') delete mockLocalStorage[key];
+    else mockLocalStorage[key] = value;
+  }
+  if (kind === 'sessionStorage') {
+    if (value === '') delete mockSessionStorage[key];
+    else mockSessionStorage[key] = value;
+  }
+  return true;
+}
+function normalizeKey(value) {
+  if (typeof value !== 'string') return '';
+  var trimmed = value.trim();
+  if (trimmed.slice(0, 7).toLowerCase() === 'bearer ') trimmed = trimmed.slice(7).trim();
+  return trimmed;
+}
+function decodeOfficialValue(raw) {
+  return raw;
+}
+` + script[strings.Index(script, "function extractOfficialKey(raw) {"):strings.Index(script, "function readHostThemePreference() {")] + `
+
+// 1. Test extractOfficialKey rejects non-JSON strings and JWTs
+var sampleJWT = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
+var extractedFromJWT = extractOfficialKey(sampleJWT);
+if (extractedFromJWT !== '') {
+  console.error('extractOfficialKey MUST reject JWT strings, got:', extractedFromJWT);
+  process.exit(1);
+}
+
+// 2. Test extractOfficialKey accepts valid JSON
+var validOfficialJSON = JSON.stringify({ state: { managementKey: 'sk-official-key' } });
+var extractedValid = extractOfficialKey(validOfficialJSON);
+if (extractedValid !== 'sk-official-key') {
+  console.error('extractOfficialKey should parse valid JSON, got:', extractedValid);
+  process.exit(1);
+}
+
+// 3. Test readPlainManagementKey reads localStorage['management_key']
+mockLocalStorage['management_key'] = 'sk-persisted-key';
+var resolved = resolveManagementKey();
+if (resolved !== 'sk-persisted-key') {
+  console.error('resolveManagementKey should pick up localStorage management_key, got:', resolved);
+  process.exit(1);
+}
+`
+	scriptPath := filepath.Join(t.TempDir(), "key_test.js")
+	if err := os.WriteFile(scriptPath, []byte(testRunner), 0o600); err != nil {
+		t.Fatalf("write key_test.js: %v", err)
+	}
+	if output, err := exec.Command(nodePath, scriptPath).CombinedOutput(); err != nil {
+		t.Fatalf("node key_test.js failed: %v\n%s", err, output)
 	}
 }

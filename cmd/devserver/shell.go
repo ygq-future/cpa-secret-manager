@@ -17,9 +17,10 @@ import (
 // plugin page renders inside a real host, so layout and scroll behaviour can be
 // judged 1:1. Theme and language are switched from the console, mirroring the
 // `window.setTheme(...)` hook the sibling plugin exposes:
-//
 //	window.setTheme('auto' | 'light' | 'white' | 'dark')
 //	window.setLanguage('zh-CN' | 'en-US')
+//	window.setManagementKey('devkey')
+//	window.clearManagementKey()
 //	window.seedDemo(3)
 const hostShellTemplate = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -69,14 +70,42 @@ iframe { display: block; width: 100%; height: 100%; border: 0; background: var(-
     return JSON.stringify({ state: state, version: 0 });
   }
 
-  function storeManagementKey() {
-    window.localStorage.setItem('cli-proxy-auth', obfuscate(zustand({
-      apiBase: window.location.origin,
-      managementKey: MANAGEMENT_KEY,
-      rememberPassword: true
-    })));
-    window.localStorage.setItem('isLoggedIn', 'true');
+  function storeManagementKey(key) {
+    var k = typeof key === 'string' ? key : MANAGEMENT_KEY;
+    if (k) {
+      window.localStorage.setItem('management_key', k);
+      window.localStorage.setItem('cli-proxy-auth', obfuscate(zustand({
+        apiBase: window.location.origin,
+        managementKey: k,
+        rememberPassword: true
+      })));
+      window.localStorage.setItem('isLoggedIn', 'true');
+    } else {
+      window.localStorage.removeItem('management_key');
+      window.localStorage.removeItem('cli-proxy-auth');
+      window.localStorage.removeItem('isLoggedIn');
+      window.localStorage.removeItem('cpa-secret-manager-key');
+      window.sessionStorage.removeItem('management_key');
+      window.sessionStorage.removeItem('cpa-secret-manager-key');
+    }
   }
+
+  window.setManagementKey = function (key) {
+    var val = typeof key === 'string' ? key : MANAGEMENT_KEY;
+    storeManagementKey(val);
+    reloadFrame();
+    return val ? 'management key set: ' + val : 'management key cleared';
+  };
+
+  window.clearManagementKey = function () {
+    storeManagementKey('');
+    reloadFrame();
+    return 'management key cleared; iframe reloaded into unauthenticated state';
+  };
+
+  window.resetManagementKey = function () {
+    return window.setManagementKey(MANAGEMENT_KEY);
+  };
 
   function reloadFrame() {
     var frame = byId('plugin-frame');
@@ -125,7 +154,9 @@ iframe { display: block; width: 100%; height: 100%; border: 0; background: var(-
     });
   };
 
-  storeManagementKey();
+  if (window.localStorage.getItem('management_key') === null && window.localStorage.getItem('cli-proxy-auth') === null) {
+    storeManagementKey(MANAGEMENT_KEY);
+  }
 
   var stored = window.localStorage.getItem('cli-proxy-theme');
   var preference = 'auto';

@@ -38,9 +38,11 @@ go run ./cmd/devserver -addr 0.0.0.0:8080
 外壳本身不渲染任何 DOM：**仿真器里看到的就是插件页在真实宿主里的样子**，布局与滚动行为都是 1:1。因此主题与语言在控制台切换（与 `antigravity-priority` 暴露的 `window.setTheme` 同形）：
 
 ```js
-setTheme('dark')      // 'auto' | 'light' | 'white' | 'dark'，写入 cli-proxy-theme
-setLanguage('en-US')  // 'zh-CN' | 'en-US'，写入 cli-proxy-language 并重载页面
-seedDemo(3)           // 生成 3 把官方格式密钥、备注与用量，再重载页面
+setTheme('dark')          // 'auto' | 'light' | 'white' | 'dark'，写入 cli-proxy-theme
+setLanguage('en-US')      // 'zh-CN' | 'en-US'，写入 cli-proxy-language 并重载页面
+clearManagementKey()      // 清空管理密钥，触发认证模态框以测试 Bitwarden 填充
+setManagementKey('devkey')// 设置管理密钥并重载页面
+seedDemo(3)               // 生成 3 把官方格式密钥、备注与用量，再重载页面
 ```
 
 `seedDemo` 等价于 `POST /dev/seed?keys=3`：生成官方格式密钥、写入备注，并为每把密钥注入 3 个模型的用量记录。

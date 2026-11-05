@@ -250,6 +250,11 @@ func TestDevHost_ServesPagesAndPluginList(t *testing.T) {
 	if status != http.StatusOK || !strings.Contains(string(body), "plugin-frame") {
 		t.Fatalf("control panel status = %d, want the iframe harness", status)
 	}
+	for _, fn := range []string{"setManagementKey", "clearManagementKey", "storeManagementKey"} {
+		if !strings.Contains(string(body), fn) {
+			t.Fatalf("control panel missing management key helper %q", fn)
+		}
+	}
 
 	status, body = call(t, server, http.MethodGet, "/v0/resource/plugins/cpa-secret-manager/keys", "", false)
 	if status != http.StatusOK {

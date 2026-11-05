@@ -356,6 +356,10 @@ const templateStyleOverlays = `
   overflow: visible;
 }
 
+#key-modal .modal {
+  width: min(480px, calc(100vw - 32px));
+}
+
 .failures-filter-bar {
   display: flex;
   align-items: center;
