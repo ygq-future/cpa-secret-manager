@@ -854,7 +854,7 @@ function buildKeyRow(index, value, remark, usage) {
     } else if ((entryQuota.strategy === 'token' && entryQuota.limit_value > 0) || (entryQuota.strategy === 'cost' && entryQuota.limit_cost > 0) || (entryQuota.strategy === 'dual' && (entryQuota.limit_value > 0 || entryQuota.limit_cost > 0))) {
       tagRow.appendChild(buildQuotaBadge(entryQuota));
     }
-    if (entryQuota.reset_at) {
+    if (entryQuota.reset_at && ((entryQuota.strategy === 'token' && entryQuota.limit_value > 0) || (entryQuota.strategy === 'cost' && entryQuota.limit_cost > 0) || (entryQuota.strategy === 'dual' && (entryQuota.limit_value > 0 || entryQuota.limit_cost > 0)))) {
       tagRow.appendChild(buildQuotaResetBadge(entryQuota));
     }
     if (Array.isArray(entryQuota.allowed_models) && entryQuota.allowed_models.length > 0) {
@@ -1324,6 +1324,8 @@ function syncQuotaModeUI(overrideAllowed) {
   var isCost = isCostModeActive();
   var tokenBtn = byId('key-form-quota-mode-token');
   var costBtn = byId('key-form-quota-mode-cost');
+  var windowRow = byId('key-form-quota-window-row');
+  var limitsRow = byId('key-form-quota-limits-row');
   var tokenSection = byId('key-form-quota-token-section');
   var costSection = byId('key-form-quota-cost-section');
   var dualHint = byId('key-form-quota-dual-hint');
@@ -1331,12 +1333,20 @@ function syncQuotaModeUI(overrideAllowed) {
 
   if (tokenBtn) tokenBtn.classList.toggle('is-active', isToken);
   if (costBtn) costBtn.classList.toggle('is-active', isCost);
+  if (windowRow) windowRow.hidden = !(isToken || isCost);
+  if (limitsRow) limitsRow.hidden = !(isToken || isCost);
   if (tokenSection) tokenSection.hidden = !isToken;
   if (costSection) costSection.hidden = !isCost;
   if (dualHint) dualHint.hidden = !(isToken && isCost);
 
   if (modelsHint) {
-    modelsHint.textContent = isCost ? t('key_form.quota_cost_hint') : t('key_form.quota_models_hint');
+    if (isCost) {
+      modelsHint.textContent = t('key_form.quota_cost_hint');
+    } else if (!isToken) {
+      modelsHint.textContent = t('key_form.quota_model_only_hint');
+    } else {
+      modelsHint.textContent = t('key_form.quota_models_hint');
+    }
   }
 
   var currentAllowed = overrideAllowed !== undefined ? overrideAllowed : readSelectedModels();
@@ -1453,11 +1463,13 @@ function applyQuotaForm(quota) {
   } else if (quota.strategy === 'cost') {
     setQuotaModeActive('token', false);
     setQuotaModeActive('cost', true);
+  } else if (quota.strategy === 'none' || quota.strategy === 'model' || (!quota.limit_value && !quota.limit_cost && Array.isArray(quota.allowed_models) && quota.allowed_models.length > 0)) {
+    setQuotaModeActive('token', false);
+    setQuotaModeActive('cost', false);
   } else {
     setQuotaModeActive('token', true);
     setQuotaModeActive('cost', false);
   }
-
   syncQuotaModeUI(quota.allowed_models || []);
 }
 function readSelectedModels() {
@@ -1621,6 +1633,13 @@ function validateQuotaForm() {
   }
   var isToken = isTokenModeActive();
   var isCost = isCostModeActive();
+  var selectedModels = readSelectedModels();
+
+  if (!isToken && !isCost && selectedModels.length === 0) {
+    showToast(t('error.quota_rule_required'), 'error');
+    return false;
+  }
+
   if (isToken) {
     var qLimit = byId('key-form-quota-limit');
     var limitValue = qLimit ? parseInt(qLimit.value, 10) || 0 : 0;
@@ -1643,6 +1662,10 @@ function validateQuotaForm() {
       }
       return false;
     }
+    if (selectedModels.length === 0) {
+      showToast(t('error.quota_cost_models_required'), 'error');
+      return false;
+    }
   }
   return true;
 }
@@ -1661,19 +1684,27 @@ function saveQuotaForm(targetKey) {
 
   var isToken = isTokenModeActive();
   var isCost = isCostModeActive();
-  var strategy = 'token';
+  var strategy = 'none';
   if (isToken && isCost) {
     strategy = 'dual';
   } else if (isCost) {
     strategy = 'cost';
+  } else if (isToken) {
+    strategy = 'token';
   }
 
   if (enabled) {
+    if (!isToken && !isCost && selectedModels.length === 0) {
+      return Promise.reject(new Error(t('error.quota_rule_required')));
+    }
     if (isToken && limitValue <= 0) {
       return Promise.reject(new Error(t('error.quota_limit_required')));
     }
     if (isCost && limitCost <= 0) {
       return Promise.reject(new Error(t('error.quota_cost_required')));
+    }
+    if (isCost && selectedModels.length === 0) {
+      return Promise.reject(new Error(t('error.quota_cost_models_required')));
     }
     var payload = {
       key: targetKey,
@@ -1687,7 +1718,6 @@ function saveQuotaForm(targetKey) {
     };
     return apiFetch(QUOTA_PATH, { method: 'PUT', body: JSON.stringify(payload) });
   }
-
   return apiFetch(QUOTA_PATH + '?key=' + encodeURIComponent(targetKey), { method: 'DELETE' }).catch(function () {
     return null;
   });
@@ -2614,13 +2644,9 @@ function bindKeysEvents() {
     var isToken = isTokenModeActive();
     var isCost = isCostModeActive();
     if (which === 'token') {
-      var nextToken = !isToken;
-      if (!nextToken && !isCost) return;
-      setQuotaModeActive('token', nextToken);
+      setQuotaModeActive('token', !isToken);
     } else {
-      var nextCost = !isCost;
-      if (!isToken && !nextCost) return;
-      setQuotaModeActive('cost', nextCost);
+      setQuotaModeActive('cost', !isCost);
     }
     syncQuotaModeUI();
   }

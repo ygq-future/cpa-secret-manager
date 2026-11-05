@@ -103,7 +103,7 @@ const shellModals = `  </main>
           {{TOGGLE_QUOTA}}
         </div>
         <div id="key-form-quota-fields" class="quota-fields" hidden>
-          <div class="field-row">
+          <div class="field-row" id="key-form-quota-window-row">
             <div class="field flex-1">
               <span class="field-label" id="key-form-quota-window-label" data-i18n="key_form.quota_window">Time window period</span>
               <div id="key-form-quota-window"></div>

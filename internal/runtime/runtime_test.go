@@ -1137,3 +1137,65 @@ func TestHandle_RequestInterceptBefore_DualAndCostQuota(t *testing.T) {
 		t.Fatalf("expected UsedCost ~ 2.5, got %f", q.UsedCost)
 	}
 }
+
+func TestHandle_ModelOnlyAndTokenOnlyQuotaRules(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	rt := registerRuntime(t, statePath)
+
+	apiKey := "sk-test-model-only-key"
+	keyHash := remarks.Index(apiKey)
+
+	// 1. Attempt to enable quota with no token limit, no cost limit, and no allowed models -> 400
+	emptyQuotaBody := fmt.Sprintf(`{"hash":"%s","enabled":true,"strategy":"none","allowed_models":[]}`, keyHash)
+	if status, _ := managementCall(t, rt, http.MethodPut, management.RouteQuota, []byte(emptyQuotaBody)); status != http.StatusBadRequest {
+		t.Fatalf("PUT empty quota status = %d, want 400", status)
+	}
+
+	// 2. Enable model-only rule with allowed models: ["gpt-4o", "claude-3-7-sonnet"]
+	modelOnlyBody := fmt.Sprintf(`{"hash":"%s","enabled":true,"strategy":"none","allowed_models":["gpt-4o","claude-3-7-sonnet"]}`, keyHash)
+	if status, body := managementCall(t, rt, http.MethodPut, management.RouteQuota, []byte(modelOnlyBody)); status != http.StatusOK {
+		t.Fatalf("PUT model-only quota status = %d, want 200, body=%s", status, body)
+	}
+
+	// 3. Verify QuotaSummary has empty reset_at and exceeded is false
+	summary, ok, err := rt.Quota(context.Background(), keyHash)
+	if err != nil || !ok {
+		t.Fatalf("Quota lookup failed: ok=%v, err=%v", ok, err)
+	}
+	if summary.ResetAt != "" {
+		t.Fatalf("expected empty ResetAt for model-only rule, got %q", summary.ResetAt)
+	}
+	if summary.Exceeded {
+		t.Fatal("expected Exceeded = false for model-only rule")
+	}
+
+	// 4. Request allowed model -> 200
+	reqAllowed, _ := json.Marshal(map[string]any{
+		"headers": map[string][]string{"Authorization": {"Bearer " + apiKey}},
+		"model":   "gpt-4o",
+	})
+	env := decodeEnvelope(t, rt.Handle(context.Background(), MethodRequestInterceptBefore, reqAllowed))
+	var respAllowed RequestInterceptResponse
+	_ = json.Unmarshal(env.Result, &respAllowed)
+	if respAllowed.Terminate {
+		t.Fatalf("expected allowed model to pass intercept, got terminated: %+v", respAllowed)
+	}
+
+	// 5. Request disallowed model -> 403 Forbidden without reset_at message
+	reqDisallowed, _ := json.Marshal(map[string]any{
+		"headers": map[string][]string{"Authorization": {"Bearer " + apiKey}},
+		"model":   "gemini-2.5-pro",
+	})
+	env = decodeEnvelope(t, rt.Handle(context.Background(), MethodRequestInterceptBefore, reqDisallowed))
+	var respDisallowed RequestInterceptResponse
+	_ = json.Unmarshal(env.Result, &respDisallowed)
+	if !respDisallowed.Terminate || respDisallowed.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected disallowed model blocked with 403, got %+v", respDisallowed)
+	}
+	if !strings.Contains(respDisallowed.ResponseBody, `model \"gemini-2.5-pro\" is not permitted`) {
+		t.Fatalf("unexpected response body: %s", respDisallowed.ResponseBody)
+	}
+	if strings.Contains(respDisallowed.ResponseBody, "Quota will reset at") {
+		t.Fatalf("model-only restriction should not contain reset message: %s", respDisallowed.ResponseBody)
+	}
+}

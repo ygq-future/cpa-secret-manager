@@ -449,3 +449,77 @@ func TestManager_CostCalculation_DeductsCachedTokensFromInput(t *testing.T) {
 		t.Fatalf("UsedCost = %f, want ~%f (uncached input deduction failed)", st.UsedCost, wantCost)
 	}
 }
+
+func TestManager_ModelOnlyRestriction(t *testing.T) {
+	mgr := NewManager()
+	now := time.Date(2026, 10, 19, 10, 0, 0, 0, time.UTC)
+
+	mgr.SetRule(Rule{
+		Hash:          "h_model_only",
+		Enabled:       true,
+		Strategy:      StrategyTypeNone,
+		Window:        WindowTypeDaily,
+		AllowedModels: []string{"gpt-5.6", "claude-3-7-sonnet"},
+	})
+
+	// 1. Whitelisted model -> allowed
+	dec := mgr.Check(context.Background(), "h_model_only", "gpt-5.6", now)
+	if !dec.Allowed {
+		t.Fatalf("expected gpt-5.6 allowed under model-only rule, got %+v", dec)
+	}
+
+	// 2. Non-whitelisted model -> rejected with reason
+	dec = mgr.Check(context.Background(), "h_model_only", "gemini-2.5-flash", now)
+	if dec.Allowed {
+		t.Fatal("expected non-whitelisted model to be rejected under model-only rule")
+	}
+	if dec.Reason != `model "gemini-2.5-flash" is not permitted for this API key` {
+		t.Fatalf("unexpected reason: %q", dec.Reason)
+	}
+
+	// 3. Record huge usage: should not block whitelisted model because there is no token/cost limit
+	mgr.Record(usage.Record{
+		Hash:   "h_model_only",
+		Model:  "gpt-5.6",
+		At:     now,
+		Detail: usage.Detail{Total: 100000000},
+	})
+	dec = mgr.Check(context.Background(), "h_model_only", "gpt-5.6", now)
+	if !dec.Allowed {
+		t.Fatalf("model-only rule should not be blocked by token consumption, got %+v", dec)
+	}
+}
+
+func TestManager_TokenOnlyWithoutModelRestriction(t *testing.T) {
+	mgr := NewManager()
+	now := time.Date(2026, 10, 19, 10, 0, 0, 0, time.UTC)
+
+	mgr.SetRule(Rule{
+		Hash:       "h_token_only",
+		Enabled:    true,
+		Strategy:   StrategyTypeToken,
+		Window:     WindowTypeDaily,
+		LimitValue: 1000,
+		// AllowedModels is empty: any model is permitted until limit is reached
+	})
+
+	// 1. Any model allowed initially
+	dec := mgr.Check(context.Background(), "h_token_only", "any-random-model", now)
+	if !dec.Allowed {
+		t.Fatalf("expected any model allowed before token limit reached, got %+v", dec)
+	}
+
+	// 2. Consume up to limit
+	mgr.Record(usage.Record{
+		Hash:   "h_token_only",
+		Model:  "any-random-model",
+		At:     now,
+		Detail: usage.Detail{Total: 1000},
+	})
+
+	// 3. Exceeded -> blocked
+	dec = mgr.Check(context.Background(), "h_token_only", "any-random-model", now)
+	if dec.Allowed {
+		t.Fatal("expected request blocked after token limit exceeded")
+	}
+}

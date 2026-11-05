@@ -18,6 +18,10 @@ const (
 	StrategyTypeCost StrategyType = "cost"
 	// StrategyTypeDual limits both total tokens and cost in a window; either exceeded blocks.
 	StrategyTypeDual StrategyType = "dual"
+	// StrategyTypeNone restricts allowed models or unmetered rules without token/cost limits.
+	StrategyTypeNone StrategyType = "none"
+	// StrategyTypeModel is an alias of StrategyTypeNone for model-only restrictions.
+	StrategyTypeModel StrategyType = "model"
 )
 
 // ModelPrice specifies 3-tier pricing (input, output, cache) per million tokens.

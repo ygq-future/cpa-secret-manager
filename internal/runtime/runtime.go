@@ -512,7 +512,17 @@ func (r *Runtime) SetQuota(_ context.Context, update management.QuotaUpdate) err
 
 	strategy := update.Strategy
 	if strategy == "" {
-		strategy = quota.StrategyTypeToken
+		if update.LimitCost > 0 && update.LimitValue > 0 {
+			strategy = quota.StrategyTypeDual
+		} else if update.LimitCost > 0 {
+			strategy = quota.StrategyTypeCost
+		} else if update.LimitValue > 0 {
+			strategy = quota.StrategyTypeToken
+		} else if len(update.AllowedModels) > 0 {
+			strategy = quota.StrategyTypeNone
+		} else {
+			strategy = quota.StrategyTypeToken
+		}
 	}
 	window := update.Window
 	if window == "" {
@@ -532,8 +542,10 @@ func (r *Runtime) SetQuota(_ context.Context, update management.QuotaUpdate) err
 		if (strategy == quota.StrategyTypeCost || strategy == quota.StrategyTypeDual) && update.LimitCost <= 0 {
 			return management.NewInvalidRequest("limit_cost must be greater than 0")
 		}
+		if (strategy == quota.StrategyTypeNone || strategy == quota.StrategyTypeModel) && len(update.AllowedModels) == 0 && update.LimitValue <= 0 && update.LimitCost <= 0 {
+			return management.NewInvalidRequest("at least one restriction must be configured (tokens, cost, or allowed models)")
+		}
 	}
-
 	rule := quota.Rule{
 		Hash:          hash,
 		Enabled:       update.Enabled,
@@ -616,6 +628,14 @@ func (r *Runtime) buildQuotaSummary(hash string, rule quota.Rule) *management.Qu
 		}
 	}
 
+	var windowStartStr, windowEndStr, resetAtStr string
+	hasMeteredLimit := (rule.Strategy == quota.StrategyTypeToken || rule.Strategy == quota.StrategyTypeCost || rule.Strategy == quota.StrategyTypeDual) && (rule.LimitValue > 0 || rule.LimitCost > 0)
+	if hasMeteredLimit {
+		windowStartStr = formatTimestamp(wStart)
+		windowEndStr = formatTimestamp(wEnd)
+		resetAtStr = formatTimestamp(wEnd)
+	}
+
 	return &management.QuotaSummary{
 		Enabled:       rule.Enabled,
 		Strategy:      rule.Strategy,
@@ -626,13 +646,12 @@ func (r *Runtime) buildQuotaSummary(hash string, rule quota.Rule) *management.Qu
 		LimitCost:     rule.LimitCost,
 		UsedCost:      usedCost,
 		AllowedModels: rule.AllowedModels,
-		WindowStart:   formatTimestamp(wStart),
-		WindowEnd:     formatTimestamp(wEnd),
-		ResetAt:       formatTimestamp(wEnd),
+		WindowStart:   windowStartStr,
+		WindowEnd:     windowEndStr,
+		ResetAt:       resetAtStr,
 		Exceeded:      exceeded,
 	}
 }
-
 // ObserveUsage accounts one usage record. It is exported so local harnesses can
 // inject records without going through the host RPC path.
 func (r *Runtime) ObserveUsage(record usage.Record) {

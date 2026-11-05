@@ -466,6 +466,12 @@ func TestPage_ModernQuotaComponentsContract(t *testing.T) {
 	if !strings.Contains(script, "'error.quota_limit_required'") || !strings.Contains(script, "'error.quota_cost_required'") {
 		t.Fatal("key form should reference quota limit and cost required validation messages")
 	}
+	if !strings.Contains(script, "'error.quota_rule_required'") || !strings.Contains(script, "'error.quota_cost_models_required'") {
+		t.Fatal("key form should reference quota rule and cost models required validation messages")
+	}
+	if !strings.Contains(PageHTML, `id="key-form-quota-window-row"`) {
+		t.Fatal("key-form should have key-form-quota-window-row for model-only mode toggling")
+	}
 	style := extractPageStyle(t)
 	if !strings.Contains(style, ".chip-check") || !strings.Contains(style, "max-width: 0") || !strings.Contains(style, ".chip.is-selected .chip-check") {
 		t.Fatal("the chip check icon should collapse to zero width when unselected to keep text centered")
@@ -1509,5 +1515,78 @@ if (resolved !== 'sk-persisted-key') {
 	}
 	if output, err := exec.Command(nodePath, scriptPath).CombinedOutput(); err != nil {
 		t.Fatalf("node key_test.js failed: %v\n%s", err, output)
+	}
+}
+
+func TestPage_QuotaRuleFlexibilityContract(t *testing.T) {
+	script := extractPageScript(t)
+
+	// 1. Verify handleModeToggle does not block deactivating token or cost
+	for _, fragment := range []string{
+		"setQuotaModeActive('token', !isToken)",
+		"setQuotaModeActive('cost', !isCost)",
+	} {
+		if !strings.Contains(script, fragment) {
+			t.Fatalf("script is missing handleModeToggle flexibility fragment %q", fragment)
+		}
+	}
+
+	// 2. Verify syncQuotaModeUI toggles windowRow and limitsRow based on isToken || isCost
+	for _, fragment := range []string{
+		"windowRow.hidden = !(isToken || isCost)",
+		"limitsRow.hidden = !(isToken || isCost)",
+		"'key_form.quota_model_only_hint'",
+	} {
+		if !strings.Contains(script, fragment) {
+			t.Fatalf("script is missing syncQuotaModeUI flexibility fragment %q", fragment)
+		}
+	}
+
+	// 3. Verify strategy fallback logic in saveQuotaForm
+	for _, fragment := range []string{
+		"var strategy = 'none'",
+		"if (isCost && selectedModels.length === 0)",
+		"if (!isToken && !isCost && selectedModels.length === 0)",
+	} {
+		if !strings.Contains(script, fragment) {
+			t.Fatalf("script is missing saveQuotaForm fragment %q", fragment)
+		}
+	}
+
+	// 4. Verify applyQuotaForm supports unmetered model-only rules
+	if !strings.Contains(script, "quota.strategy === 'none'") {
+		t.Fatal("applyQuotaForm should support strategy 'none' for model-only rules")
+	}
+}
+
+func TestPage_ShellModalsTagBalance(t *testing.T) {
+	// Line 61 of shellModals closes <div class="app"> from shellMarkupTemplate,
+	// so PageHTML has exact balance.
+	openDivs := strings.Count(PageHTML, "<div")
+	closeDivs := strings.Count(PageHTML, "</div>")
+	if openDivs != closeDivs {
+		t.Fatalf("PageHTML div tag mismatch: %d open vs %d close", openDivs, closeDivs)
+	}
+
+	openForms := strings.Count(shellModals, "<form")
+	closeForms := strings.Count(shellModals, "</form>")
+	if openForms != closeForms {
+		t.Fatalf("shellModals form tag mismatch: %d open vs %d close", openForms, closeForms)
+	}
+
+	// Specifically verify key-form-modal contains its actions inside .modal and form
+	keyModalIdx := strings.Index(shellModals, `id="key-form-modal"`)
+	if keyModalIdx == -1 {
+		t.Fatal("shellModals missing key-form-modal")
+	}
+	confirmModalIdx := strings.Index(shellModals, `id="confirm-modal"`)
+	keyModalSnippet := shellModals[keyModalIdx:confirmModalIdx]
+
+	if strings.Count(keyModalSnippet, "<div") != strings.Count(keyModalSnippet, "</div>") {
+		t.Fatalf("key-form-modal div tag mismatch: %d open vs %d close",
+			strings.Count(keyModalSnippet, "<div"), strings.Count(keyModalSnippet, "</div>"))
+	}
+	if !strings.Contains(keyModalSnippet, `id="key-form-save"`) || !strings.Contains(keyModalSnippet, `id="key-form-cancel"`) {
+		t.Fatal("key-form-modal must contain save and cancel buttons")
 	}
 }
