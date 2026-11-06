@@ -1,6 +1,6 @@
 # v1.0.0 路线图与技术规格
 
-状态：**v1.0.0 已完成**（v1.1 增量见 ADR-0005、ADR-0006 与 Release Notes）
+状态：**v1.0.0 已完成**（v1.1 ~ v1.3 增量见 ADR 与 Release Notes）
 产品定位：CLIProxyAPI (CPA) 的代理 API Key 管理与用量归因插件（插件 ID `cpa-secret-manager`）。
 
 ---
