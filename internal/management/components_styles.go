@@ -1040,6 +1040,14 @@ input[readonly] {
   font-weight: 650;
 }
 
+.select-option.is-disabled {
+  color: var(--text-tertiary);
+  cursor: default;
+}
+
+.select-option.is-disabled:hover,
+.select-option.is-disabled.is-active { background: transparent; }
+
 
 .select-menu.has-search {
   max-height: 260px;

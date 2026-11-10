@@ -489,6 +489,8 @@ function loadKeys() {
     state.keys = nextKeys;
     if (keysChanged) {
       state.availableModels = [];
+      state.availableModelsPending = null;
+      state.modelsGeneration += 1;
     }
     return loadEntries(keysChanged);
   }).then(function () {
@@ -1273,7 +1275,11 @@ function loadAvailableModels(force) {
   if (!force && state.availableModels && state.availableModels.length > 0) {
     return Promise.resolve(state.availableModels);
   }
-  return fetchHostModels()
+  if (!force && state.availableModelsPending) {
+    return state.availableModelsPending;
+  }
+  var generation = state.modelsGeneration;
+  var pending = fetchHostModels()
     .catch(function () {
       return [];
     })
@@ -1291,9 +1297,19 @@ function loadAvailableModels(force) {
         }
       }
       var res = Object.keys(set).sort();
-      state.availableModels = res;
+      if (generation === state.modelsGeneration) {
+        state.availableModels = res;
+      }
       return res;
     });
+  var clearPending = function () {
+    if (state.availableModelsPending === pending) {
+      state.availableModelsPending = null;
+    }
+  };
+  state.availableModelsPending = pending;
+  pending.then(clearPending, clearPending);
+  return pending;
 }
 
 

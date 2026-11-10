@@ -187,10 +187,14 @@ function mountSelect(config) {
     } else {
       for (var index = 0; index < list.length; index++) {
         var option = list[index];
+        var isSelected = !option.disabled && option.value === value;
         var node = document.createElement('div');
-        node.className = 'select-option' + (option.value === value ? ' is-selected' : '');
+        node.className = 'select-option' + (isSelected ? ' is-selected' : '') + (option.disabled ? ' is-disabled' : '');
         node.setAttribute('role', 'option');
-        node.setAttribute('aria-selected', option.value === value ? 'true' : 'false');
+        node.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+        if (option.disabled) {
+          node.setAttribute('aria-disabled', 'true');
+        }
         node.setAttribute('data-value', option.value);
         var labelSpan = document.createElement('span');
         labelSpan.className = 'select-option-label';
@@ -350,6 +354,10 @@ function mountSelect(config) {
   }
 
   function choose(next) {
+    var picked = indexOfValue(next);
+    if (picked >= 0 && options[picked].disabled) {
+      return;
+    }
     var changed = next !== value;
     value = next;
     renderMenu();

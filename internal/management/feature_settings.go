@@ -769,6 +769,7 @@ function editPricingModel(model, price) {
 
 var pricingModelSelect = null;
 var pricingLoadedModels = [];
+var pricingModelsLoaded = false;
 
 function buildPricingModelOptions(models) {
   var prices = (state.settings && state.settings.model_prices) || {};
@@ -785,36 +786,59 @@ function buildPricingModelOptions(models) {
   return opts;
 }
 
-function refreshPricingModelOptions() {
-  if (pricingModelSelect && pricingLoadedModels.length > 0) {
-    var opts = buildPricingModelOptions(pricingLoadedModels);
-    pricingModelSelect.setOptions(opts);
+function pricingLoadingOptions() {
+  return [{ value: '', label: t('shell.loading'), disabled: true }];
+}
+
+function applyPricingModelOptions() {
+  var opts = buildPricingModelOptions(pricingLoadedModels);
+  var currentVal = pricingModelSelect.getValue();
+  pricingModelSelect.setOptions(opts);
+  if (!opts.some(function (o) { return o.value === currentVal; })) {
+    currentVal = opts[0] ? opts[0].value : '';
+    pricingModelSelect.setValue(currentVal);
+    syncPricingInputs(currentVal);
   }
+}
+
+function refreshPricingModelOptions() {
+  if (!pricingModelSelect) return;
+  if (!pricingModelsLoaded && pricingLoadedModels.length === 0) return;
+  applyPricingModelOptions();
 }
 
 function initPricingModelSelect() {
   var container = byId('settings-pricing-model-select');
   if (!container) return;
   if (typeof loadAvailableModels !== 'function') return;
-  loadAvailableModels().then(function (models) {
-    pricingLoadedModels = models || [];
-    var opts = buildPricingModelOptions(pricingLoadedModels);
-    var currentVal = pricingModelSelect ? pricingModelSelect.getValue() : (opts[0] ? opts[0].value : '');
-    var exists = opts.some(function (o) { return o.value === currentVal; });
-    if (!exists) {
-      currentVal = opts[0] ? opts[0].value : '';
+  if (!pricingModelSelect) {
+    if (!pricingModelsLoaded && state.availableModels && state.availableModels.length > 0) {
+      pricingLoadedModels = state.availableModels.slice();
+      pricingModelsLoaded = true;
     }
+    var opts = pricingModelsLoaded ? buildPricingModelOptions(pricingLoadedModels) : pricingLoadingOptions();
     pricingModelSelect = mountSelect({
       container: container,
       options: opts,
-      value: currentVal,
+      value: opts[0] ? opts[0].value : '',
       searchable: true,
       searchPlaceholder: t('key_form.quota_models_search'),
       onChange: function (selectedModel) {
         syncPricingInputs(selectedModel);
       }
     });
-    syncPricingInputs(currentVal);
+    if (pricingModelsLoaded) {
+      syncPricingInputs(pricingModelSelect.getValue());
+    }
+  } else if (!pricingModelsLoaded) {
+    pricingModelSelect.setOptions(pricingLoadingOptions());
+  }
+  loadAvailableModels().then(function (models) {
+    pricingLoadedModels = models || [];
+    pricingModelsLoaded = true;
+    refreshPricingModelOptions();
+  }).catch(function () {
+    // Keep the current options; the next init retries the fetch.
   });
 }
 function addPricingModel() {
@@ -877,10 +901,9 @@ function saveModelPrices(prices) {
       syncPricingInputs(selected);
       if (typeof loadAvailableModels === 'function') {
         loadAvailableModels().then(function (m) {
-          if (m) {
-            pricingLoadedModels = m;
-            refreshPricingModelOptions();
-          }
+          pricingLoadedModels = m || [];
+          pricingModelsLoaded = true;
+          refreshPricingModelOptions();
         });
       }
     })

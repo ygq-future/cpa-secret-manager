@@ -41,6 +41,8 @@ var QUOTA_PATH = PLUGIN_BASE + '/quota';
 var V1_MODELS_PATH = '/v1/models';
 var state = {
   availableModels: [],
+  availableModelsPending: null,
+  modelsGeneration: 0,
   managementKey: '',
   keys: [],
   entries: [],

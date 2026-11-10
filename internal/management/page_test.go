@@ -1517,6 +1517,80 @@ func TestPage_PricingSelectSearchableAndSyncInputs(t *testing.T) {
 	}
 }
 
+func TestPage_PricingSelectMountsBeforeModelsResolve(t *testing.T) {
+	block := regexp.MustCompile(`(?s)var pricingModelSelect = null;.*?\nfunction initPricingModelSelect\(.*?\n\}`).FindString(settingsFeature.scripts)
+	if block == "" {
+		t.Fatal("cannot find pricing model select block in settings script")
+	}
+	for _, token := range []string{"pricingLoadingOptions", "applyPricingModelOptions", "pricingModelsLoaded"} {
+		if !strings.Contains(block, token) {
+			t.Fatalf("pricing model select block missing %q", token)
+		}
+	}
+
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed; skipping runtime JS evaluation test")
+	}
+
+	runner := `
+var container = { id: 'settings-pricing-model-select' };
+var mountCalls = 0;
+var mounted = null;
+function byId(id) { return id === 'settings-pricing-model-select' ? container : null; }
+function t(key) { return key; }
+function mountSelect(config) {
+  mountCalls += 1;
+  mounted = {
+    value: config.value,
+    opts: config.options,
+    getValue: function () { return this.value; },
+    setValue: function (next) { this.value = next; },
+    setOptions: function (next) { this.opts = next; }
+  };
+  return mounted;
+}
+function syncPricingInputs() {}
+var state = { availableModels: [], settings: null };
+var resolveModels;
+function loadAvailableModels() {
+  return new Promise(function (resolve) { resolveModels = resolve; });
+}
+` + block + `
+function checkMounted() {
+  if (mountCalls !== 1) {
+    console.error('select must mount once and stay mounted, mountCalls=' + mountCalls);
+    process.exit(1);
+  }
+  if (!mounted.opts || mounted.opts.length !== 1 || mounted.opts[0].disabled !== true) {
+    console.error('select must show a disabled loading placeholder before models resolve:', JSON.stringify(mounted.opts));
+    process.exit(1);
+  }
+}
+
+initPricingModelSelect();
+checkMounted();
+initPricingModelSelect();
+checkMounted();
+resolveModels(['b-model', 'a-model']);
+setTimeout(function () {
+  if (!mounted.opts || mounted.opts.length !== 2 || mounted.opts[0].value !== 'b-model' || mounted.opts[1].value !== 'a-model') {
+    console.error('resolved models were not applied in place:', JSON.stringify(mounted.opts));
+    process.exit(1);
+  }
+  if (mounted.value !== 'b-model') {
+    console.error('select value was not synced to the first model:', mounted.value);
+    process.exit(1);
+  }
+}, 0);
+`
+	cmd := exec.Command(nodePath, "-e", runner)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("node test runner failed: %v, output: %s", err, string(output))
+	}
+}
+
 func TestPage_ManagementKeyResolutionAndPersistence(t *testing.T) {
 	script := extractPageScript(t)
 
