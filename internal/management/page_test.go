@@ -1108,6 +1108,114 @@ func TestPage_DefaultsAndMaskedKeyContract(t *testing.T) {
 	}
 }
 
+// TestPage_DateRangePresetsFollowTheirMeaning guards the reported drift: a preset
+// used to be persisted as the concrete instants of the day it was picked, so a
+// stored "last 7 days" kept replaying an old window and stopped reaching the
+// newest retained data.
+func TestPage_DateRangePresetsFollowTheirMeaning(t *testing.T) {
+	script := extractPageScript(t)
+	extract := func(name string) string {
+		fn := regexp.MustCompile(`(?s)function ` + name + `\(.*?\n\}`).FindString(script)
+		if fn == "" {
+			t.Fatalf("cannot extract %s from the page script", name)
+		}
+		return fn
+	}
+
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed; skipping the date range check")
+	}
+
+	runner := `
+var window = {};
+var mockStorage = {};
+function readStorage(win, type, key) { return mockStorage[key] || ''; }
+function writeStorage(win, type, key, value) { mockStorage[key] = String(value); }
+var RANGE_STORAGE_KEY = 'range';
+var state = { settings: { retention_days: 30 } };
+` + extract("padZero") + "\n" + extract("formatDateStr") + "\n" + extract("formatRangeLabel") + "\n" +
+		extract("retentionDays") + "\n" + extract("dateRangeBounds") + "\n" + extract("clampDateRange") + "\n" +
+		extract("presetWindow") + "\n" + extract("resolveDateRange") + "\n" + extract("restoreDateRange") + "\n" +
+		extract("saveDateRange") + `
+function resolveStored() {
+  var saved = restoreDateRange();
+  return resolveDateRange(saved.mode, saved.start, saved.end);
+}
+function near(actual, expected, slackMs, label) {
+  if (Math.abs(actual.getTime() - expected.getTime()) > slackMs) {
+    console.error(label + ': ' + actual.toISOString() + ' is not within ' + slackMs + 'ms of ' + expected.toISOString());
+    process.exit(1);
+  }
+}
+
+var now = new Date();
+var stale = new Date(now.getTime() - 40 * 86400 * 1000);
+
+// A "last 7 days" selection stored 40 days ago must slide back to the present.
+mockStorage[RANGE_STORAGE_KEY] = JSON.stringify({
+  mode: 'last_7_days',
+  start: stale.toISOString(),
+  end: new Date(stale.getTime() + 86400 * 1000).toISOString()
+});
+var week = resolveStored();
+near(week.end, now, 5000, 'last_7_days end');
+near(week.start, new Date(now.getTime() - 7 * 86400 * 1000), 5000, 'last_7_days start');
+if (week.mode !== 'last_7_days') {
+  console.error('last_7_days should keep its meaning, got ' + week.mode);
+  process.exit(1);
+}
+
+// "Last 30 days" against 30-day retention clips to the retained window instead
+// of being demoted to a frozen custom selection.
+mockStorage[RANGE_STORAGE_KEY] = JSON.stringify({
+  mode: 'last_30_days',
+  start: stale.toISOString(),
+  end: new Date(stale.getTime() + 86400 * 1000).toISOString()
+});
+var month = resolveStored();
+near(month.end, now, 5000, 'last_30_days end');
+near(month.start, dateRangeBounds().min, 1000, 'last_30_days start');
+if (month.mode !== 'last_30_days') {
+  console.error('last_30_days should keep its meaning, got ' + month.mode);
+  process.exit(1);
+}
+
+// A relative mode stores no instants at all: nothing stale can be replayed.
+state.dateRange = { mode: 'last_7_days', start: now, end: now };
+saveDateRange();
+var presetRecord = JSON.parse(mockStorage[RANGE_STORAGE_KEY]);
+if (presetRecord.mode !== 'last_7_days' || 'start' in presetRecord || 'end' in presetRecord) {
+  console.error('a relative selection must persist only its meaning', presetRecord);
+  process.exit(1);
+}
+
+// A custom window keeps the instants the user picked.
+var customStart = new Date(now.getTime() - 3 * 86400 * 1000);
+var customEnd = new Date(now.getTime() - 2 * 86400 * 1000);
+state.dateRange = { mode: 'custom', start: customStart, end: customEnd };
+saveDateRange();
+var customRecord = JSON.parse(mockStorage[RANGE_STORAGE_KEY]);
+if (customRecord.start !== customStart.toISOString() || customRecord.end !== customEnd.toISOString()) {
+  console.error('a custom selection must persist its instants', customRecord);
+  process.exit(1);
+}
+mockStorage[RANGE_STORAGE_KEY] = JSON.stringify(customRecord);
+var custom = resolveStored();
+if (custom.mode !== 'custom' || custom.start.getTime() !== customStart.getTime() || custom.end.getTime() !== customEnd.getTime()) {
+  console.error('custom window must survive untouched', custom);
+  process.exit(1);
+}
+`
+	testScriptPath := filepath.Join(t.TempDir(), "test_date_range.js")
+	if err := os.WriteFile(testScriptPath, []byte(runner), 0o600); err != nil {
+		t.Fatalf("write test runner: %v", err)
+	}
+	if out, err := exec.Command(nodePath, testScriptPath).CombinedOutput(); err != nil {
+		t.Fatalf("node test failed: %v\n%s", err, string(out))
+	}
+}
+
 func TestPage_SettingsCacheFilesAndUsageHintContract(t *testing.T) {
 	if strings.Contains(PageHTML, `data-i18n="settings.usage_hint"`) {
 		t.Fatal("settings.usage_hint should be removed from page markup")

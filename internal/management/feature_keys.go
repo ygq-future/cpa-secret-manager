@@ -1978,35 +1978,85 @@ function clampDateRange(start, end) {
   return { start: clampedStart, end: clampedEnd };
 }
 
-// clampDraftToRetention shortens the draft window to the retained days and
-// drops a preset selection that no longer describes what is selected. Comparison
-// is by day because the picker always rebuilds the end instant with millisecond
-// precision.
+// presetWindow returns the window a relative selection means right now, or null
+// for a custom one. Presets are meanings, not instants: they are recomputed on
+// every restore so "last 7 days" keeps reaching the newest data instead of
+// freezing on the day it was picked.
+function presetWindow(mode) {
+  var now = new Date();
+  if (mode === 'today') {
+    return { start: new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0), end: now };
+  }
+  if (mode === 'last_5_hours') {
+    return { start: new Date(now.getTime() - 5 * 3600 * 1000), end: now };
+  }
+  if (mode === 'last_7_days') {
+    return { start: new Date(now.getTime() - 7 * 86400 * 1000), end: now };
+  }
+  if (mode === 'last_30_days') {
+    return { start: new Date(now.getTime() - 30 * 86400 * 1000), end: now };
+  }
+  if (mode === 'this_month') {
+    return { start: new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0), end: now };
+  }
+  if (mode === 'retention') {
+    var bounds = dateRangeBounds();
+    return { start: bounds.min, end: bounds.max };
+  }
+  return null;
+}
+
+// resolveDateRange rebuilds a selection from its meaning. Relative modes are
+// re-anchored to now; only a custom window keeps the instants the user picked.
+// Every result is clipped to the retained days.
+function resolveDateRange(mode, start, end) {
+  var window = presetWindow(mode);
+  if (!window) {
+    if (start && end) {
+      mode = 'custom';
+      window = { start: start, end: end };
+    } else {
+      var bounds = dateRangeBounds();
+      mode = retentionDays() === 30 ? 'last_30_days' : 'retention';
+      window = { start: bounds.min, end: bounds.max };
+    }
+  }
+  var clamped = clampDateRange(window.start, window.end);
+  return {
+    mode: mode,
+    start: clamped.start,
+    end: clamped.end,
+    label: formatRangeLabel(clamped.start, clamped.end)
+  };
+}
+
+// clampDraftToRetention shortens the draft window to the retained days. The
+// selection keeps its meaning: clipping is a retention artifact, not a change
+// of what the user asked for.
 function clampDraftToRetention() {
-  var requestedLabel = formatRangeLabel(draftStart, draftEnd);
   var clamped = clampDateRange(draftStart, draftEnd);
   draftStart = clamped.start;
   draftEnd = clamped.end;
-  if (formatRangeLabel(draftStart, draftEnd) !== requestedLabel) {
-    draftMode = 'custom';
-  }
 }
 
-// saveDateRange persists the picked window so a page refresh, a host reload or a
-// tab switch does not silently fall back to "today".
+// saveDateRange persists the selection's meaning. A relative mode stores no
+// instants at all: its window is derived from the clock on the next load, so a
+// stale snapshot can never be mistaken for the selection. Only a custom window
+// keeps the exact instants the user picked.
 function saveDateRange() {
   if (!state.dateRange || !state.dateRange.start || !state.dateRange.end) {
     return;
   }
-  writeStorage(window, 'localStorage', RANGE_STORAGE_KEY, JSON.stringify({
-    mode: state.dateRange.mode || 'custom',
-    start: state.dateRange.start.toISOString(),
-    end: state.dateRange.end.toISOString()
-  }));
+  var record = { mode: state.dateRange.mode || 'custom' };
+  if (!presetWindow(record.mode)) {
+    record.start = state.dateRange.start.toISOString();
+    record.end = state.dateRange.end.toISOString();
+  }
+  writeStorage(window, 'localStorage', RANGE_STORAGE_KEY, JSON.stringify(record));
 }
 
-// restoreDateRange reads the persisted window and clamps it to the retention
-// that is in force now, so shrinking retention invalidates old selections.
+// restoreDateRange reads the persisted selection as recorded. Its instants are
+// not trusted for relative modes: resolveDateRange decides what they mean.
 function restoreDateRange() {
   var raw = readStorage(window, 'localStorage', RANGE_STORAGE_KEY);
   if (!raw) {
@@ -2014,52 +2064,34 @@ function restoreDateRange() {
   }
   try {
     var saved = JSON.parse(raw);
-    var start = new Date(saved.start);
-    var end = new Date(saved.end);
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    if (!saved || typeof saved !== 'object') {
       return null;
     }
-    var clamped = clampDateRange(start, end);
-    return {
-      mode: saved.mode || 'custom',
-      start: clamped.start,
-      end: clamped.end,
-      label: formatRangeLabel(clamped.start, clamped.end)
-    };
+    var start = saved.start ? new Date(saved.start) : null;
+    var end = saved.end ? new Date(saved.end) : null;
+    if (start && isNaN(start.getTime())) {
+      start = null;
+    }
+    if (end && isNaN(end.getTime())) {
+      end = null;
+    }
+    return { mode: saved.mode || 'custom', start: start, end: end };
   } catch (error) {
     return null;
   }
 }
 
+// initDateRange rebuilds the active selection from its meaning on every call:
+// relative presets slide with the clock, so the view always reaches the newest
+// retained data instead of replaying the window of the day they were picked.
 function initDateRange() {
-  if (state.dateRange) {
-    var clamped = clampDateRange(state.dateRange.start, state.dateRange.end);
-    if (clamped.start.getTime() !== state.dateRange.start.getTime() || clamped.end.getTime() !== state.dateRange.end.getTime()) {
-      state.dateRange.start = clamped.start;
-      state.dateRange.end = clamped.end;
-      state.dateRange.label = formatRangeLabel(clamped.start, clamped.end);
-      updateDateRangeLabel();
-      saveDateRange();
-    }
-    return;
-  }
-  var restored = restoreDateRange();
-  if (restored) {
-    state.dateRange = restored;
-    updateDateRangeLabel();
-    saveDateRange();
-    return;
-  }
-  var bounds = dateRangeBounds();
-  var days = retentionDays();
-  state.dateRange = {
-    mode: days === 30 ? 'last_30_days' : 'retention',
-    start: bounds.min,
-    end: bounds.max,
-    label: formatRangeLabel(bounds.min, bounds.max)
-  };
+  var source = state.dateRange || restoreDateRange();
+  state.dateRange = resolveDateRange(
+    source ? source.mode : '',
+    source ? source.start : null,
+    source ? source.end : null
+  );
   updateDateRangeLabel();
-  saveDateRange();
 }
 
 // formatRangeLabel renders the picker label: one date for a single day, a range
@@ -2128,21 +2160,13 @@ function updatePresetButtons() {
 }
 
 function applyDateRangePreset(preset) {
-  var now = new Date();
-  draftMode = preset;
-  if (preset === 'last_5_hours') {
-    draftStart = new Date(now.getTime() - 5 * 3600 * 1000);
-    draftEnd = new Date(now.getTime());
-  } else if (preset === 'last_7_days') {
-    draftStart = new Date(now.getTime() - 7 * 86400 * 1000);
-    draftEnd = new Date(now.getTime());
-  } else if (preset === 'last_30_days') {
-    draftStart = new Date(now.getTime() - 30 * 86400 * 1000);
-    draftEnd = new Date(now.getTime());
-  } else if (preset === 'this_month') {
-    draftStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
-    draftEnd = new Date(now.getTime());
+  var window = presetWindow(preset);
+  if (!window) {
+    return;
   }
+  draftMode = preset;
+  draftStart = window.start;
+  draftEnd = window.end;
   clampDraftToRetention();
   calendarBaseMonth = new Date(draftStart.getFullYear(), draftStart.getMonth(), 1);
 
@@ -2157,16 +2181,16 @@ function applyDateRangePreset(preset) {
 }
 
 function resetDateRangeToday() {
-  var now = new Date();
+  var window = presetWindow('today');
   draftMode = 'today';
-  draftStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-  draftEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+  draftStart = window.start;
+  draftEnd = window.end;
   calendarBaseMonth = new Date(draftStart.getFullYear(), draftStart.getMonth(), 1);
 
   var timeStartInput = byId('time-start');
-  if (timeStartInput) timeStartInput.value = '00:00:00';
+  if (timeStartInput) timeStartInput.value = formatTimeStr(draftStart);
   var timeEndInput = byId('time-end');
-  if (timeEndInput) timeEndInput.value = '23:59:59';
+  if (timeEndInput) timeEndInput.value = formatTimeStr(draftEnd);
 
   updatePresetButtons();
   updateDateSelectionStatus();
@@ -2192,6 +2216,15 @@ function confirmDateRange() {
     var tmp = draftStart;
     draftStart = draftEnd;
     draftEnd = tmp;
+  }
+
+  // A preset means "as of now": anchor it at confirmation time rather than
+  // trusting the preview built when the dialog opened. Editing a date or time
+  // switches draftMode to custom, so a manual window is never re-anchored.
+  var preset = presetWindow(draftMode);
+  if (preset) {
+    draftStart = preset.start;
+    draftEnd = preset.end;
   }
 
   clampDraftToRetention();
@@ -2684,6 +2717,19 @@ function bindKeysEvents() {
   for (var position = 0; position < presetButtons.length; position++) {
     presetButtons[position].addEventListener('click', function () {
       applyDateRangePreset(this.getAttribute('data-preset'));
+    });
+  }
+
+  // A manually edited time is a custom window: it must not inherit a preset's
+  // sliding meaning and get re-anchored on the next load.
+  var timeInputs = [byId('time-start'), byId('time-end')];
+  for (var timeIndex = 0; timeIndex < timeInputs.length; timeIndex++) {
+    if (!timeInputs[timeIndex]) {
+      continue;
+    }
+    timeInputs[timeIndex].addEventListener('input', function () {
+      draftMode = 'custom';
+      updatePresetButtons();
     });
   }
 
