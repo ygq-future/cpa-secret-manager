@@ -266,7 +266,7 @@ var settingsFeature = pageFeature{
   margin: 10px 0 12px;
 }
 .pricing-add-bar .pricing-select-wrap {
-  flex: 1.35;
+  flex: 1 1 auto;
   min-width: 120px;
 }
 .pricing-select-wrap {
@@ -284,11 +284,20 @@ var settingsFeature = pageFeature{
   font-size: 13px;
 }
 .pricing-add-bar .input-unit-group {
-  flex: 1;
-  min-width: 72px;
+  flex: 0 0 auto;
+  min-width: 0;
 }
 .pricing-add-bar .input-unit-group .unit-input {
+  width: calc(6ch + 8px);
   padding: 0 4px;
+}
+@supports (field-sizing: content) {
+  .pricing-add-bar .input-unit-group .unit-input {
+    field-sizing: content;
+    width: auto;
+    min-width: calc(3ch + 8px);
+    max-width: calc(7ch + 8px);
+  }
 }
 .pricing-add-bar .input-unit-group .unit-suffix.is-out {
   color: var(--accent-blue-text);

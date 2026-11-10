@@ -886,7 +886,10 @@ input[readonly] {
 }
 
 .switch-control .input-unit-group {
-  width: 130px;
+  width: 92px;
+}
+.switch-control .input-unit-group .unit-input {
+  padding-right: 4px;
 }
 
 
