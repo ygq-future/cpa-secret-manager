@@ -90,7 +90,6 @@ func callWithToken(t *testing.T, server *httptest.Server, method string, path st
 	return response.StatusCode, payload
 }
 
-
 func decode[T any](t *testing.T, raw []byte) T {
 	t.Helper()
 	var out T
@@ -438,6 +437,9 @@ func TestDevHost_FailureInjectionAndQuery(t *testing.T) {
 	}
 	if res.Items[0].StatusCode != 429 || res.Items[0].Message != "rate limit exceeded" {
 		t.Fatalf("unexpected failure item: %+v", res.Items[0])
+	}
+	if res.Items[0].AuthID != "dev-gpt-5.6" {
+		t.Fatalf("unexpected failure auth id: %+v", res.Items[0])
 	}
 }
 

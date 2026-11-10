@@ -84,6 +84,22 @@ function mountSelect(config) {
     trigger.appendChild(arrow);
   }
 
+  var clearAction = null;
+  if (config.clearable) {
+    clearAction = document.createElement('button');
+    clearAction.type = 'button';
+    clearAction.className = 'select-clear-btn select-clear-action';
+    clearAction.hidden = true;
+    if (config.clearTitleKey) {
+      clearAction.title = t(config.clearTitleKey);
+      clearAction.setAttribute('aria-label', t(config.clearTitleKey));
+    }
+    var clearActionIcon = iconMarkup('close', 'icon');
+    if (clearActionIcon) {
+      clearAction.appendChild(clearActionIcon);
+    }
+  }
+
   var menu = document.createElement('div');
   menu.className = 'select-menu' + (isSearchable ? ' has-search' : '');
   menu.setAttribute('role', 'listbox');
@@ -131,6 +147,9 @@ function mountSelect(config) {
   menu.appendChild(optionsList);
 
   container.appendChild(trigger);
+  if (clearAction) {
+    container.appendChild(clearAction);
+  }
   container.appendChild(menu);
 
   var activeIndex = -1;
@@ -140,6 +159,13 @@ function mountSelect(config) {
       return t(option.i18n);
     }
     return option.label === undefined ? String(option.value) : option.label;
+  }
+
+  function optionTriggerLabel(option) {
+    if (option.triggerLabel !== undefined) {
+      return option.triggerLabel;
+    }
+    return optionLabel(option);
   }
 
   function optionNodes() {
@@ -157,7 +183,22 @@ function mountSelect(config) {
 
   function updateTriggerLabel() {
     var index = indexOfValue(value);
-    label.textContent = index >= 0 ? optionLabel(options[index]) : '';
+    var hasValue = index >= 0;
+    if (hasValue) {
+      label.textContent = optionTriggerLabel(options[index]);
+      label.classList.remove('is-placeholder');
+    } else if (config.placeholderKey || config.placeholder) {
+      label.textContent = config.placeholderKey ? t(config.placeholderKey) : config.placeholder;
+      label.classList.add('is-placeholder');
+    } else {
+      label.textContent = '';
+      label.classList.remove('is-placeholder');
+    }
+    var showClear = Boolean(clearAction && hasValue);
+    container.classList.toggle('has-clear', showClear);
+    if (clearAction) {
+      clearAction.hidden = !showClear;
+    }
   }
 
   function filteredOptions() {
@@ -181,7 +222,7 @@ function mountSelect(config) {
     if (list.length === 0) {
       var empty = document.createElement('div');
       empty.className = 'select-empty';
-      empty.textContent = t('key_form.quota_models_empty');
+      empty.textContent = config.emptyKey ? t(config.emptyKey) : t('key_form.quota_models_empty');
       optionsList.appendChild(empty);
       activeIndex = -1;
     } else {
@@ -377,8 +418,25 @@ function mountSelect(config) {
     }
   });
 
+  if (clearAction) {
+    clearAction.addEventListener('click', function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      value = '';
+      renderMenu();
+      closeMenu();
+      if (onChange) {
+        onChange('');
+      }
+      trigger.focus();
+    });
+  }
+
   container.addEventListener('keydown', function (event) {
     var key = event.key;
+    if (clearAction && event.target === clearAction) {
+      return;
+    }
     if (isSearchable && event.target === searchInput) {
       return;
     }

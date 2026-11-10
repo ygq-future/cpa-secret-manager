@@ -2407,7 +2407,12 @@ function handleDateClick(selectedDate) {
   renderDateCalendars();
 }
 
-// The failure viewer is rebuilt on every open. Its two filters are shared
+function maskCredential(value) {
+  if (!value) return '';
+  return value.slice(0, 4) + '…';
+}
+
+// The failure viewer is rebuilt on every open. Its four filters are shared
 // listboxes, its records are plain components.
 function openFailuresModal(index, initialModel) {
   var container = byId('failures-content');
@@ -2430,7 +2435,7 @@ function openFailuresModal(index, initialModel) {
   var filterBar = document.createElement('div');
   filterBar.className = 'failures-filter-bar';
 
-  var keyOptions = [{ value: '', label: t('failures.all_keys') }];
+  var keyOptions = [];
   for (var k = 0; k < state.keys.length; k++) {
     var kVal = state.keys[k];
     var kEntry = state.entries[k] || {};
@@ -2452,13 +2457,33 @@ function openFailuresModal(index, initialModel) {
     options: keyOptions,
     value: initialHash,
     titleKey: 'failures.filter_key',
+    placeholderKey: 'failures.all_keys',
+    clearable: true,
+    clearTitleKey: 'failures.clear_filter',
+    emptyKey: 'failures.no_options',
     onChange: function (hash) {
       targetModel = '';
+      authSelect.setValue('');
+      codeSelect.setValue('');
       loadFailures(hash);
     }
   });
 
-  var initialModelOpts = [{ value: '', label: t('failures.all_models') }];
+  var authSelect = mountSelect({
+    container: document.createElement('div'),
+    options: [],
+    value: '',
+    titleKey: 'failures.filter_auth',
+    placeholderKey: 'failures.all_credentials',
+    clearable: true,
+    clearTitleKey: 'failures.clear_filter',
+    emptyKey: 'failures.no_options',
+    onChange: function () {
+      renderItems();
+    }
+  });
+
+  var initialModelOpts = [];
   if (targetModel) {
     initialModelOpts.push({ value: targetModel, label: targetModel });
   }
@@ -2468,24 +2493,59 @@ function openFailuresModal(index, initialModel) {
     options: initialModelOpts,
     value: targetModel,
     titleKey: 'failures.filter_model',
+    placeholderKey: 'failures.all_models',
+    clearable: true,
+    clearTitleKey: 'failures.clear_filter',
+    emptyKey: 'failures.no_options',
     onChange: function () {
       renderItems();
     }
   });
 
+  var codeSelect = mountSelect({
+    container: document.createElement('div'),
+    options: [],
+    value: '',
+    titleKey: 'failures.filter_code',
+    placeholderKey: 'failures.all_codes',
+    clearable: true,
+    clearTitleKey: 'failures.clear_filter',
+    emptyKey: 'failures.no_options',
+    onChange: function () {
+      renderItems();
+    }
+  });
+
+  keySelect.element.classList.add('failure-filter-key');
+  authSelect.element.classList.add('failure-filter-auth');
+  modelSelect.element.classList.add('failure-filter-model');
+  codeSelect.element.classList.add('failure-filter-code');
+
   filterBar.appendChild(keySelect.element);
+  filterBar.appendChild(authSelect.element);
   filterBar.appendChild(modelSelect.element);
+  filterBar.appendChild(codeSelect.element);
   container.appendChild(filterBar);
   container.appendChild(listWrap);
 
   function renderItems() {
     listWrap.textContent = '';
+    var selectedAuth = authSelect.getValue();
     var selectedModel = modelSelect.getValue();
+    var selectedCode = codeSelect.getValue();
     var filtered = [];
     for (var i = 0; i < currentItems.length; i++) {
-      if (!selectedModel || currentItems[i].model === selectedModel) {
-        filtered.push(currentItems[i]);
+      var item = currentItems[i];
+      if (selectedAuth !== '' && (item.auth_id || '') !== selectedAuth) {
+        continue;
       }
+      if (selectedModel && item.model !== selectedModel) {
+        continue;
+      }
+      if (selectedCode !== '' && String(item.status_code || 0) !== selectedCode) {
+        continue;
+      }
+      filtered.push(item);
     }
 
     if (filtered.length === 0) {
@@ -2527,8 +2587,22 @@ function openFailuresModal(index, initialModel) {
       } else if (code >= 400) {
         statusBadge.classList.add('is-warning');
       }
-      statusBadge.textContent = code > 0 ? 'HTTP ' + code : 'Failed';
+      statusBadge.textContent = code > 0 ? String(code) : 'Failed';
       metaLeft.appendChild(statusBadge);
+
+      if (item.auth_id) {
+        var credentialBadge = document.createElement('span');
+        credentialBadge.className = 'failure-credential-badge';
+        credentialBadge.title = t('failures.credential');
+        var credentialIcon = iconMarkup('key', 'failure-credential-icon');
+        if (credentialIcon) {
+          credentialBadge.appendChild(credentialIcon);
+        }
+        var credentialText = document.createElement('span');
+        credentialText.textContent = maskCredential(item.auth_id);
+        credentialBadge.appendChild(credentialText);
+        metaLeft.appendChild(credentialBadge);
+      }
 
       meta.appendChild(metaLeft);
 
@@ -2572,6 +2646,32 @@ function openFailuresModal(index, initialModel) {
     .then(function (res) {
       currentItems = (res && res.items) || [];
 
+      var authSet = {};
+      for (var a = 0; a < currentItems.length; a++) {
+        if (currentItems[a].auth_id) {
+          authSet[currentItems[a].auth_id] = true;
+        }
+      }
+      var newAuthOpts = [];
+      var authIDs = Object.keys(authSet).sort();
+      for (var b = 0; b < authIDs.length; b++) {
+        newAuthOpts.push({
+          value: authIDs[b],
+          label: authIDs[b],
+          triggerLabel: maskCredential(authIDs[b])
+        });
+      }
+      authSelect.setOptions(newAuthOpts);
+      var currentAuthVal = authSelect.getValue();
+      var authMatched = false;
+      for (var f = 0; f < newAuthOpts.length; f++) {
+        if (newAuthOpts[f].value === currentAuthVal) {
+          authMatched = true;
+          break;
+        }
+      }
+      authSelect.setValue(authMatched ? currentAuthVal : '');
+
       var modelSet = {};
       for (var i = 0; i < currentItems.length; i++) {
         if (currentItems[i].model) {
@@ -2581,7 +2681,7 @@ function openFailuresModal(index, initialModel) {
       if (targetModel) {
         modelSet[targetModel] = true;
       }
-      var newModelOpts = [{ value: '', label: t('failures.all_models') }];
+      var newModelOpts = [];
       var models = Object.keys(modelSet).sort();
       for (var m = 0; m < models.length; m++) {
         newModelOpts.push({ value: models[m], label: models[m] });
@@ -2600,6 +2700,30 @@ function openFailuresModal(index, initialModel) {
       } else {
         modelSelect.setValue('');
       }
+
+      var codeSet = {};
+      for (var c = 0; c < currentItems.length; c++) {
+        codeSet[currentItems[c].status_code || 0] = true;
+      }
+      var newCodeOpts = [];
+      var codes = Object.keys(codeSet).map(Number).sort(function (a, b) { return a - b; });
+      for (var d = 0; d < codes.length; d++) {
+        newCodeOpts.push({
+          value: String(codes[d]),
+          label: codes[d] > 0 ? String(codes[d]) : t('failures.no_status')
+        });
+      }
+      codeSelect.setOptions(newCodeOpts);
+      var currentCodeVal = codeSelect.getValue();
+      var codeMatched = false;
+      for (var e = 0; e < newCodeOpts.length; e++) {
+        if (newCodeOpts[e].value === currentCodeVal) {
+          codeMatched = true;
+          break;
+        }
+      }
+      codeSelect.setValue(codeMatched ? currentCodeVal : '');
+
       renderItems();
     })
     .catch(function (err) {

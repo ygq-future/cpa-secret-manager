@@ -1260,6 +1260,20 @@ func TestPage_KeySortingAndModelFailuresContract(t *testing.T) {
 		"function updateSortHeaders()",
 		"openFailuresModal(keyIndex, mName)",
 		"function openFailuresModal(index, initialModel)",
+		"function maskCredential(value)",
+		"failures.filter_code",
+		"failures.filter_auth",
+		"failures.all_codes",
+		"failures.all_credentials",
+		"triggerLabel: maskCredential",
+		"clearable: true",
+		"placeholderKey: 'failures.all_keys'",
+		"clearTitleKey: 'failures.clear_filter'",
+		"emptyKey: 'failures.no_options'",
+		"select-clear-action",
+		"failure-filter-code",
+		"failure-filter-model",
+		"failure-credential-badge",
 	} {
 		if !strings.Contains(script, fragment) {
 			t.Fatalf("script is missing expected contract fragment %q", fragment)

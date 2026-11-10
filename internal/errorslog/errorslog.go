@@ -17,6 +17,7 @@ import (
 type ErrorEntry struct {
 	Time       time.Time `json:"time"`
 	Model      string    `json:"model"`
+	AuthID     string    `json:"auth_id,omitempty"`
 	StatusCode int       `json:"status_code"`
 	Message    string    `json:"message"`
 }

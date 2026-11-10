@@ -967,6 +967,18 @@ input[readonly] {
   text-align: left;
 }
 
+.select-label.is-placeholder {
+  color: var(--text-tertiary);
+}
+
+.select.has-clear .select-trigger {
+  padding-right: 30px;
+}
+
+.select.has-clear .select-arrow {
+  display: none;
+}
+
 .select-arrow {
   width: 14px;
   height: 14px;
@@ -1130,6 +1142,17 @@ input[type="text"].select-search-input:focus {
 .select-clear-btn .icon {
   width: 9px;
   height: 9px;
+}
+
+.select-clear-action {
+  right: 8px;
+  width: 18px;
+  height: 18px;
+}
+
+.select-clear-action .icon {
+  width: 10px;
+  height: 10px;
 }
 
 .select-options-list {

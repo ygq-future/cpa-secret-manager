@@ -369,6 +369,10 @@ func (h *devHost) handleSimulateUsage(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	authID := query.Get("auth_id")
+	if authID == "" {
+		authID = "dev-" + model
+	}
 	detail := usageDetail{
 		Input:     intQuery(query.Get("input"), 120),
 		Output:    intQuery(query.Get("output"), 240),
@@ -378,7 +382,7 @@ func (h *devHost) handleSimulateUsage(w http.ResponseWriter, r *http.Request) {
 		Total:     intQuery(query.Get("total"), 360),
 	}
 	for range count {
-		h.injectUsage(apiKey, model, at, failed, statusCode, errorBody, detail)
+		h.injectUsage(apiKey, authID, model, at, failed, statusCode, errorBody, detail)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "count": count, "model": model, "at": at.Format(time.RFC3339)})
 }
@@ -418,10 +422,11 @@ type usageDetail struct {
 
 // injectUsage pushes one host-shaped usage record through the production usage
 // path, stamped with at.
-func (h *devHost) injectUsage(apiKey, model string, at time.Time, failed bool, statusCode int, message string, detail usageDetail) {
+func (h *devHost) injectUsage(apiKey, authID, model string, at time.Time, failed bool, statusCode int, message string, detail usageDetail) {
 	record := map[string]any{
 		"Provider":    "openai",
 		"APIKey":      apiKey,
+		"AuthID":      authID,
 		"Model":       model,
 		"Failed":      failed,
 		"RequestedAt": at.UTC().Format(time.RFC3339Nano),
@@ -445,6 +450,16 @@ func (h *devHost) injectUsage(apiKey, model string, at time.Time, failed bool, s
 		return
 	}
 	h.runtime.Handle(context.Background(), pluginruntime.MethodUsageHandle, raw)
+}
+
+// devCredentials are fake host credential identifiers used by the simulator.
+// Their first four characters differ so the masked credential filter is easy
+// to verify across several entries.
+var devCredentials = []string{
+	"a1b2c3d4e5f6a7b8",
+	"b2c3d4e5f6a7b8c9",
+	"c3d4e5f6a7b8c9d0",
+	"d4e5f6a7b8c9d0e1",
 }
 
 // handleSeedHistory fills the simulator with a day-by-day history so a
@@ -498,7 +513,7 @@ func (h *devHost) handleSeedHistory(w http.ResponseWriter, r *http.Request) {
 			requests := 1 + (index+day)%3
 			for n := 0; n < requests; n++ {
 				model := models[(index+day+n)%len(models)]
-				h.injectUsage(key, model, historyStamp(base, day, time.Duration(n)*time.Minute), false, 0, "", usageDetail{
+				h.injectUsage(key, devCredentials[(index+day+n)%len(devCredentials)], model, historyStamp(base, day, time.Duration(n)*time.Minute), false, 0, "", usageDetail{
 					Input:     100 * (n + 1),
 					Output:    200 * (n + 1),
 					Reasoning: 10 * (n + 1),
@@ -509,7 +524,8 @@ func (h *devHost) handleSeedHistory(w http.ResponseWriter, r *http.Request) {
 				records++
 			}
 			if (day+index)%3 == 0 {
-				h.injectUsage(key, models[(index+day)%len(models)], historyStamp(base, day, 90*time.Second), true, 429, "Rate limit exceeded for token quota", usageDetail{})
+				model := models[(index+day)%len(models)]
+				h.injectUsage(key, devCredentials[(index+day)%len(devCredentials)], model, historyStamp(base, day, 90*time.Second), true, 429, "Rate limit exceeded for token quota", usageDetail{})
 				failures++
 			}
 		}
@@ -639,11 +655,14 @@ func (h *devHost) handleSeed(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for modelIndex, model := range models {
-			payload, err := json.Marshal(map[string]any{
+			failed := modelIndex == index%len(models)
+			authID := devCredentials[(index*len(models)+modelIndex)%len(devCredentials)]
+			payload := map[string]any{
 				"Provider":    "openai",
 				"APIKey":      key,
+				"AuthID":      authID,
 				"Model":       model,
-				"Failed":      modelIndex == 2 && index%2 == 0,
+				"Failed":      failed,
 				"RequestedAt": time.Now().UTC().Format(time.RFC3339Nano),
 				"Detail": map[string]any{
 					"InputTokens":     100 * (modelIndex + 1),
@@ -652,12 +671,19 @@ func (h *devHost) handleSeed(w http.ResponseWriter, r *http.Request) {
 					"CachedTokens":    5 * (modelIndex + 1),
 					"TotalTokens":     310 * (modelIndex + 1),
 				},
-			})
+			}
+			if failed {
+				payload["Failure"] = map[string]any{
+					"StatusCode": 429,
+					"Body":       "Rate limit exceeded for token quota",
+				}
+			}
+			raw, err := json.Marshal(payload)
 			if err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 				return
 			}
-			h.runtime.Handle(context.Background(), pluginruntime.MethodUsageHandle, payload)
+			h.runtime.Handle(context.Background(), pluginruntime.MethodUsageHandle, raw)
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "keys": seeded})

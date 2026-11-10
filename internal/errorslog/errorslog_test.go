@@ -30,6 +30,7 @@ func TestErrorsLogRecordAndQuery(t *testing.T) {
 	store.Record("hash1", errorslog.ErrorEntry{
 		Time:       t2,
 		Model:      "gpt-5.6",
+		AuthID:     "codex-user@example.com.json",
 		StatusCode: 500,
 		Message:    "internal error",
 	})
@@ -75,6 +76,9 @@ func TestErrorsLogRecordAndQuery(t *testing.T) {
 	all := loaded.QueryAll(time.Time{}, time.Time{})
 	if len(all["hash1"]) != 2 || len(all["hash2"]) != 1 {
 		t.Fatalf("unexpected loaded contents: %+v", all)
+	}
+	if all["hash1"][0].AuthID != "codex-user@example.com.json" {
+		t.Fatalf("auth id did not survive reload: %+v", all["hash1"][0])
 	}
 
 	// Prune older than t1

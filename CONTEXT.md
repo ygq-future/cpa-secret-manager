@@ -44,13 +44,17 @@ _Avoid_: orphan、孤儿、无主、残留（都不应作为产品概念出现�
 ### Usage Attribution
 
 **Usage Record**:
-宿主通过 `usage_plugin` 能力下发的单次请求用量记录（`UsageRecord`）。字段 `APIKey` 是本次请求命中的 Proxy API Key。
+宿主通过 `usage_plugin` 能力下发的单次请求用量记录（`UsageRecord`）。字段 `APIKey` 是本次请求命中的 Proxy API Key，`AuthID` 是本次请求所选上游凭证的宿主标识。
 
 **Attribution**:
 把一条 Usage Record 归集到某把 Proxy API Key 的过程，通过 Hash Index 完成。
 
 **Attributed**:
 `APIKey` 命中了当前 `api-keys` 列表中的某把密钥时，该 Usage Record 才被计入。`APIKey` 为空、或它的摘要不属于任何受管密钥的记录**一律丢弃**：不计数、不落盘、不出现在页面上。
+
+**Credential Attribution**:
+失败记录额外保存 `UsageRecord.AuthID`，用于定位具体上游凭证。页面只展示该标识的前四位，完整标识保留在失败记录文档中。
+_Avoid_: 上游密钥、账号（`AuthID` 是宿主标识，不是凭证材料）。
 
 **Token Counters**:
 每把密钥、每个模型维度的计数集合：`requests`、`failed`、`input`、`output`、`reasoning`、`cached`、`cache_read`、`cache_creation`、`total`。全部为**累计值**，无时间窗口。

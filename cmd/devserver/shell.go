@@ -17,6 +17,7 @@ import (
 // plugin page renders inside a real host, so layout and scroll behaviour can be
 // judged 1:1. Theme and language are switched from the console, mirroring the
 // `window.setTheme(...)` hook the sibling plugin exposes:
+//
 //	window.setTheme('auto' | 'light' | 'white' | 'dark')
 //	window.setLanguage('zh-CN' | 'en-US')
 //	window.setManagementKey('devkey')
@@ -142,7 +143,7 @@ iframe { display: block; width: 100%; height: 100%; border: 0; background: var(-
 
   window.seedDemo = function (count) {
     var keys = typeof count === 'number' && count > 0 ? count : 3;
-    return window.fetch('/dev/seed?keys=' + keys, {
+    return window.fetch('/dev/seed-history?keys=' + keys + '&days=7', {
       method: 'POST',
       headers: { 'X-Management-Key': MANAGEMENT_KEY }
     }).then(function (response) {
@@ -150,7 +151,7 @@ iframe { display: block; width: 100%; height: 100%; border: 0; background: var(-
         throw new Error('HTTP ' + response.status);
       }
       reloadFrame();
-      return 'seeded ' + keys + ' keys';
+      return 'seeded ' + keys + ' keys with 7 days of credential history';
     });
   };
 

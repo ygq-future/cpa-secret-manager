@@ -32,7 +32,7 @@ It provides **per-key remarks**, **per-key token usage attribution**, and **quot
 - **1:1 Official Key Generation Algorithm**: Generated keys use an `sk-` prefix plus 48 alphanumeric characters `[A-Za-z0-9]`, with modulo bias removed through rejection sampling (threshold 248), matching the official management console algorithm.
 - **Full-Dimensional Token Attribution**: Intercepts requests through the host `usage_plugin` capability, aggregating request counts, failure counts, and Input/Output tokens, as well as Reasoning, Cached, and CacheRead token breakdowns grouped by model.
 - **Per-Key Quotas, Independent Model Restrictions & Cost Budgets**: Set token limits, monetary cost budgets (Quota Cost Limit), or independent model allowlists (restricting models without requiring token/cost limits) per key with automatic rejection on violation and one-click quota resets; configure custom token pricing per model with automatic expenditure estimation.
-- **Range Dashboard and Failure Triage**: A single date range drives the stat cards, per-key columns, and model breakdown, including each key's last-seen time. Failure records are grouped into a timeline for locating abnormal keys and upstream errors.
+- **Range Dashboard and Failure Triage**: A single date range drives the stat cards, per-key columns, and model breakdown, including each key's last-seen time. Failure records are grouped into a timeline with upstream-credential and HTTP status filtering and the upstream credential that served the request (masked to four characters), for locating abnormal keys and upstream errors.
 - **Automatic Orphan Metadata Pruning**: Implements the `/forget` protocol; when keys are deleted from the host, the plugin detects and safely purges corresponding orphaned metadata and usage counters.
 - **Deep CPA Integration & Native Feel**: The embedded management page is completely self-contained (zero external CDNs, zero inline event handlers). It dynamically extracts host CSS variables via same-origin iframe to follow CPA themes (light, white, dark, and custom themes) and UI language (`cli-proxy-language`).
 - **Minimalist Host Configuration**: The host `config.yaml` only requires `enabled: true`. Business state is stored in an independent cache document, and metadata `ConfigFields` remains empty to prevent drawer write-backs from triggering unnecessary host reloads.
@@ -183,7 +183,7 @@ All management endpoints require `Authorization: Bearer <management_key>` or `X-
 | **`GET`** | `/v0/management/plugins/cpa-secret-manager/quota` | Reads a key's quota rule and current window consumption |
 | **`PUT`** | `/v0/management/plugins/cpa-secret-manager/quota` | Creates or updates a key's token limit, window period, and model allowlist |
 | **`DELETE`** | `/v0/management/plugins/cpa-secret-manager/quota` | Deletes a key's quota rule |
-| **`POST`** | `/v0/management/plugins/cpa-secret-manager/failures` | Queries failure records by key digest and time range |
+| **`POST`** | `/v0/management/plugins/cpa-secret-manager/failures` | Queries failure records by key digest and time range, including HTTP status and upstream credential identifiers |
 | **`GET`** | `/v0/management/plugins/cpa-secret-manager/models` | Lists models observed by the plugin |
 | **`GET`** | `/v0/management/plugins/cpa-secret-manager/settings` | Reads runtime settings (cache path, usage toggle, retention days, warnings) |
 | **`PUT`** | `/v0/management/plugins/cpa-secret-manager/settings` | Updates the usage toggle and data retention days |

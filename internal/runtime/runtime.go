@@ -652,6 +652,7 @@ func (r *Runtime) buildQuotaSummary(hash string, rule quota.Rule) *management.Qu
 		Exceeded:      exceeded,
 	}
 }
+
 // ObserveUsage accounts one usage record. It is exported so local harnesses can
 // inject records without going through the host RPC path.
 func (r *Runtime) ObserveUsage(record usage.Record) {
@@ -679,6 +680,7 @@ func (r *Runtime) ObserveUsage(record usage.Record) {
 		r.errorsStore.Record(record.Hash, errorslog.ErrorEntry{
 			Time:       record.At,
 			Model:      record.Model,
+			AuthID:     record.AuthID,
 			StatusCode: record.FailureStatus,
 			Message:    record.FailureMessage,
 		})

@@ -32,7 +32,7 @@ CLIProxyAPI (CPA) 代理 API Key 管理与用量归因插件。插件 ID、动�
 - **与官方管理端 1:1 同构密钥生成**：自动生成格式为 `sk-` 前缀 + 48 位 `[A-Za-z0-9]`，拒绝采样阈值 248（消除取模偏差），生成的密钥与官方管理中心完全同构。
 - **全维度 Token 用量归因**：通过宿主 `usage_plugin` 拦截客户端调用凭据，按密钥和模型聚合请求数、失败数、Input/Output Token，并支持 Reasoning（推理）、Cached（缓存创建）、CacheRead（缓存读取）等多维明细指标。
 - **逐密钥配额、独立模型限制与消费预算**：支持为每把密钥灵活配置 Token 总限额、消费金额上限（Quota Cost Limit）或独立模型白名单规则（可单独限制允许调用的模型而无需设置额度），超出预算或越权直接拦截并支持一键重置配额；支持按模型单独配置 Token 单价并自动估算请求费用。
-- **时间范围看板与失败排查**：按日期范围聚合统计卡片、密钥列与模型明细，展示每把密钥的「上次调用」时间；失败记录按时间线归集，便于定位异常密钥与上游错误。
+- **时间范围看板与失败排查**：按日期范围聚合统计卡片、密钥列与模型明细，展示每把密钥的「上次调用」时间；失败记录按时间线归集，支持按上游凭证与 HTTP 状态码筛选，并标注命中的上游凭证（脱敏前四位），便于定位异常密钥与上游错误。
 - **宿主孤儿数据自动清理**：提供 `/forget` 协议，当宿主中删除密钥后，插件侧元数据与用量自动检测并完成安全级联清除，拒绝孤儿垃圾残留。
 - **CPA 深度融合与原生质感**：嵌入式 Web 管理页纯原生自包含（零外部 CDN，零内联事件处理器），通过同源 iframe 实时抽取宿主 CSS 变量跟随 CPA 主题（浅色、纯白、深色及自定义主题），界面语言跟随宿主 `cli-proxy-language`。
 - **宿主配置极简无扰**：宿主 `config.yaml` 仅需承载 `enabled: true`，业务状态持久化至独立缓存文档，元数据中 `ConfigFields` 保持为空，避免管理端抽屉写回触发宿主不必要的热重载。
@@ -183,7 +183,7 @@ plugins:
 | **`GET`** | `/v0/management/plugins/cpa-secret-manager/quota` | 读取指定密钥的配额规则与当前窗口消耗 |
 | **`PUT`** | `/v0/management/plugins/cpa-secret-manager/quota` | 创建或更新密钥的 Token 上限、窗口周期与模型白名单 |
 | **`DELETE`** | `/v0/management/plugins/cpa-secret-manager/quota` | 删除指定密钥的配额规则 |
-| **`POST`** | `/v0/management/plugins/cpa-secret-manager/failures` | 按密钥摘要与时间范围查询失败记录 |
+| **`POST`** | `/v0/management/plugins/cpa-secret-manager/failures` | 按密钥摘要与时间范围查询失败记录（含 HTTP 状态码与上游凭证标识） |
 | **`GET`** | `/v0/management/plugins/cpa-secret-manager/models` | 读取插件已观察到的模型列表 |
 | **`GET`** | `/v0/management/plugins/cpa-secret-manager/settings` | 读取插件运行设置（持久化路径、用量采集开关、数据保留天数与报警） |
 | **`PUT`** | `/v0/management/plugins/cpa-secret-manager/settings` | 更新用量采集开关与数据保留天数 |

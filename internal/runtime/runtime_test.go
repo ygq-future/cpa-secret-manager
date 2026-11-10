@@ -867,6 +867,7 @@ func TestRuntime_ErrorLogRecordingAndQuery(t *testing.T) {
 	// Push a failure usage record
 	failureRecord := []byte(`{
 		"APIKey": "sk-testkey",
+		"AuthID": "codex-user@example.com.json",
 		"Model": "gpt-5.6",
 		"Failed": true,
 		"RequestedAt": "2026-10-19T10:00:00Z",
@@ -888,6 +889,9 @@ func TestRuntime_ErrorLogRecordingAndQuery(t *testing.T) {
 	}
 	if res.Items[0].StatusCode != 429 || res.Items[0].Message != "rate limit exceeded" {
 		t.Fatalf("unexpected failure entry: %+v", res.Items[0])
+	}
+	if res.Items[0].AuthID != "codex-user@example.com.json" {
+		t.Fatalf("unexpected failure auth id: %+v", res.Items[0])
 	}
 
 	// Flush and verify errors file exists

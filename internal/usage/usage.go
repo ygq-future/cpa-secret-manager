@@ -123,7 +123,10 @@ type Record struct {
 	// Hash is the SHA-256 index of the client proxy API key.
 	Hash string
 	// Model classifies the request; an empty model is grouped as UnknownModel.
-	Model          string
+	Model string
+	// AuthID identifies the upstream credential selected for this request.
+	// It is the host's opaque auth identifier, never credential material.
+	AuthID         string
 	Failed         bool
 	FailureStatus  int
 	FailureMessage string

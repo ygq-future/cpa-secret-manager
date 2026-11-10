@@ -352,8 +352,16 @@ const templateStyleOverlays = `
 
 #failures-modal .modal {
   width: min(720px, calc(100vw - 32px));
+  height: min(640px, 88vh);
   max-height: 88vh;
   overflow: visible;
+}
+
+#failures-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 #key-modal .modal {
@@ -363,7 +371,7 @@ const templateStyleOverlays = `
 .failures-filter-bar {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   margin-bottom: 12px;
   flex-wrap: nowrap;
 }
@@ -371,7 +379,31 @@ const templateStyleOverlays = `
 .failures-filter-bar .select {
   flex: 1 1 0;
   min-width: 0;
-  max-width: 280px;
+}
+
+.failures-filter-bar .select-trigger {
+  padding: 5px 8px;
+  gap: 6px;
+}
+
+.failures-filter-bar .failure-filter-code {
+  flex: 0 0 112px;
+}
+
+.failures-filter-bar .failure-filter-model {
+  flex: 0 0 132px;
+}
+
+.failures-filter-bar .failure-filter-auth .select-menu {
+  max-width: min(520px, calc(100vw - 48px));
+}
+
+.failures-filter-bar .failure-filter-auth .select-option,
+.failures-filter-bar .failure-filter-auth .select-option-label {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  word-break: break-all;
 }
 
 .failures-list-wrap {
@@ -379,7 +411,9 @@ const templateStyleOverlays = `
   flex-direction: column;
   gap: 6px;
   margin: 8px 0;
-  max-height: 420px;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
   overflow-y: auto;
   padding-right: 4px;
 }
@@ -449,6 +483,24 @@ const templateStyleOverlays = `
   color: var(--accent-amber-text);
 }
 
+.failure-credential-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+.failure-credential-icon {
+  width: 12px;
+  height: 12px;
+}
+
 .failure-body {
   font-size: 12px;
   line-height: 1.35;
@@ -483,6 +535,8 @@ const templateStyleResponsive = `
   .kv { grid-template-columns: 1fr; gap: 4px 0; }
   .kv dd { margin-bottom: 8px; }
   .data-table th, .data-table td { padding: 9px 11px; }
+  .failures-filter-bar { flex-wrap: wrap; }
+  .failures-filter-bar .select { flex: 1 1 140px; }
 }
 
 @media (max-width: 640px) {

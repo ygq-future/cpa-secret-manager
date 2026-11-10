@@ -47,6 +47,7 @@ func decodeUsageRecord(raw []byte) (usage.Record, error) {
 	}
 	record := usage.Record{
 		Model:          model,
+		AuthID:         pickString(fields, "AuthID", "auth_id"),
 		Failed:         failed,
 		FailureStatus:  statusCode,
 		FailureMessage: failureMsg,
