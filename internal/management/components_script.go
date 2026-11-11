@@ -814,6 +814,18 @@ function mountMultiSelect(config) {
       txt.textContent = labelStr;
       opt.appendChild(txt);
 
+      if (item.tags && item.tags.length) {
+        var meta = document.createElement('span');
+        meta.className = 'multi-select-meta';
+        for (var t = 0; t < item.tags.length; t++) {
+          var tag = document.createElement('span');
+          tag.className = 'price-tier-tag' + (item.tags[t].tone ? ' is-' + item.tags[t].tone : '');
+          tag.textContent = item.tags[t].text;
+          meta.appendChild(tag);
+        }
+        opt.appendChild(meta);
+      }
+
       (function (v) {
         opt.addEventListener('click', function (e) {
           e.stopPropagation();

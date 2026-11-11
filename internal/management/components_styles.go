@@ -1519,6 +1519,17 @@ input[type="text"].multi-select-search-input:focus {
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1 1 auto;
+  min-width: 0;
+}
+
+.multi-select-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding-left: 12px;
+  white-space: nowrap;
 }
 
 .multi-select-empty {
@@ -1698,6 +1709,45 @@ input[type="text"].multi-select-search-input:focus {
 .badge-clickable:hover {
   transform: translateY(-1px);
   box-shadow: var(--shadow-sm);
+}
+
+/* Price tiers read as one family wherever a unit price is shown: input stays
+   neutral, output is blue, cache is green. The unset variant drops the pill so
+   "no price" never looks like a value. */
+.price-tier-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 5px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-pill);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.price-tier-tag.is-out {
+  color: var(--accent-blue-text);
+}
+
+.price-tier-tag.is-cache {
+  color: var(--accent-green-text);
+}
+
+.price-tier-tag.is-unset {
+  height: auto;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 400;
 }
 
 /* --- key/value list --- */

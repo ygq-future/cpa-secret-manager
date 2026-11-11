@@ -1369,6 +1369,32 @@ function syncQuotaModeUI(overrideAllowed) {
   renderModelsSelection(currentAllowed);
 }
 
+// modelOptionItems decorates whitelist entries with their saved unit price so
+// the option row answers "what does this model cost" without leaving the form.
+function modelOptionItems(names) {
+  if (!state.settings) {
+    return names.map(function (name) {
+      return { value: name, label: name };
+    });
+  }
+  var prices = state.settings.model_prices || {};
+  return names.map(function (name) {
+    var price = prices[name];
+    if (!price) {
+      return { value: name, label: name, tags: [{ text: t('key_form.model_price_unset'), tone: 'unset' }] };
+    }
+    return {
+      value: name,
+      label: name,
+      tags: [
+        { text: t('settings.tag_input') + ' ' + formatCostValue(price.input) },
+        { text: t('settings.tag_output') + ' ' + formatCostValue(price.output), tone: 'out' },
+        { text: t('settings.tag_cache') + ' ' + formatCostValue(price.cache), tone: 'cache' }
+      ]
+    };
+  });
+}
+
 function renderModelsSelection(allowedModels) {
   var container = byId('key-form-models-container');
   var alertBox = byId('key-form-quota-no-priced-alert');
@@ -1377,6 +1403,17 @@ function renderModelsSelection(allowedModels) {
   }
   var token = ++modelMultiToken;
   var allowed = Array.isArray(allowedModels) ? allowedModels : [];
+
+  // Both the price tags and the cost-mode filter read state.settings. When the
+  // form opens before the settings request lands, fetch them and re-render so
+  // the picker never stays silently price-less.
+  if (!state.settings) {
+    loadSettings().catch(function () {}).then(function () {
+      if (token === modelMultiToken && state.settings) {
+        renderModelsSelection(allowed);
+      }
+    });
+  }
 
   if (isCostModeActive()) {
     var prices = (state.settings && state.settings.model_prices) || {};
@@ -1396,9 +1433,7 @@ function renderModelsSelection(allowedModels) {
     }
     modelMultiSelect = mountMultiSelect({
       container: container,
-      items: pricedModels.map(function (name) {
-        return { value: name, label: name };
-      }),
+      items: modelOptionItems(pricedModels),
       selected: filteredAllowed
     });
   } else {
@@ -1417,9 +1452,7 @@ function renderModelsSelection(allowedModels) {
       var allNames = Object.keys(set).sort();
       modelMultiSelect = mountMultiSelect({
         container: container,
-        items: allNames.map(function (name) {
-          return { value: name, label: name };
-        }),
+        items: modelOptionItems(allNames),
         selected: allowed
       });
     });

@@ -484,27 +484,6 @@ var settingsFeature = pageFeature{
   gap: 5px;
   flex-wrap: nowrap;
 }
-.pricing-tag-tier {
-  display: inline-flex;
-  align-items: center;
-  height: 18px;
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-pill);
-  padding: 0 5px;
-  white-space: nowrap;
-  line-height: 1;
-}
-.pricing-tag-tier.is-out {
-  color: var(--accent-blue-text);
-}
-.pricing-tag-tier.is-cache {
-  color: var(--accent-green-text);
-}
 .pricing-item .btn-icon {
   width: 20px;
   height: 20px;
@@ -1081,17 +1060,17 @@ function renderPricingList() {
       var bottomRow = document.createElement('div');
       bottomRow.className = 'pricing-item-bottom';
       var inBadge = document.createElement('span');
-      inBadge.className = 'pricing-tag-tier';
+      inBadge.className = 'price-tier-tag';
       inBadge.textContent = t('settings.tag_input') + ' $' + ((price && price.input) || 0).toFixed(3);
       bottomRow.appendChild(inBadge);
 
       var outBadge = document.createElement('span');
-      outBadge.className = 'pricing-tag-tier is-out';
+      outBadge.className = 'price-tier-tag is-out';
       outBadge.textContent = t('settings.tag_output') + ' $' + ((price && price.output) || 0).toFixed(3);
       bottomRow.appendChild(outBadge);
 
       var cacheBadge = document.createElement('span');
-      cacheBadge.className = 'pricing-tag-tier is-cache';
+      cacheBadge.className = 'price-tier-tag is-cache';
       cacheBadge.textContent = t('settings.tag_cache') + ' $' + ((price && price.cache) || 0).toFixed(3);
       bottomRow.appendChild(cacheBadge);
 
