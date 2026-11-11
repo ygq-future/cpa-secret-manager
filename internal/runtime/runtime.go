@@ -35,7 +35,7 @@ type Runtime struct {
 	quota         *quota.Manager
 	flushInterval time.Duration
 
-	// lifecycleMu serializes register, reconfigure and shutdown.
+	// lifecycleMu serializes register, quiesce, reconfigure and shutdown.
 	lifecycleMu sync.Mutex
 	// runMu single-flights state-mutating operations.
 	runMu sync.Mutex
@@ -57,6 +57,7 @@ type Runtime struct {
 	stateErr       error
 	configWarnings []string
 	usageWarning   string
+	quiesced       bool
 	closed         bool
 	handler        *management.Handler
 }
@@ -108,6 +109,11 @@ func (r *Runtime) Handle(ctx context.Context, method string, raw []byte) []byte 
 	switch strings.TrimSpace(method) {
 	case MethodPluginRegister, MethodPluginReconfigure:
 		return r.handleRegister(raw)
+	case MethodPluginQuiesce:
+		if err := r.Quiesce(ctx); err != nil {
+			return failureEnvelope("quiesce_failed", err.Error())
+		}
+		return okEnvelope(map[string]string{"status": "ok"})
 	case MethodPluginShutdown:
 		if err := r.Shutdown(ctx); err != nil {
 			return failureEnvelope("shutdown_failed", err.Error())
@@ -126,6 +132,26 @@ func (r *Runtime) Handle(ctx context.Context, method string, raw []byte) []byte 
 	}
 }
 
+// Quiesce flushes pending usage and stops the background flush loop so the host
+// can swap in a replacement without two runtimes writing the same documents.
+// The host calls plugin.register on this instance when the replacement fails
+// and it rolls back, which resumes normal operation.
+func (r *Runtime) Quiesce(_ context.Context) error {
+	r.lifecycleMu.Lock()
+	defer r.lifecycleMu.Unlock()
+
+	r.mu.Lock()
+	if r.closed || r.quiesced {
+		r.mu.Unlock()
+		return nil
+	}
+	r.quiesced = true
+	r.mu.Unlock()
+
+	r.stopFlushLoop()
+	return r.flushUsage(true)
+}
+
 // Shutdown persists pending state and marks the runtime closed.
 func (r *Runtime) Shutdown(_ context.Context) error {
 	r.lifecycleMu.Lock()
@@ -136,10 +162,16 @@ func (r *Runtime) Shutdown(_ context.Context) error {
 		r.mu.Unlock()
 		return nil
 	}
+	// A quiesced runtime already flushed its final state; writing again after
+	// the replacement started would roll its documents back.
+	quiesced := r.quiesced
 	r.mu.Unlock()
 
 	r.stopFlushLoop()
-	err := r.flushUsage(true)
+	var err error
+	if !quiesced {
+		err = r.flushUsage(true)
+	}
 
 	r.mu.Lock()
 	r.closed = true
@@ -688,9 +720,10 @@ func (r *Runtime) buildQuotaSummary(hash string, rule quota.Rule) *management.Qu
 func (r *Runtime) ObserveUsage(record usage.Record) {
 	r.mu.RLock()
 	store := r.store
+	quiesced := r.quiesced
 	closed := r.closed
 	r.mu.RUnlock()
-	if closed || store == nil {
+	if closed || quiesced || store == nil {
 		return
 	}
 	if !store.AppConfig().UsageEnabled {
@@ -740,6 +773,9 @@ func (r *Runtime) handleRegister(raw []byte) []byte {
 		return failureEnvelope("invalid_config", err.Error())
 	}
 	r.applyConfig(cfg, warnings)
+	r.mu.Lock()
+	r.quiesced = false
+	r.mu.Unlock()
 	r.startFlushLoop()
 	return okEnvelope(r.registrationResult())
 }

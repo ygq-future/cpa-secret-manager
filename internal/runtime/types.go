@@ -10,6 +10,7 @@ import (
 // Methods exchanged with the CPA host over the C ABI JSON envelope.
 const (
 	MethodPluginRegister         = "plugin.register"
+	MethodPluginQuiesce          = "plugin.quiesce"
 	MethodPluginReconfigure      = "plugin.reconfigure"
 	MethodPluginShutdown         = "plugin.shutdown"
 	MethodManagementRegister     = "management.register"

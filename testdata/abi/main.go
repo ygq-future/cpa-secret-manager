@@ -222,6 +222,10 @@ func run() error {
 		}
 	}
 
+	if _, err := call("plugin.quiesce", nil); err != nil {
+		return err
+	}
+
 	syscall.SyscallN(plugin.shutdown)
 	return nil
 }

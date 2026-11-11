@@ -98,7 +98,7 @@ go test -race ./...
 
 ### 4.4 关键测试项说明
 
-- **`TestMain_CGO_ABI_Integration`**：真实编译动态库并在独立进程中加载，校验 4 个导出符号、初始化握手、`plugin.register` 信封、`management.handle` 分发与停机刷盘。
+- **`TestMain_CGO_ABI_Integration`**：真实编译动态库并在独立进程中加载，校验 4 个导出符号、初始化握手、`plugin.register` 信封、`management.handle` 分发、`plugin.quiesce` 刷盘与停机。
 - **`TestVersionConsistency` / `TestReleaseNotes_MatchTheCurrentVersion`**：四处版本号与 Release Notes 文件名/标题一致性。
 - **`TestRegistry_ContractMatchesPluginStoreSchema`**：`registry.json` 符合 CPA 插件商店规范。
 - **`TestReleaseWorkflow_BuildsTheRegisteredPluginID`**：发布工作流的 `PLUGIN_NAME` 与插件 ID 一致。

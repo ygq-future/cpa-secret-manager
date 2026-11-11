@@ -799,6 +799,112 @@ func TestShutdown_PersistsPendingUsageAndSeedsOnRestart(t *testing.T) {
 	}
 }
 
+func TestHandle_QuiesceFlushesPendingUsage(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	rt := registerRuntimeWith(t, Options{StatePath: statePath, FlushInterval: time.Hour})
+
+	usageCall(t, rt, map[string]any{"APIKey": "sk-a", "Model": "m", "Detail": map[string]any{"TotalTokens": 42}})
+	env := decodeEnvelope(t, rt.Handle(context.Background(), MethodPluginQuiesce, nil))
+	if !env.OK {
+		t.Fatalf("plugin.quiesce failed: %+v", env.Error)
+	}
+
+	// Records that arrive after quiesce belong to the replacement instance.
+	usageCall(t, rt, map[string]any{"APIKey": "sk-a", "Model": "m", "Detail": map[string]any{"TotalTokens": 9}})
+	rt.FlushUsage()
+	if err := rt.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+
+	buckets, err := state.LoadBuckets(BucketsPath(statePath))
+	if err != nil {
+		t.Fatalf("state.LoadBuckets() error = %v", err)
+	}
+	var total int64
+	for _, bucket := range buckets.Buckets()[remarks.Index("sk-a")] {
+		total += bucket.Total
+	}
+	if total != 42 {
+		t.Fatalf("persisted tokens = %d, want the 42 recorded before quiesce", total)
+	}
+}
+
+// TestShutdown_AfterQuiesceKeepsReplacementState pins the hot-swap contract:
+// the retired instance must not write its snapshot after the replacement has
+// persisted newer usage.
+func TestShutdown_AfterQuiesceKeepsReplacementState(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	retired := registerRuntimeWith(t, Options{StatePath: statePath, FlushInterval: time.Hour})
+	usageCall(t, retired, map[string]any{"APIKey": "sk-a", "Model": "m", "Detail": map[string]any{"TotalTokens": 1}})
+
+	env := decodeEnvelope(t, retired.Handle(context.Background(), MethodPluginQuiesce, nil))
+	if !env.OK {
+		t.Fatalf("plugin.quiesce failed: %+v", env.Error)
+	}
+
+	replacement := registerRuntime(t, statePath)
+	usageCall(t, replacement, map[string]any{"APIKey": "sk-a", "Model": "m", "Detail": map[string]any{"TotalTokens": 2}})
+	replacement.FlushUsage()
+
+	if err := retired.Shutdown(context.Background()); err != nil {
+		t.Fatalf("retired Shutdown() error = %v", err)
+	}
+	if err := replacement.Shutdown(context.Background()); err != nil {
+		t.Fatalf("replacement Shutdown() error = %v", err)
+	}
+
+	buckets, err := state.LoadBuckets(BucketsPath(statePath))
+	if err != nil {
+		t.Fatalf("state.LoadBuckets() error = %v", err)
+	}
+	var total int64
+	for _, bucket := range buckets.Buckets()[remarks.Index("sk-a")] {
+		total += bucket.Total
+	}
+	if total != 3 {
+		t.Fatalf("persisted tokens = %d, want the replacement's 3", total)
+	}
+}
+
+func TestHandle_QuiesceThenRegisterResumes(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	rt := registerRuntimeWith(t, Options{StatePath: statePath, FlushInterval: 10 * time.Millisecond})
+	t.Cleanup(func() {
+		if err := rt.Shutdown(context.Background()); err != nil {
+			t.Errorf("Shutdown() error = %v", err)
+		}
+	})
+
+	if env := decodeEnvelope(t, rt.Handle(context.Background(), MethodPluginQuiesce, nil)); !env.OK {
+		t.Fatalf("plugin.quiesce failed: %+v", env.Error)
+	}
+	// A failed replacement rolls back by registering the same instance again.
+	request := fmt.Sprintf(`{"config_yaml":%q}`, "state_path: "+filepath.ToSlash(statePath)+"\n")
+	if env := decodeEnvelope(t, rt.Handle(context.Background(), MethodPluginRegister, []byte(request))); !env.OK {
+		t.Fatalf("register after quiesce failed: %+v", env.Error)
+	}
+
+	usageCall(t, rt, map[string]any{"APIKey": "sk-a", "Model": "m", "Detail": map[string]any{"TotalTokens": 7}})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		buckets, err := state.LoadBuckets(BucketsPath(statePath))
+		if err == nil {
+			var total int64
+			for _, bucket := range buckets.Buckets()[remarks.Index("sk-a")] {
+				total += bucket.Total
+			}
+			if total == 7 {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("usage was not persisted after registering a quiesced runtime")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func TestHandle_UnknownMethodFails(t *testing.T) {
 	rt := New(Options{StatePath: filepath.Join(t.TempDir(), "state.json")})
 
