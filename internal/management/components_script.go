@@ -307,12 +307,12 @@ function mountSelect(config) {
       }
       if (event.key === 'ArrowDown') {
         event.preventDefault();
-        setActive(activeIndex + 1);
+        moveActive(1);
         return;
       }
       if (event.key === 'ArrowUp') {
         event.preventDefault();
-        setActive(activeIndex - 1);
+        moveActive(-1);
         return;
       }
     });
@@ -321,15 +321,36 @@ function mountSelect(config) {
   function setActive(index) {
     var nodes = optionNodes();
     if (!nodes.length) {
+      activeIndex = -1;
       return;
     }
-    activeIndex = (index + nodes.length) % nodes.length;
+    activeIndex = ((index % nodes.length) + nodes.length) % nodes.length;
     for (var position = 0; position < nodes.length; position++) {
       nodes[position].classList.toggle('is-active', position === activeIndex);
     }
     if (nodes[activeIndex].scrollIntoView) {
       nodes[activeIndex].scrollIntoView({ block: 'nearest' });
     }
+  }
+
+  function clearActive() {
+    activeIndex = -1;
+    var nodes = optionNodes();
+    for (var position = 0; position < nodes.length; position++) {
+      nodes[position].classList.remove('is-active');
+    }
+  }
+
+  function moveActive(delta) {
+    var nodes = optionNodes();
+    if (!nodes.length) {
+      return;
+    }
+    if (activeIndex < 0) {
+      setActive(delta > 0 ? 0 : nodes.length - 1);
+      return;
+    }
+    setActive(activeIndex + delta);
   }
 
   function openMenu() {
@@ -364,7 +385,12 @@ function mountSelect(config) {
     if (rect.bottom > boundaryBottom - 8 && rect.top - rect.height > 8) {
       menu.classList.add('is-dropup');
     }
-    setActive(indexOfValue(value));
+    var selectedIndex = indexOfValue(value);
+    if (selectedIndex >= 0) {
+      setActive(selectedIndex);
+    } else {
+      clearActive();
+    }
     state.openSelect = component;
     if (isSearchable && searchInput) {
       setTimeout(function () {
@@ -463,9 +489,9 @@ function mountSelect(config) {
       return;
     }
     if (key === 'ArrowDown') {
-      setActive(activeIndex + 1);
+      moveActive(1);
     } else if (key === 'ArrowUp') {
-      setActive(activeIndex - 1);
+      moveActive(-1);
     } else if (key === 'Home') {
       setActive(0);
     } else if (key === 'End') {

@@ -16,7 +16,7 @@
 
 1. 插件页自带一套设计 Token 静态兜底值（浅色 / 纯白 / 深色三套），保证脱离宿主（本地 devserver、直接打开资源 URL）也正确显示。
 2. 处于 iframe 时，通过 `getComputedStyle(window.parent.document.documentElement)` 抽取宿主**表面 / 文字 / 边框**变量（`--bg-primary` 画布、`--bg-secondary` 卡面、`--bg-tertiary` 内嵌、`--bg-hover`、`--text-primary/secondary/tertiary`、`--border-color`），以内联样式覆盖到插件页根元素，并把 `--bg-card` / `--bg-subtle` 重新指向宿主的二级 / 三级表面。宿主的任意自定义主题都会在此基础上生效。
-3. **强调色不跟随宿主**：按钮、开关、徽标、focus ring 使用页面自有的 `--accent-blue/green/red` 三元组，与 `antigravity-priority` 行为一致——避免宿主主色（例如 CPA 默认的暖灰）把页面 CTA 冲淡成灰色。
+3. **强调色不跟随宿主**：按钮、徽标、focus ring 使用页面自有的 `--accent-blue/green/red` 三元组，与 `antigravity-priority` 行为一致——避免宿主主色（例如 CPA 默认的暖灰）把页面 CTA 冲淡成灰色。开关、复选框与下拉选择态保持中性对比（`--text-primary` / `--text-inverse` / `--bg-tertiary`），不与价格、错误等状态色争夺注意力。
 4. 用 `MutationObserver` 监听父文档 `documentElement` 与 `body` 的 `data-theme` / `class` / `style` 变化，宿主切换主题时插件页实时切换，无需刷新。
 5. 独立打开时降级为 `prefers-color-scheme`，并暴露 `window.setTheme(...)` 便于人工与 devserver 验收。
 6. 语言同样跟随宿主：读取 `cli-proxy-language`，`zh-CN` / `zh-TW` 归一到简体，其余归一到英文；页面内仍保留手动切换。

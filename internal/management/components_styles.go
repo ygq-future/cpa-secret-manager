@@ -275,7 +275,7 @@ const templateStyleComponents = `
 .btn-icon.copied .icon-copy { display: none; }
 
 .btn-text {
-  color: var(--accent-blue-text);
+  color: var(--text-primary);
   font-size: 12px;
   font-weight: 650;
   transition: opacity 120ms;
@@ -553,9 +553,9 @@ textarea:focus-visible {
 }
 
 .quota-mode-card.is-active {
-  border-color: var(--accent-blue);
+  border-color: var(--text-primary);
   background: var(--bg-card);
-  box-shadow: 0 0 0 1px var(--accent-blue);
+  box-shadow: 0 0 0 1px var(--text-primary);
 }
 
 .quota-mode-indicator {
@@ -576,8 +576,8 @@ textarea:focus-visible {
 }
 
 .quota-mode-card.is-active .quota-mode-indicator {
-  background: var(--accent-blue);
-  border-color: var(--accent-blue);
+  background: var(--text-primary);
+  border-color: var(--text-primary);
 }
 
 .quota-mode-indicator::after {
@@ -956,8 +956,8 @@ input[readonly] {
 .select-trigger:hover { border-color: var(--text-secondary); }
 
 .select.is-open .select-trigger {
-  border-color: var(--accent-blue);
-  box-shadow: 0 0 0 3px var(--focus-ring);
+  border-color: var(--text-primary);
+  box-shadow: 0 0 0 3px var(--bg-hover);
 }
 
 .select-label {
@@ -1043,15 +1043,15 @@ input[readonly] {
   width: 13px;
   height: 13px;
   margin-left: 8px;
-  color: var(--accent-green);
+  color: var(--text-primary);
 }
 
 .select-option:hover,
 .select-option.is-active { background: var(--bg-hover); }
 
 .select-option.is-selected {
-  background: var(--accent-blue-soft);
-  color: var(--accent-blue-text);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
   font-weight: 650;
 }
 
@@ -1110,8 +1110,8 @@ input[type="text"].select-search-input {
 
 .select-search-wrap input[type="text"].select-search-input:focus,
 input[type="text"].select-search-input:focus {
-  border-color: var(--accent-blue);
-  box-shadow: 0 0 0 2px var(--focus-ring);
+  border-color: var(--text-primary);
+  box-shadow: 0 0 0 2px var(--bg-hover);
   background: var(--bg-card);
 }
 
@@ -1242,15 +1242,18 @@ input[type="text"].select-search-input:focus {
   border-radius: 50%;
   background: var(--switch-knob);
   box-shadow: var(--shadow-sm);
-  transition: transform 250ms var(--ease-emphasized);
+  transition: transform 250ms var(--ease-emphasized), background 250ms var(--ease-emphasized);
 }
 
 .toggle-switch input:checked + .toggle-slider {
-  background: var(--accent-green);
-  box-shadow: inset 0 0 0 1px var(--accent-green);
+  background: var(--text-primary);
+  box-shadow: inset 0 0 0 1px var(--text-primary);
 }
 
-.toggle-switch input:checked + .toggle-slider::before { transform: translateX(18px); }
+.toggle-switch input:checked + .toggle-slider::before {
+  background: var(--text-inverse);
+  transform: translateX(18px);
+}
 
 .toggle-switch input:focus-visible + .toggle-slider {
   box-shadow: 0 0 0 3px var(--focus-ring);
@@ -1288,8 +1291,8 @@ input[type="text"].select-search-input:focus {
 }
 
 .multi-select.is-open .multi-select-trigger {
-  border-color: var(--accent-blue);
-  box-shadow: 0 0 0 3px var(--focus-ring);
+  border-color: var(--text-primary);
+  box-shadow: 0 0 0 3px var(--bg-hover);
 }
 
 .multi-select-display {
@@ -1322,8 +1325,8 @@ input[type="text"].select-search-input:focus {
   border-radius: 10px;
   font-size: 11px;
   font-weight: 650;
-  background: var(--accent-blue-soft);
-  color: var(--accent-blue-text);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
   white-space: nowrap;
   flex: 0 0 auto;
 }
@@ -1396,8 +1399,8 @@ input[type="text"].multi-select-search-input {
 
 .multi-select-search-wrap input[type="text"].multi-select-search-input:focus,
 input[type="text"].multi-select-search-input:focus {
-  border-color: var(--accent-blue);
-  box-shadow: 0 0 0 2px var(--focus-ring);
+  border-color: var(--text-primary);
+  box-shadow: 0 0 0 2px var(--bg-hover);
   background: var(--bg-card);
 }
 
@@ -1477,8 +1480,8 @@ input[type="text"].multi-select-search-input:focus {
 }
 
 .multi-select-option.is-selected {
-  background: var(--accent-blue-soft);
-  color: var(--accent-blue-text);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
   font-weight: 550;
 }
 
@@ -1496,8 +1499,8 @@ input[type="text"].multi-select-search-input:focus {
 }
 
 .multi-select-option.is-selected .multi-select-checkbox {
-  border-color: var(--accent-blue);
-  background: var(--accent-blue);
+  border-color: var(--text-primary);
+  background: var(--text-primary);
   color: var(--text-inverse);
 }
 
