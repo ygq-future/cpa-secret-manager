@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"sort"
 	"strings"
 )
 
@@ -29,12 +30,15 @@ const (
 	MaxModels = 500
 	// maxModelName bounds one model identifier.
 	maxModelName = 200
+	// maxOffers bounds the per-model offer list kept in the cache and returned
+	// to the page. Prefix matching can reach a broad family, so the list is
+	// ranked first and truncated last.
+	maxOffers = 50
 )
 
-// Suggestion is the reference price for one requested model, resolved from the
-// provider offers found in the catalog. Prices are USD per 1M tokens, the same
-// unit the plugin's ModelPrice uses.
-type Suggestion struct {
+// Offer is one catalog listing that matched a requested model. Prices are USD
+// per 1M tokens, the same unit the plugin's ModelPrice uses.
+type Offer struct {
 	// Model is the upstream model identifier the price came from.
 	Model string `json:"model"`
 	// Provider is the upstream provider identifier, for example "openai".
@@ -43,8 +47,24 @@ type Suggestion struct {
 	Output    float64 `json:"output"`
 	Cache     float64 `json:"cache"`
 	UpdatedAt string  `json:"updated_at,omitempty"`
-	// Providers is how many provider offers matched this model.
+}
+
+// Suggestion is the reference price for one requested model, resolved from the
+// provider offers found in the catalog.
+type Suggestion struct {
+	// Model is the upstream model identifier of the best offer.
+	Model string `json:"model"`
+	// Provider is the upstream provider identifier of the best offer.
+	Provider  string  `json:"provider"`
+	Input     float64 `json:"input"`
+	Output    float64 `json:"output"`
+	Cache     float64 `json:"cache"`
+	UpdatedAt string  `json:"updated_at,omitempty"`
+	// Providers is how many distinct offers are listed for this model.
 	Providers int `json:"providers,omitempty"`
+	// Offers lists every matched listing, best first. The first entry is the
+	// price the page selects by default; the leading fields mirror it.
+	Offers []Offer `json:"offers,omitempty"`
 }
 
 // NormalizeModel returns the case-insensitive lookup key of a model name.
@@ -91,7 +111,7 @@ func Decode(r io.Reader, wanted []string) (map[string]Suggestion, error) {
 		return map[string]Suggestion{}, nil
 	}
 
-	index := newAliasIndex(normalized)
+	index := newWantedIndex(normalized)
 	candidates := make(map[string][]candidate, len(normalized))
 
 	decoder := json.NewDecoder(r)
@@ -145,9 +165,12 @@ type candidate struct {
 	hasCache       bool
 	exact          bool
 	canonicalMatch bool
+	prefixOfWanted bool
+	depth          int
+	extra          int
 }
 
-func decodeProvider(decoder *json.Decoder, provider string, index aliasIndex, out map[string][]candidate) error {
+func decodeProvider(decoder *json.Decoder, provider string, index wantedIndex, out map[string][]candidate) error {
 	token, err := decoder.Token()
 	if err != nil {
 		return fmt.Errorf("decode provider %q: %w", provider, err)
@@ -180,7 +203,7 @@ func decodeProvider(decoder *json.Decoder, provider string, index aliasIndex, ou
 	return nil
 }
 
-func decodeModels(decoder *json.Decoder, provider string, index aliasIndex, out map[string][]candidate) error {
+func decodeModels(decoder *json.Decoder, provider string, index wantedIndex, out map[string][]candidate) error {
 	token, err := decoder.Token()
 	if err != nil {
 		return fmt.Errorf("decode models of %q: %w", provider, err)
@@ -216,8 +239,10 @@ func decodeModels(decoder *json.Decoder, provider string, index aliasIndex, out 
 		if !ok {
 			continue
 		}
-		for _, wanted := range matched {
-			out[wanted] = append(out[wanted], candidate{
+		base := modelBase(modelID)
+		segments := splitSegments(base)
+		for _, match := range matched {
+			out[match.name] = append(out[match.name], candidate{
 				provider:       provider,
 				modelID:        entry.ID,
 				updated:        entry.LastUpdated,
@@ -226,8 +251,11 @@ func decodeModels(decoder *json.Decoder, provider string, index aliasIndex, out 
 				cache:          price.cache,
 				hasPrice:       price.hasPrice,
 				hasCache:       price.hasCache,
-				exact:          NormalizeModel(entry.ID) == NormalizeModel(wanted),
-				canonicalMatch: index.matchesName(wanted, entry.CanonicalModelID),
+				exact:          base == match.base,
+				canonicalMatch: index.matchesName(match.name, entry.CanonicalModelID),
+				prefixOfWanted: isStrictPrefix(match.base, base),
+				depth:          match.depth,
+				extra:          len(segments) - match.depth,
 			})
 		}
 	}
@@ -269,12 +297,57 @@ func resolve(candidates map[string][]candidate) map[string]Suggestion {
 		if len(offers) == 0 {
 			continue
 		}
-		best := offers[0]
-		for _, offer := range offers[1:] {
-			if better(offer, best, wanted) {
-				best = offer
+		// Keep only the deepest prefix stage that produced matches. A model name
+		// such as "gemini-3.5-flash-high" falls back to "gemini-3.5-flash" when
+		// no catalog listing carries the trailing "high" marker.
+		maxDepth := 0
+		for _, offer := range offers {
+			if offer.depth > maxDepth {
+				maxDepth = offer.depth
 			}
 		}
+		// A single family token is too weak for a multi-token name: it would map
+		// "claude-3-5-haiku" onto every Claude listing. Require at least two
+		// matched segments unless the requested name is itself one segment.
+		requiredDepth := 1
+		if len(splitSegments(modelBase(wanted))) > 1 {
+			requiredDepth = 2
+		}
+		if maxDepth < requiredDepth {
+			continue
+		}
+		matched := make([]candidate, 0, len(offers))
+		for _, offer := range offers {
+			if offer.depth == maxDepth {
+				matched = append(matched, offer)
+			}
+		}
+		sort.SliceStable(matched, func(left, right int) bool {
+			return better(matched[left], matched[right])
+		})
+
+		best := matched[0]
+		list := make([]Offer, 0, len(matched))
+		seen := make(map[string]struct{}, len(matched))
+		for _, offer := range matched {
+			key := offer.provider + "\x00" + offer.modelID
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			list = append(list, Offer{
+				Model:     offer.modelID,
+				Provider:  offer.provider,
+				Input:     roundPrice(offer.input),
+				Output:    roundPrice(offer.output),
+				Cache:     roundPrice(offer.cache),
+				UpdatedAt: offer.updated,
+			})
+			if len(list) >= maxOffers {
+				break
+			}
+		}
+
 		out[NormalizeModel(wanted)] = Suggestion{
 			Model:     best.modelID,
 			Provider:  best.provider,
@@ -282,17 +355,21 @@ func resolve(candidates map[string][]candidate) map[string]Suggestion {
 			Output:    roundPrice(best.output),
 			Cache:     roundPrice(best.cache),
 			UpdatedAt: best.updated,
-			Providers: len(offers),
+			Providers: len(list),
+			Offers:    list,
 		}
 	}
 	return out
 }
 
-func better(candidate, current candidate, wanted string) bool {
-	candidateScore := score(candidate, wanted)
-	currentScore := score(current, wanted)
+func better(candidate, current candidate) bool {
+	candidateScore := score(candidate)
+	currentScore := score(current)
 	if candidateScore != currentScore {
 		return candidateScore > currentScore
+	}
+	if candidate.extra != current.extra {
+		return candidate.extra < current.extra
 	}
 	if candidate.updated != current.updated {
 		return candidate.updated > current.updated
@@ -303,9 +380,12 @@ func better(candidate, current candidate, wanted string) bool {
 	return candidate.modelID < current.modelID
 }
 
-func score(candidate candidate, wanted string) int {
+func score(candidate candidate) int {
 	total := providerRank(candidate.provider, candidate.modelID)
 	if candidate.exact {
+		total += 100
+	}
+	if candidate.prefixOfWanted {
 		total += 60
 	}
 	if candidate.canonicalMatch {
@@ -482,106 +562,136 @@ func isDigits(value string) bool {
 	return true
 }
 
-// aliasIndex maps every lookup spelling of the requested models back to the
-// caller's original names. A model can match through its full id, its last path
-// segment, a vendor-dotted variant, or a date/version-stripped variant.
-type aliasIndex struct {
-	byAlias map[string][]string
-}
-
-func newAliasIndex(wanted []string) aliasIndex {
-	index := aliasIndex{byAlias: make(map[string][]string, len(wanted)*4)}
-	for _, name := range wanted {
-		for _, alias := range aliases(name) {
-			index.byAlias[alias] = appendUnique(index.byAlias[alias], name)
-		}
+// modelBase reduces a model identifier to the spelling used for prefix
+// matching: the last path segment, without a provider tag, vendor dots or a
+// date marker. Underscores are treated as separators so both naming styles
+// compare the same way.
+func modelBase(raw string) string {
+	value := NormalizeModel(raw)
+	if index := strings.LastIndexByte(value, '/'); index >= 0 {
+		value = value[index+1:]
 	}
-	return index
-}
-
-func (index aliasIndex) match(modelID string) []string {
-	var matches []string
-	for _, alias := range aliases(modelID) {
-		matches = append(matches, index.byAlias[alias]...)
+	if index := strings.IndexByte(value, '@'); index > 0 {
+		value = value[:index]
 	}
-	return dedupeStrings(matches)
+	if index := strings.LastIndexByte(value, ':'); index > 0 {
+		value = value[:index]
+	}
+	value = stripVendorDots(value)
+	return strings.ReplaceAll(value, "_", "-")
 }
 
-func (index aliasIndex) matchesName(name string, modelID string) bool {
-	if modelID == "" {
+func splitSegments(value string) []string {
+	if value == "" {
+		return nil
+	}
+	return strings.FieldsFunc(value, func(char rune) bool {
+		return char == '-' || char == '_' || char == ' '
+	})
+}
+
+// hasBoundaryPrefix reports whether value starts with prefix and the prefix
+// ends on a segment boundary, so "gemini-3.5-flash" does not match
+// "gemini-3.5-flashlight".
+func hasBoundaryPrefix(value, prefix string) bool {
+	if prefix == "" || !strings.HasPrefix(value, prefix) {
 		return false
 	}
-	for _, match := range index.match(modelID) {
-		if match == name {
-			return true
-		}
+	if len(value) == len(prefix) {
+		return true
+	}
+	switch value[len(prefix)] {
+	case '-', '_', ' ', '@', ':':
+		return true
 	}
 	return false
 }
 
-func aliases(raw string) []string {
-	base := NormalizeModel(raw)
-	if base == "" {
-		return nil
-	}
-	out := []string{base}
-	add := func(value string) {
-		value = strings.TrimSpace(value)
-		if value != "" {
-			out = append(out, value)
-		}
-	}
-	if index := strings.LastIndexByte(base, '/'); index >= 0 {
-		add(base[index+1:])
-	}
-	if index := strings.LastIndexByte(base, '@'); index > 0 {
-		add(base[:index])
-	}
-	if index := strings.LastIndexByte(base, ':'); index > 0 {
-		add(base[:index])
-	}
-	add(stripVendorDots(base))
-
-	initial := len(out)
-	for index := 0; index < initial; index++ {
-		value := out[index]
-		if stripped := stripDateSuffix(value); stripped != value {
-			add(stripped)
-		}
-		if stripped := stripVersionSuffix(value); stripped != value {
-			add(stripped)
-		}
-		if stripped := stripDateSuffix(stripVersionSuffix(value)); stripped != value {
-			add(stripped)
-		}
-	}
-	add(baseModelName(base))
-	return dedupeStrings(out)
+// isStrictPrefix reports whether candidate is a shorter form of wanted, for
+// example "gemini-3.5-flash" for "gemini-3.5-flash-high".
+func isStrictPrefix(wanted, candidate string) bool {
+	return candidate != "" && candidate != wanted && hasBoundaryPrefix(wanted, candidate)
 }
 
-func appendUnique(values []string, value string) []string {
-	for _, existing := range values {
-		if existing == value {
-			return values
+// prefixDepth returns how many leading segments of wanted match the candidate
+// at a segment boundary, or zero when even the first segment differs.
+func prefixDepth(candidate string, wantedSegments []string) int {
+	for depth := len(wantedSegments); depth >= 1; depth-- {
+		if hasBoundaryPrefix(candidate, strings.Join(wantedSegments[:depth], "-")) {
+			return depth
 		}
 	}
-	return append(values, value)
+	return 0
 }
 
-func dedupeStrings(values []string) []string {
-	if len(values) < 2 {
-		return values
-	}
-	seen := make(map[string]struct{}, len(values))
-	out := values[:0]
-	for _, value := range values {
-		if _, exists := seen[value]; exists {
+// wantedIndex maps the requested models by their first segment. Matching then
+// walks only the family that can possibly share a prefix instead of the whole
+// request list for every catalog entry.
+type wantedIndex struct {
+	byFirst map[string][]wantedEntry
+}
+
+type wantedEntry struct {
+	name     string
+	base     string
+	segments []string
+}
+
+type wantedMatch struct {
+	name  string
+	base  string
+	depth int
+}
+
+func newWantedIndex(wanted []string) wantedIndex {
+	index := wantedIndex{byFirst: make(map[string][]wantedEntry, len(wanted))}
+	for _, name := range wanted {
+		base := modelBase(name)
+		segments := splitSegments(base)
+		if len(segments) == 0 {
 			continue
 		}
-		seen[value] = struct{}{}
-		out = append(out, value)
+		first := segments[0]
+		index.byFirst[first] = append(index.byFirst[first], wantedEntry{
+			name:     name,
+			base:     base,
+			segments: segments,
+		})
 	}
-	return out
+	return index
+}
+
+func (index wantedIndex) match(modelID string) []wantedMatch {
+	base := modelBase(modelID)
+	segments := splitSegments(base)
+	if len(segments) == 0 {
+		return nil
+	}
+	var matches []wantedMatch
+	for _, entry := range index.byFirst[segments[0]] {
+		if depth := prefixDepth(base, entry.segments); depth > 0 {
+			matches = append(matches, wantedMatch{name: entry.name, base: entry.base, depth: depth})
+		}
+	}
+	return matches
+}
+
+func (index wantedIndex) matchesName(name string, modelID string) bool {
+	if modelID == "" {
+		return false
+	}
+	base := modelBase(modelID)
+	segments := splitSegments(base)
+	if len(segments) == 0 {
+		return false
+	}
+	for _, entry := range index.byFirst[segments[0]] {
+		if entry.name != name {
+			continue
+		}
+		return prefixDepth(base, entry.segments) > 0
+	}
+	return false
 }
 
 func isDelim(token json.Token, want json.Delim) bool {

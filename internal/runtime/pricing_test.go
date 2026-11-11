@@ -165,6 +165,54 @@ func TestRefreshPricing_ConditionalGETKeepsCache(t *testing.T) {
 	}
 }
 
+func TestRefreshPricing_MergePreservesOtherModels(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	server := newPricingTestServer(t)
+	rt := registerRuntimeWith(t, Options{
+		StatePath:  statePath,
+		PricingURL: server.URL,
+		HTTPClient: server.Client(),
+	})
+
+	if status, raw := managementCall(t, rt, http.MethodPost, management.RoutePricingRefresh, []byte(`{"models":["gpt-4o"]}`)); status != http.StatusOK {
+		t.Fatalf("first refresh status = %d: %s", status, raw)
+	}
+	status, raw := managementCall(t, rt, http.MethodPost, management.RoutePricingRefresh, []byte(`{"models":["claude-sonnet-4-5"],"merge":true}`))
+	if status != http.StatusOK {
+		t.Fatalf("merge refresh status = %d: %s", status, raw)
+	}
+	var result management.PricingResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatalf("decode merge refresh: %v", err)
+	}
+	if result.Matched != 1 || len(result.Models) != 1 {
+		t.Fatalf("merge refresh result = %+v, want only the requested model", result)
+	}
+
+	cache, err := state.LoadPrices(PricesPath(statePath))
+	if err != nil {
+		t.Fatalf("load price cache: %v", err)
+	}
+	suggestions := cache.Suggestions()
+	if len(suggestions) != 2 {
+		t.Fatalf("cached suggestions = %+v, want the preserved and refreshed models", suggestions)
+	}
+	if _, ok := suggestions["gpt-4o"]; !ok {
+		t.Fatal("merge refresh discarded a model outside the request")
+	}
+	if got := suggestions["claude-sonnet-4-5"]; got.Provider != "anthropic" || got.Input != 3 {
+		t.Fatalf("refreshed suggestion = %+v, want the Anthropic offer", got)
+	}
+	known := cache.Known()
+	seen := map[string]bool{}
+	for _, name := range known {
+		seen[name] = true
+	}
+	if !seen["gpt-4o"] || !seen["claude-sonnet-4-5"] {
+		t.Fatalf("known models = %#v, want the union of both refreshes", known)
+	}
+}
+
 func TestRefreshPricing_FailureKeepsPreviousCache(t *testing.T) {
 	statePath := filepath.Join(t.TempDir(), "state.json")
 	server := newPricingTestServer(t)

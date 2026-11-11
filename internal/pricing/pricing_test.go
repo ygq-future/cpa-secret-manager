@@ -87,6 +87,9 @@ func TestDecodeMatchesAndRanksProviders(t *testing.T) {
 	if gpt.Providers != 3 {
 		t.Fatalf("gpt-4o providers = %d, want 3 (openai, reseller, no-price is skipped)", gpt.Providers)
 	}
+	if len(gpt.Offers) != 3 || gpt.Offers[0].Provider != "openai" || gpt.Offers[0].Model != "gpt-4o" {
+		t.Fatalf("gpt-4o offers = %+v, want the three ranked listings with the OpenAI offer first", gpt.Offers)
+	}
 
 	prefixed := suggestions["openai/gpt-4o"]
 	if prefixed.Provider != "openai" || prefixed.Input != 2.5 {
@@ -100,6 +103,110 @@ func TestDecodeMatchesAndRanksProviders(t *testing.T) {
 
 	if _, exists := suggestions["missing"]; exists {
 		t.Fatal("missing model received a suggestion")
+	}
+}
+
+func TestDecodeMatchesPrefixFallback(t *testing.T) {
+	catalog := `{
+	  "google": {
+	    "models": {
+	      "gemini-3.5-flash": {"id": "gemini-3.5-flash", "cost": {"input": 0.3, "output": 2.5, "cache_read": 0.075}},
+	      "gemini-3.5-flash-lite": {"id": "gemini-3.5-flash-lite", "cost": {"input": 0.1, "output": 0.4}},
+	      "gemini-2.5-pro": {"id": "gemini-2.5-pro", "cost": {"input": 1.25, "output": 10}}
+	    }
+	  },
+	  "reseller": {
+	    "models": {
+	      "gemini-3.5-flash-lite": {"id": "gemini-3.5-flash-lite", "cost": {"input": 0.12, "output": 0.5}}
+	    }
+	  }
+	}`
+	suggestions, err := Decode(strings.NewReader(catalog), []string{"gemini-3.5-flash-high"})
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	got, exists := suggestions["gemini-3.5-flash-high"]
+	if !exists {
+		t.Fatal("a model with a trailing marker did not fall back to its prefix family")
+	}
+	if got.Model != "gemini-3.5-flash" || got.Provider != "google" {
+		t.Fatalf("best offer = %s/%s, want the first-party gemini-3.5-flash", got.Provider, got.Model)
+	}
+	if got.Providers != 3 || len(got.Offers) != 3 {
+		t.Fatalf("offers = %d/%d, want the three listings at the deepest prefix stage", got.Providers, len(got.Offers))
+	}
+	if first := got.Offers[0]; first.Model != "gemini-3.5-flash" || first.Provider != "google" {
+		t.Fatalf("first offer = %+v, want the exact-prefix first-party listing", first)
+	}
+	for _, offer := range got.Offers {
+		if offer.Model == "gemini-2.5-pro" {
+			t.Fatal("a shallower prefix stage leaked into the offer list")
+		}
+	}
+}
+
+func TestDecodeRequiresSegmentBoundary(t *testing.T) {
+	catalog := `{
+	  "google": {
+	    "models": {
+	      "gemini-3.5-flashlight": {"id": "gemini-3.5-flashlight", "cost": {"input": 9, "output": 9}},
+	      "gemini-3.5": {"id": "gemini-3.5", "cost": {"input": 0.3, "output": 2.5}}
+	    }
+	  }
+	}`
+	suggestions, err := Decode(strings.NewReader(catalog), []string{"gemini-3.5-flash"})
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	got := suggestions["gemini-3.5-flash"]
+	if got.Model != "gemini-3.5" {
+		t.Fatalf("best offer = %s, want the shorter gemini-3.5 prefix match", got.Model)
+	}
+	if len(got.Offers) != 2 {
+		t.Fatalf("offers = %+v, want both boundary matches", got.Offers)
+	}
+}
+
+func TestDecodePrefersDeepestPrefixStage(t *testing.T) {
+	catalog := `{
+	  "google": {
+	    "models": {
+	      "gemini-3.5-flash": {"id": "gemini-3.5-flash", "cost": {"input": 0.3, "output": 2.5}}
+	    }
+	  },
+	  "reseller": {
+	    "models": {
+	      "gemini-3.5-flash-high": {"id": "gemini-3.5-flash-high", "cost": {"input": 9, "output": 9}}
+	    }
+	  }
+	}`
+	suggestions, err := Decode(strings.NewReader(catalog), []string{"gemini-3.5-flash-high"})
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	got := suggestions["gemini-3.5-flash-high"]
+	if got.Model != "gemini-3.5-flash-high" || got.Provider != "reseller" {
+		t.Fatalf("best offer = %s/%s, want the deeper exact match", got.Provider, got.Model)
+	}
+	if len(got.Offers) != 1 {
+		t.Fatalf("offers = %+v, want only the deepest stage", got.Offers)
+	}
+}
+
+func TestDecodeRejectsWeakFamilyPrefix(t *testing.T) {
+	catalog := `{
+	  "anthropic": {
+	    "models": {
+	      "claude-sonnet-4-5": {"id": "claude-sonnet-4-5", "cost": {"input": 3, "output": 15}}
+	    }
+	  }
+	}`
+	suggestions, err := Decode(strings.NewReader(catalog), []string{"claude-3-5-haiku"})
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	if _, exists := suggestions["claude-3-5-haiku"]; exists {
+		t.Fatal("a single family segment must not match an unrelated multi-token name")
 	}
 }
 

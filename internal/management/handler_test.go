@@ -25,6 +25,7 @@ type stubBackend struct {
 	pricingErr    error
 	pricingModels []string
 	refreshModels []string
+	refreshMerge  bool
 }
 
 func (s *stubBackend) Settings(context.Context) (Settings, error) {
@@ -82,8 +83,9 @@ func (s *stubBackend) Pricing(_ context.Context, models []string) (PricingResult
 	return s.pricingResult, s.pricingErr
 }
 
-func (s *stubBackend) RefreshPricing(_ context.Context, models []string) (PricingResult, error) {
+func (s *stubBackend) RefreshPricing(_ context.Context, models []string, merge bool) (PricingResult, error) {
 	s.refreshModels = append([]string(nil), models...)
+	s.refreshMerge = merge
 	return s.pricingResult, s.pricingErr
 }
 
@@ -367,6 +369,18 @@ func TestHandler_PricingRoutes(t *testing.T) {
 	}
 	if len(backend.refreshModels) != 1 || backend.refreshModels[0] != "gpt-4o" {
 		t.Fatalf("refresh models = %#v, want the submitted list", backend.refreshModels)
+	}
+	if backend.refreshMerge {
+		t.Fatal("refresh merge = true, want the default full refresh")
+	}
+
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, RoutePricingRefresh, strings.NewReader(`{"models":["gpt-4o"],"merge":true}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST pricing merge refresh status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if !backend.refreshMerge {
+		t.Fatal("refresh merge = false, want the submitted merge flag")
 	}
 
 	rec = httptest.NewRecorder()

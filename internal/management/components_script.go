@@ -39,6 +39,25 @@ function buildIconButton(className, iconName, label, handler) {
   return button;
 }
 
+// appendLabelParts renders structured option text without innerHTML. Each part
+// carries plain text and an optional class, so callers can color prices or
+// truncate a name while keeping a trailing value visible.
+function appendLabelParts(container, parts) {
+  container.textContent = '';
+  for (var index = 0; index < parts.length; index++) {
+    var part = parts[index];
+    if (!part) {
+      continue;
+    }
+    var span = document.createElement('span');
+    if (part.className) {
+      span.className = part.className;
+    }
+    span.textContent = part.text === undefined ? '' : String(part.text);
+    container.appendChild(span);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Listbox: the page's own select. A native <select> cannot be themed, so every
 // choice on the page mounts this component instead. Options carry an i18n key
@@ -185,7 +204,11 @@ function mountSelect(config) {
     var index = indexOfValue(value);
     var hasValue = index >= 0;
     if (hasValue) {
-      label.textContent = optionTriggerLabel(options[index]);
+      if (options[index].triggerParts && options[index].triggerParts.length) {
+        appendLabelParts(label, options[index].triggerParts);
+      } else {
+        label.textContent = optionTriggerLabel(options[index]);
+      }
       label.classList.remove('is-placeholder');
     } else if (config.placeholderKey || config.placeholder) {
       label.textContent = config.placeholderKey ? t(config.placeholderKey) : config.placeholder;
@@ -239,8 +262,18 @@ function mountSelect(config) {
         node.setAttribute('data-value', option.value);
         var labelSpan = document.createElement('span');
         labelSpan.className = 'select-option-label';
-        labelSpan.textContent = optionLabel(option);
+        if (option.labelParts && option.labelParts.length) {
+          appendLabelParts(labelSpan, option.labelParts);
+        } else {
+          labelSpan.textContent = optionLabel(option);
+        }
         node.appendChild(labelSpan);
+        if (option.trailingParts && option.trailingParts.length) {
+          var trailingSpan = document.createElement('span');
+          trailingSpan.className = 'select-option-trailing';
+          appendLabelParts(trailingSpan, option.trailingParts);
+          node.appendChild(trailingSpan);
+        }
         if (option.configured) {
           var checkIcon = iconMarkup('check', 'select-option-check');
           if (checkIcon) {

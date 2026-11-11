@@ -107,6 +107,9 @@ type PriceStatus struct {
 // PricingRequest carries the models whose reference prices the page needs.
 type PricingRequest struct {
 	Models []string `json:"models"`
+	// Merge keeps cached suggestions for models outside this request. The page
+	// uses it to refresh one model without discarding the rest of the cache.
+	Merge bool `json:"merge,omitempty"`
 }
 
 // PricingResult carries cached or freshly fetched reference prices. Models is
@@ -265,7 +268,7 @@ type Backend interface {
 	DeleteQuota(ctx context.Context, hash string) error
 	Models(ctx context.Context) ([]string, error)
 	Pricing(ctx context.Context, models []string) (PricingResult, error)
-	RefreshPricing(ctx context.Context, models []string) (PricingResult, error)
+	RefreshPricing(ctx context.Context, models []string, merge bool) (PricingResult, error)
 }
 
 // Handler serves the plugin-owned Management API routes.
@@ -530,7 +533,7 @@ func (h *Handler) servePricingRefresh(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &request) {
 		return
 	}
-	result, err := h.backend.RefreshPricing(r.Context(), request.Models)
+	result, err := h.backend.RefreshPricing(r.Context(), request.Models, request.Merge)
 	if h.fail(w, err) {
 		return
 	}

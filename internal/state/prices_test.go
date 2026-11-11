@@ -79,6 +79,63 @@ func TestPriceStore_ReplaceCopiesInput(t *testing.T) {
 	}
 }
 
+func TestPriceStore_CopiesOfferLists(t *testing.T) {
+	store, err := LoadPrices(filepath.Join(t.TempDir(), "prices.json"))
+	if err != nil {
+		t.Fatalf("LoadPrices() error = %v", err)
+	}
+	source := map[string]pricing.Suggestion{
+		"gpt-4o": {
+			Model: "gpt-4o", Provider: "openai", Input: 2.5,
+			Offers: []pricing.Offer{{Model: "gpt-4o", Provider: "openai", Input: 2.5}},
+		},
+	}
+	store.Replace("models.dev", "now", "", source, []string{"gpt-4o"})
+	source["gpt-4o"].Offers[0].Input = 99
+	if got := store.Suggestions()["gpt-4o"].Offers[0].Input; got != 2.5 {
+		t.Fatalf("stored offer input = %v, want the value captured at Replace time", got)
+	}
+
+	snapshot := store.Snapshot()
+	snapshot.Models["gpt-4o"].Offers[0].Input = 42
+	if got := store.Suggestions()["gpt-4o"].Offers[0].Input; got != 2.5 {
+		t.Fatalf("snapshot offer mutation leaked into the store: input = %v", got)
+	}
+}
+
+func TestPriceStore_MigratesLegacySuggestions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "prices.json")
+	legacy := `{
+	  "schema_version": 1,
+	  "source": "models.dev",
+	  "fetched_at": "2026-11-10T12:00:00Z",
+	  "known": ["gpt-4o"],
+	  "models": {
+	    "gpt-4o": {"model": "gpt-4o", "provider": "openai", "input": 2.5, "output": 10, "cache": 1.25, "providers": 3}
+	  }
+	}`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	store, err := LoadPrices(path)
+	if err != nil {
+		t.Fatalf("LoadPrices() error = %v", err)
+	}
+	got := store.Suggestions()["gpt-4o"]
+	if len(got.Offers) != 1 {
+		t.Fatalf("migrated offers = %+v, want one synthesized offer", got.Offers)
+	}
+	if offer := got.Offers[0]; offer.Provider != "openai" || offer.Input != 2.5 || offer.Cache != 1.25 {
+		t.Fatalf("synthesized offer = %+v, want the legacy selected price", offer)
+	}
+	if got.Providers != 1 {
+		t.Fatalf("migrated providers = %d, want the synthesized offer count", got.Providers)
+	}
+	if doc := store.Snapshot(); doc.SchemaVersion != PriceSchemaVersion {
+		t.Fatalf("schema version = %d, want %d", doc.SchemaVersion, PriceSchemaVersion)
+	}
+}
+
 func TestPriceStore_MalformedFileKeepsService(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "prices.json")
 	if err := os.WriteFile(path, []byte("{broken"), 0o600); err != nil {

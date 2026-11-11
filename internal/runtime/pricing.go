@@ -42,9 +42,11 @@ func (r *Runtime) Pricing(_ context.Context, models []string) (management.Pricin
 }
 
 // RefreshPricing implements management.Backend. It downloads the upstream
-// catalog, keeps only the requested models and atomically replaces the compact
-// cache. The page calls it from an explicit sync action.
-func (r *Runtime) RefreshPricing(ctx context.Context, models []string) (management.PricingResult, error) {
+// catalog and atomically updates the compact cache. A merge refresh replaces
+// only the requested models and keeps every other cached suggestion; a full
+// refresh rebuilds the cache from the requested list. The page calls it from an
+// explicit sync or refresh action, never on load.
+func (r *Runtime) RefreshPricing(ctx context.Context, models []string, merge bool) (management.PricingResult, error) {
 	normalized, err := pricing.NormalizeModels(models)
 	if err != nil {
 		return management.PricingResult{}, management.NewInvalidRequest(err.Error())
@@ -96,6 +98,16 @@ func (r *Runtime) RefreshPricing(ctx context.Context, models []string) (manageme
 	now := r.clock.Now().UTC()
 	if notModified {
 		store.Replace(pricing.Source, formatTimestamp(now), etag, store.Suggestions(), known)
+	} else if merge {
+		cached := store.Suggestions()
+		for _, name := range normalized {
+			delete(cached, pricing.NormalizeModel(name))
+		}
+		for key, suggestion := range suggestions {
+			cached[key] = suggestion
+		}
+		mergedKnown := append(append([]string(nil), known...), normalized...)
+		store.Replace(pricing.Source, formatTimestamp(now), newETag, cached, mergedKnown)
 	} else {
 		store.Replace(pricing.Source, formatTimestamp(now), newETag, suggestions, normalized)
 	}

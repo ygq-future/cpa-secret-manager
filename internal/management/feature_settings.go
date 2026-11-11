@@ -16,6 +16,11 @@ var settingsFeature = pageFeature{
                 </div>
                 <div class="pricing-head-actions">
                   <span id="settings-pricing-meta" class="pricing-meta"></span>
+                  <button id="settings-pricing-refresh" class="btn btn-secondary pricing-sync-btn" type="button" aria-busy="false" data-i18n-title="settings.pricing_refresh_title" title="Refresh reference prices without saving">
+                    <span class="spinner" aria-hidden="true"></span>
+                    {{ICON:refresh}}
+                    <span data-i18n="settings.pricing_refresh">Refresh only</span>
+                  </button>
                   <button id="settings-pricing-sync" class="btn btn-secondary pricing-sync-btn" type="button" aria-busy="false" data-i18n-title="settings.pricing_sync_title" title="Sync reference prices">
                     <span class="spinner" aria-hidden="true"></span>
                     {{ICON:refresh}}
@@ -45,7 +50,16 @@ var settingsFeature = pageFeature{
                   {{ICON:save}}
                 </button>
               </div>
-              <div id="settings-pricing-suggest" class="pricing-suggest" hidden></div>
+              <div id="settings-pricing-suggest" class="pricing-suggest" hidden>
+                <span class="pricing-suggest-label" data-i18n="settings.pricing_reference">Reference</span>
+                <span id="settings-pricing-suggest-count" class="pricing-suggest-count"></span>
+                <div id="settings-pricing-offer-select" class="pricing-offer-select"></div>
+                <span id="settings-pricing-suggest-empty" class="pricing-suggest-text" hidden></span>
+                <button id="settings-pricing-refresh-model" class="btn-icon pricing-offer-refresh" type="button" aria-busy="false" data-i18n-title="settings.pricing_refresh_model" title="Refresh this model's reference prices">
+                  <span class="spinner" aria-hidden="true"></span>
+                  {{ICON:refresh}}
+                </button>
+              </div>
               <div id="settings-pricing-list" class="pricing-list"></div>
             </div>
           </div>
@@ -322,30 +336,102 @@ var settingsFeature = pageFeature{
   display: none;
 }
 .pricing-suggest-label {
+  flex: 0 0 auto;
   font-weight: 650;
   color: var(--text-primary);
 }
-.pricing-suggest-price {
-  font-family: var(--font-mono);
-  color: var(--text-primary);
-}
-.pricing-suggest-price.is-zero {
-  color: var(--accent-amber-text);
-}
-.pricing-suggest-source {
+.pricing-suggest-count {
+  flex: 0 0 auto;
   color: var(--text-tertiary);
   font-size: 11.5px;
+  white-space: nowrap;
 }
-.pricing-suggest-status {
-  margin-left: auto;
-  font-size: 11.5px;
-  font-weight: 600;
+.pricing-offer-select {
+  flex: 1 1 auto;
+  min-width: 0;
 }
-.pricing-suggest-status.is-applied {
+.pricing-offer-select[hidden] {
+  display: none;
+}
+.pricing-offer-select .select-trigger {
+  height: 28px;
+  min-height: 28px;
+  padding: 0 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.pricing-offer-select .select-label {
+  text-align: left;
+}
+.pricing-offer-select .select-menu {
+  width: 100%;
+  min-width: 100%;
+  max-width: none;
+}
+.pricing-offer-select .select-option {
+  gap: 10px;
+}
+.pricing-offer-price {
+  white-space: nowrap;
+}
+.pricing-offer-price.is-in {
+  color: var(--text-primary);
+}
+.pricing-offer-price.is-out {
+  color: var(--accent-blue-text);
+}
+.pricing-offer-price.is-cache {
   color: var(--accent-green-text);
 }
-.pricing-suggest-status.is-pending {
+.pricing-offer-sep {
+  color: var(--text-tertiary);
+}
+.pricing-offer-best {
+  color: var(--accent-green-text);
+  font-weight: 650;
+}
+.pricing-offer-source {
+  color: var(--text-tertiary);
+}
+.pricing-offer-status.is-applied {
+  color: var(--accent-green-text);
+  font-weight: 600;
+}
+.pricing-offer-status.is-pending {
   color: var(--accent-amber-text);
+  font-weight: 600;
+}
+.pricing-offer-refresh {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  flex: 0 0 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+}
+.pricing-offer-refresh .icon {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+.pricing-offer-refresh .spinner {
+  display: none;
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
+}
+.pricing-offer-refresh:hover {
+  color: var(--accent-blue-text);
+  background: var(--bg-hover);
+}
+.pricing-offer-refresh.is-loading .icon {
+  display: none;
+}
+.pricing-offer-refresh.is-loading .spinner {
+  display: block;
 }
 .pricing-suggest.is-empty .pricing-suggest-text {
   color: var(--text-tertiary);
@@ -814,12 +900,113 @@ function pricingValuesEqual(a, b) {
     Math.abs(Number(a && a.cache || 0) - Number(b && b.cache || 0)) < 0.0005;
 }
 
+function pricingOffersFor(suggestion) {
+  if (!suggestion) {
+    return [];
+  }
+  if (Array.isArray(suggestion.offers) && suggestion.offers.length > 0) {
+    return suggestion.offers;
+  }
+  return [suggestion];
+}
+
+function pricingOfferPrices(offer) {
+  return '$' + formatPricingValue(offer.input) +
+    ' / $' + formatPricingValue(offer.output) +
+    ' / $' + formatPricingValue(offer.cache);
+}
+
+function pricingPriceParts(offer) {
+  return [
+    { text: t('settings.tag_input') + ' $' + formatPricingValue(offer.input), className: 'pricing-offer-price is-in' },
+    { text: ' / ', className: 'pricing-offer-sep' },
+    { text: t('settings.tag_output') + ' $' + formatPricingValue(offer.output), className: 'pricing-offer-price is-out' },
+    { text: ' / ', className: 'pricing-offer-sep' },
+    { text: t('settings.tag_cache') + ' $' + formatPricingValue(offer.cache), className: 'pricing-offer-price is-cache' }
+  ];
+}
+
+function pricingOfferStatus(offer, configured) {
+  if (configured && pricingValuesEqual(configured, offer)) {
+    return { text: t('settings.pricing_applied'), className: 'is-applied' };
+  }
+  if (configured) {
+    return { text: t('settings.pricing_pending_update'), className: 'is-pending' };
+  }
+  return { text: t('settings.pricing_pending_add'), className: 'is-pending' };
+}
+
+function buildPricingOfferOptions(offers, configured) {
+  return offers.map(function (offer, index) {
+    var provider = offer.provider || '—';
+    var prices = pricingOfferPrices(offer);
+    var status = pricingOfferStatus(offer, configured);
+    var nameParts = [];
+    if (index === 0) {
+      nameParts.push({ text: t('settings.pricing_best') + ' · ', className: 'pricing-offer-best' });
+    }
+    nameParts.push({ text: provider, className: 'pricing-offer-source' });
+    if (offer.model) {
+      nameParts.push({ text: ' · ' + offer.model, className: 'pricing-offer-model' });
+    }
+    var triggerParts = pricingPriceParts(offer);
+    triggerParts.push({ text: ' · ' + provider, className: 'pricing-offer-source' });
+    triggerParts.push({ text: ' · ' + status.text, className: 'pricing-offer-status ' + status.className });
+    return {
+      value: String(index),
+      label: (index === 0 ? t('settings.pricing_best') + ' · ' : '') + provider +
+        (offer.model ? ' · ' + offer.model : '') + ' · ' + prices,
+      triggerLabel: prices + ' · ' + provider + ' · ' + status.text,
+      triggerParts: triggerParts,
+      labelParts: nameParts,
+      trailingParts: pricingPriceParts(offer),
+      configured: Boolean(configured && pricingValuesEqual(configured, offer))
+    };
+  });
+}
+
+function applyPricingOffer(offer) {
+  var inInput = byId('settings-pricing-input');
+  var outInput = byId('settings-pricing-output');
+  var cacheInput = byId('settings-pricing-cache');
+  if (!inInput || !outInput || !cacheInput) return;
+  inInput.value = Number(offer.input || 0).toFixed(3);
+  outInput.value = Number(offer.output || 0).toFixed(3);
+  cacheInput.value = Number(offer.cache || 0).toFixed(3);
+}
+
+function initPricingOfferSelect(options) {
+  var container = byId('settings-pricing-offer-select');
+  if (!container) return null;
+  if (!pricingOfferSelect) {
+    pricingOfferSelect = mountSelect({
+      container: container,
+      options: options,
+      value: options[0] ? options[0].value : '',
+      onChange: function (selected) {
+        var index = parseInt(selected, 10);
+        var offer = currentPricingOffers[index];
+        if (offer) {
+          applyPricingOffer(offer);
+        }
+      }
+    });
+  } else {
+    pricingOfferSelect.setOptions(options);
+  }
+  return pricingOfferSelect;
+}
+
 function renderPricingSuggestion(model) {
   var box = byId('settings-pricing-suggest');
-  if (!box) return;
-  box.innerHTML = '';
+  var selectWrap = byId('settings-pricing-offer-select');
+  var empty = byId('settings-pricing-suggest-empty');
+  var count = byId('settings-pricing-suggest-count');
+  if (!box || !selectWrap || !empty) return;
   if (!model) {
     box.hidden = true;
+    if (pricingOfferSelect) pricingOfferSelect.close();
+    currentPricingOffers = [];
     return;
   }
 
@@ -827,65 +1014,48 @@ function renderPricingSuggestion(model) {
   if (!suggestion) {
     if (!currentPricingMeta().fetched_at) {
       box.hidden = true;
+      if (pricingOfferSelect) pricingOfferSelect.close();
+      currentPricingOffers = [];
       return;
     }
     box.hidden = false;
     box.className = 'pricing-suggest is-empty';
-    var empty = document.createElement('span');
-    empty.className = 'pricing-suggest-text';
+    if (pricingOfferSelect) pricingOfferSelect.close();
+    selectWrap.hidden = true;
+    empty.hidden = false;
     empty.textContent = t('settings.pricing_no_suggestion');
-    box.appendChild(empty);
+    if (count) count.textContent = '';
+    currentPricingOffers = [];
     return;
   }
 
   box.hidden = false;
   box.className = 'pricing-suggest';
+  empty.hidden = true;
+  selectWrap.hidden = false;
 
-  var label = document.createElement('span');
-  label.className = 'pricing-suggest-label';
-  label.textContent = t('settings.pricing_reference');
-  box.appendChild(label);
-
-  var price = document.createElement('span');
-  price.className = 'pricing-suggest-price';
-  price.textContent = '$' + formatPricingValue(suggestion.input) +
-    ' / $' + formatPricingValue(suggestion.output) +
-    ' / $' + formatPricingValue(suggestion.cache);
-  if (Number(suggestion.input) <= 0 && Number(suggestion.output) <= 0 && Number(suggestion.cache) <= 0) {
-    price.classList.add('is-zero');
-    price.title = t('settings.pricing_zero_hint');
-  }
-  box.appendChild(price);
-
-  var source = document.createElement('span');
-  source.className = 'pricing-suggest-source';
-  var sourceText = (currentPricingMeta().source || 'models.dev') + ' · ' + (suggestion.provider || '—');
-  if (suggestion.providers > 1) {
-    sourceText += ' · ' + tf('settings.pricing_provider_count', { count: suggestion.providers });
-  }
-  source.textContent = sourceText;
-  source.title = suggestion.model || '';
-  if (suggestion.updated_at) {
-    source.title += ' · ' + suggestion.updated_at;
-  }
-  box.appendChild(source);
-
+  var offers = pricingOffersFor(suggestion);
+  currentPricingOffers = offers;
   var prices = (state.settings && state.settings.model_prices) || {};
   var configured = prices[model];
-  var status = document.createElement('span');
-  status.className = 'pricing-suggest-status';
-  if (configured && pricingValuesEqual(configured, suggestion)) {
-    status.classList.add('is-applied');
-    status.textContent = t('settings.pricing_applied');
-  } else if (configured) {
-    status.classList.add('is-pending');
-    status.textContent = t('settings.pricing_pending_update');
-  } else {
-    status.classList.add('is-pending');
-    status.textContent = t('settings.pricing_pending_add');
+  var options = buildPricingOfferOptions(offers, configured);
+  var select = initPricingOfferSelect(options);
+  if (!select) return;
+
+  var selected = options[0] ? options[0].value : '';
+  for (var index = 0; index < options.length; index++) {
+    if (options[index].configured) {
+      selected = options[index].value;
+      break;
+    }
   }
-  status.title = t('settings.pricing_sync_title');
-  box.appendChild(status);
+  select.setValue(selected);
+
+  if (count) {
+    count.textContent = suggestion.providers > 1
+      ? tf('settings.pricing_provider_count', { count: suggestion.providers })
+      : '';
+  }
 }
 
 function roundPricingValue(value) {
@@ -964,12 +1134,16 @@ function loadPricingSuggestions(models, force) {
   return pending;
 }
 
-function setPricingSyncBusy(busy) {
-  var button = byId('settings-pricing-sync');
+function setPricingButtonBusy(id, busy) {
+  var button = byId(id);
   if (!button) return;
   button.disabled = busy;
   button.classList.toggle('is-loading', busy);
   button.setAttribute('aria-busy', busy ? 'true' : 'false');
+}
+
+function setPricingSyncBusy(busy) {
+  setPricingButtonBusy('settings-pricing-sync', busy);
 }
 
 function refreshCacheFiles() {
@@ -1015,6 +1189,67 @@ function syncPricingSuggestions() {
     .then(function () {
       setPricingSyncBusy(false);
     });
+}
+
+// refreshPricingSuggestions downloads the latest catalog for every loaded model
+// and updates the cache only. It never writes model_prices.
+function refreshPricingSuggestions() {
+  var models = pricingLoadedModels.slice();
+  if (models.length === 0) {
+    showToast(t('settings.pricing_no_models'), 'error');
+    return;
+  }
+  setPricingButtonBusy('settings-pricing-refresh', true);
+  loadPricingSuggestions(models, true)
+    .then(function () {
+      renderPricingMeta();
+      renderPricingSuggestion(pricingModelSelect ? pricingModelSelect.getValue() : '');
+      showToast(t('settings.pricing_refreshed'), 'success');
+      return refreshCacheFiles();
+    })
+    .catch(function (error) {
+      showToast(error && error.message ? error.message : t('settings.pricing_refresh_failed'), 'error');
+    })
+    .then(function () {
+      setPricingButtonBusy('settings-pricing-refresh', false);
+    });
+}
+
+// refreshCurrentPricing refreshes one model and merges the result into the
+// cached suggestion map, so switching to another model keeps its prices.
+function refreshCurrentPricing() {
+  var model = pricingModelSelect ? pricingModelSelect.getValue() : '';
+  if (!model) return;
+  setPricingButtonBusy('settings-pricing-refresh-model', true);
+  apiFetch(PRICING_REFRESH_PATH, {
+    method: 'POST',
+    body: JSON.stringify({ models: [model], merge: true })
+  }).then(function (payload) {
+    if (!pricingSuggestions) {
+      pricingSuggestions = { models: {} };
+    }
+    if (!pricingSuggestions.models) {
+      pricingSuggestions.models = {};
+    }
+    if (payload && payload.models && payload.models[model]) {
+      pricingSuggestions.models[model] = payload.models[model];
+    } else {
+      delete pricingSuggestions.models[model];
+    }
+    pricingMeta = {
+      source: payload.source,
+      fetched_at: payload.fetched_at,
+      stale: payload.stale
+    };
+    renderPricingMeta();
+    renderPricingSuggestion(model);
+    showToast(t('settings.pricing_refreshed'), 'success');
+    return refreshCacheFiles();
+  }).catch(function (error) {
+    showToast(error && error.message ? error.message : t('settings.pricing_refresh_failed'), 'error');
+  }).then(function () {
+    setPricingButtonBusy('settings-pricing-refresh-model', false);
+  });
 }
 
 function renderPricingList() {
@@ -1117,6 +1352,8 @@ function editPricingModel(model, price) {
 }
 
 var pricingModelSelect = null;
+var pricingOfferSelect = null;
+var currentPricingOffers = [];
 var pricingLoadedModels = [];
 var pricingModelsLoaded = false;
 var pricingSuggestions = null;
@@ -1288,6 +1525,8 @@ function bindSettingsEvents() {
   }
   bindClick('settings-pricing-add', addPricingModel);
   bindClick('settings-pricing-sync', syncPricingSuggestions);
+  bindClick('settings-pricing-refresh', refreshPricingSuggestions);
+  bindClick('settings-pricing-refresh-model', refreshCurrentPricing);
   function bindDecimalInput(id) {
     var el = byId(id);
     if (!el) return;

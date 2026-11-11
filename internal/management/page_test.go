@@ -1761,17 +1761,32 @@ func TestPage_PricingSuggestionContract(t *testing.T) {
 		"var PRICING_PATH = PLUGIN_BASE + '/pricing';",
 		"var PRICING_REFRESH_PATH = PLUGIN_BASE + '/pricing/refresh';",
 		"settings-pricing-suggest",
+		"settings-pricing-offer-select",
+		"settings-pricing-refresh-model",
+		"settings-pricing-refresh",
 		"settings-pricing-sync",
 		"settings-pricing-meta",
 		"loadPricingSuggestions",
 		"syncPricingSuggestions",
+		"refreshPricingSuggestions",
+		"refreshCurrentPricing",
 		"mergePricingSuggestions",
+		"pricingOffersFor",
+		"pricingPriceParts",
+		"buildPricingOfferOptions",
+		"applyPricingOffer",
+		"labelParts",
+		"trailingParts",
+		"merge: true",
 		"saveModelPrices(merge.prices",
 		"refreshCacheFiles()",
+		"settings.pricing_best",
 		"settings.pricing_pending_update",
 		"settings.pricing_pending_add",
 		"var path = force ? PRICING_REFRESH_PATH : PRICING_PATH;",
 		"bindClick('settings-pricing-sync', syncPricingSuggestions)",
+		"bindClick('settings-pricing-refresh', refreshPricingSuggestions)",
+		"bindClick('settings-pricing-refresh-model', refreshCurrentPricing)",
 	} {
 		if !strings.Contains(script, token) {
 			t.Fatalf("settings script missing pricing suggestion token %q", token)
@@ -1779,6 +1794,9 @@ func TestPage_PricingSuggestionContract(t *testing.T) {
 	}
 	for _, token := range []string{
 		`id="settings-pricing-suggest"`,
+		`id="settings-pricing-offer-select"`,
+		`id="settings-pricing-refresh-model"`,
+		`id="settings-pricing-refresh"`,
 		`id="settings-pricing-sync"`,
 		`id="settings-pricing-meta"`,
 		`data-i18n="settings.pricing_sync"`,
@@ -1840,6 +1858,64 @@ if (result.prices['gpt-4o'].input !== 2.5) {
 	cmd := exec.Command(nodePath, "-e", runner)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("mergePricingSuggestions runtime check failed: %v\n%s", err, output)
+	}
+
+	// The reference row ranks every matched offer and marks the configured one.
+	// The first option is the default selection and carries the best-match tag.
+	offerBlocks := []string{
+		extractJSFunction(script, "formatPricingValue"),
+		equalBlock,
+		extractJSFunction(script, "pricingOffersFor"),
+		extractJSFunction(script, "pricingOfferPrices"),
+		extractJSFunction(script, "pricingPriceParts"),
+		extractJSFunction(script, "pricingOfferStatus"),
+		extractJSFunction(script, "buildPricingOfferOptions"),
+	}
+	for _, block := range offerBlocks {
+		if block == "" {
+			t.Fatal("cannot find pricing offer helpers in settings script")
+		}
+	}
+	offerRunner := `
+var t = function (key) { return key; };
+` + strings.Join(offerBlocks, "\n") + `
+var offers = [
+  { provider: 'google', model: 'gemini-3.5-flash', input: 0.3, output: 2.5, cache: 0.075 },
+  { provider: 'reseller', model: 'gemini-3.5-flash-lite', input: 0.12, output: 0.5, cache: 0 }
+];
+var options = buildPricingOfferOptions(offers, { input: 0.3, output: 2.5, cache: 0.075 });
+if (options.length !== 2) {
+  console.error('option count:', options.length);
+  process.exit(1);
+}
+if (options[0].value !== '0' || options[0].configured !== true) {
+  console.error('the first offer should be selected and marked as applied:', JSON.stringify(options[0]));
+  process.exit(1);
+}
+if (options[0].label.indexOf('settings.pricing_best') !== 0) {
+  console.error('the first offer is not tagged as the best match:', options[0].label);
+  process.exit(1);
+}
+if (options[0].triggerLabel.indexOf('settings.pricing_applied') < 0) {
+  console.error('the applied status is missing from the trigger label:', options[0].triggerLabel);
+  process.exit(1);
+}
+if (options[1].configured !== false || options[1].triggerLabel.indexOf('settings.pricing_pending_update') < 0) {
+  console.error('an unapplied offer should show the pending status:', JSON.stringify(options[1]));
+  process.exit(1);
+}
+if (pricingOffersFor({ offers: offers }).length !== 2) {
+  console.error('the offer list was not used');
+  process.exit(1);
+}
+if (pricingOffersFor({ model: 'gpt-4o', provider: 'openai', input: 1 }).length !== 1) {
+  console.error('a legacy suggestion without offers should produce one option');
+  process.exit(1);
+}
+`
+	cmd = exec.Command(nodePath, "-e", offerRunner)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("pricing offer options runtime check failed: %v\n%s", err, output)
 	}
 }
 

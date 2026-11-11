@@ -1038,6 +1038,16 @@ input[readonly] {
   white-space: nowrap;
 }
 
+.select-option-trailing {
+  flex: 0 0 auto;
+  margin-left: 10px;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
 .select-option-check {
   flex: 0 0 auto;
   width: 13px;

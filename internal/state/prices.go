@@ -15,7 +15,7 @@ import (
 // PriceSchemaVersion is the current reference-price cache schema. The cache is
 // derived data: it can be deleted at any time and the next explicit sync
 // rebuilds it from the upstream catalog.
-const PriceSchemaVersion = 1
+const PriceSchemaVersion = 2
 
 // PriceDocument is the compact reference-price cache. It stores only the models
 // the page asked about during the last sync, never the upstream catalog.
@@ -63,6 +63,22 @@ func LoadPrices(path string) (*PriceStore, error) {
 	}
 	if doc.Models == nil {
 		doc.Models = map[string]pricing.Suggestion{}
+	}
+	// Schema 1 stored only the selected offer. Synthesize the one-entry list so
+	// an existing cache keeps working until the next explicit sync rebuilds it.
+	for key, suggestion := range doc.Models {
+		if len(suggestion.Offers) == 0 {
+			suggestion.Offers = []pricing.Offer{{
+				Model:     suggestion.Model,
+				Provider:  suggestion.Provider,
+				Input:     suggestion.Input,
+				Output:    suggestion.Output,
+				Cache:     suggestion.Cache,
+				UpdatedAt: suggestion.UpdatedAt,
+			}}
+			suggestion.Providers = len(suggestion.Offers)
+			doc.Models[key] = suggestion
+		}
 	}
 	doc.SchemaVersion = PriceSchemaVersion
 	store.doc = doc
@@ -171,6 +187,7 @@ func cloneSuggestions(source map[string]pricing.Suggestion) map[string]pricing.S
 	}
 	out := make(map[string]pricing.Suggestion, len(source))
 	for key, value := range source {
+		value.Offers = append([]pricing.Offer(nil), value.Offers...)
 		out[key] = value
 	}
 	return out
