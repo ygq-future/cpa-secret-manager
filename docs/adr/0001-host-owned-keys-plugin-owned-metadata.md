@@ -9,7 +9,7 @@ CLIProxyAPI 已经通过 `/v0/management/api-keys` 提供代理服务认证密�
 ## Decision
 
 1. **密钥本身永远由宿主拥有**。插件不复制、不缓存、不落盘任何 API Key 明文，全部增删改查直接复用宿主 `/v0/management/api-keys`。
-2. **备注与用量归属插件自有状态文件** `data/cpa-secret-manager-cache.json`，以 API Key 的 SHA-256 十六进制摘要为索引键。
+2. **备注与用量归属插件自有状态文件** `data/cpa-secret-manager/state.json`，以 API Key 的 SHA-256 十六进制摘要为索引键。
 3. 插件配置保持极简：宿主 `config.yaml` 只承载 `enabled`、`priority`（以及可选的 `state_path`）；业务参数（如用量采集开关）保存在插件状态文件的 `app_config` 节点中，由插件页面自行管理。
 4. 注册元数据中的 `ConfigFields` 保持为 `nil`，避免 CPA 管理端渲染插件配置抽屉、并在保存时改写宿主 `config.yaml` 触发全量重载。
 

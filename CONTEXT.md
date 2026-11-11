@@ -31,7 +31,7 @@ _Avoid_: name、label、alias、note、description。
 _Avoid_: fingerprint、id、uuid。
 
 **Plugin State File**:
-插件自有状态文档 `data/cpa-secret-manager-cache.json`，包含 `remarks`、`usage`、`app_config` 三个节点；写入必须原子替换。
+插件数据目录 `data/cpa-secret-manager/`，状态文档 `state.json` 包含 `remarks`、`quota_rules`、`quota_states`、`app_config`；用量小时桶、失败记录与参考价缓存分别位于同目录的 `buckets.json`、`errors.json`、`prices.json`。写入必须原子替换。
 _Avoid_: cache file、database、store（不加限定时歧义）。
 
 **App Config**:
@@ -59,6 +59,29 @@ _Avoid_: 上游密钥、账号（`AuthID` 是宿主标识，不是凭证材料�
 **Token Counters**:
 每把密钥、每个模型维度的计数集合：`requests`、`failed`、`input`、`output`、`reasoning`、`cached`、`cache_read`、`cache_creation`、`total`。全部为**累计值**，无时间窗口。
 _Avoid_: 用量统计、报表（暗示时间维度）。
+
+### Pricing
+
+**Model Price**:
+为某个模型配置的输入 / 输出 / 缓存单价（USD per 1M tokens），保存在 `app_config.model_prices`，用于估算请求费用与消费配额。人工确认后才会生效。
+_Avoid_: 费率、账单（暗示结算）。
+
+**Reference Price**:
+从 models.dev 目录解析出的建议单价。页面展示来源 provider；点击"同步并保存参考价"时按固定规则合并进 `app_config.model_prices`：新增缺失、更新变化、忽略一致、保留参考价中已缺失的已保存模型。同步是唯一写入路径，不会在后台自动改写。
+_Avoid_: 官方价、真实成本（目录价不等于宿主上游渠道的结算价）。
+
+**Price Suggestion**:
+针对页面当前模型列表计算出的 `Reference Price` 集合。只有模型名命中目录时才产生；未命中会被记入 Known Model Set，但不出现在建议集合里。
+
+**Known Model Set**:
+上一次成功同步覆盖的模型名集合（包含未命中的 miss）。条件请求只有在本次模型集合是其子集时才发送 `If-None-Match`，否则重新下载，保证新模型也能拿到参考价。
+
+**Price Catalog Cache**:
+派生缓存 `data/cpa-secret-manager/prices.json`，只保存来源、同步时间、ETag、Known Model Set 与命中的 Reference Price，不保存完整目录。删除该文件只会清空建议，下一次显式同步即可重建。
+_Avoid_: 价格库、价格数据库（它不是权威数据源）。
+
+**Price Sync**:
+用户点击"同步并保存参考价"后触发的唯一外部网络动作：流式读取 models.dev `api.json`，只保留当前模型列表的匹配项，原子替换 Price Catalog Cache，并把匹配结果按合并规则写入已保存单价。打开设置页或读取建议都不会联网，也不会写价格。
 
 ### Theme
 

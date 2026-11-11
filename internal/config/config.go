@@ -3,8 +3,9 @@ package config
 import "strings"
 
 // DefaultStatePath is the fallback location of the plugin state document,
-// resolved relative to the CLIProxyAPI process working directory.
-const DefaultStatePath = "data/cpa-secret-manager-cache.json"
+// resolved relative to the CLIProxyAPI process working directory. Every cache
+// file lives beside it in the plugin data directory.
+const DefaultStatePath = "data/cpa-secret-manager/state.json"
 
 // Config is the complete configuration owned by the CPA host config.yaml.
 // Business parameters deliberately live in the plugin state document instead,

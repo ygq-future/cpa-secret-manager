@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"cpa-secret-manager/internal/errorslog"
+	"cpa-secret-manager/internal/pricing"
 )
 
 type stubBackend struct {
@@ -19,6 +20,11 @@ type stubBackend struct {
 	forgot   []string
 	failures []errorslog.ErrorEntry
 	resolved *ResolveRequest
+
+	pricingResult PricingResult
+	pricingErr    error
+	pricingModels []string
+	refreshModels []string
 }
 
 func (s *stubBackend) Settings(context.Context) (Settings, error) {
@@ -69,6 +75,16 @@ func (s *stubBackend) DeleteQuota(context.Context, string) error {
 }
 func (s *stubBackend) Models(context.Context) ([]string, error) {
 	return []string{"gpt-5.6", "claude-3-7-sonnet"}, nil
+}
+
+func (s *stubBackend) Pricing(_ context.Context, models []string) (PricingResult, error) {
+	s.pricingModels = append([]string(nil), models...)
+	return s.pricingResult, s.pricingErr
+}
+
+func (s *stubBackend) RefreshPricing(_ context.Context, models []string) (PricingResult, error) {
+	s.refreshModels = append([]string(nil), models...)
+	return s.pricingResult, s.pricingErr
 }
 
 func TestNormalizePath_ReducesHostPrefixes(t *testing.T) {
@@ -314,6 +330,58 @@ func TestHandler_ModelsRoute(t *testing.T) {
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, RouteModels, nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET models status = %d, want 200", rec.Code)
+	}
+}
+
+func TestHandler_PricingRoutes(t *testing.T) {
+	backend := &stubBackend{pricingResult: PricingResult{
+		Source:    "models.dev",
+		FetchedAt: "2026-11-10T12:00:00Z",
+		Models: map[string]pricing.Suggestion{
+			"gpt-4o": {Model: "gpt-4o", Provider: "openai", Input: 2.5, Output: 10, Cache: 1.25},
+		},
+		Matched: 1, Requested: 2,
+	}}
+	handler := NewHandler(backend)
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, RoutePricing, strings.NewReader(`{"models":["gpt-4o","missing"]}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST pricing status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if len(backend.pricingModels) != 2 || backend.pricingModels[0] != "gpt-4o" {
+		t.Fatalf("pricing models = %#v, want the submitted list", backend.pricingModels)
+	}
+	var result PricingResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode pricing result: %v", err)
+	}
+	if result.Matched != 1 || result.Models["gpt-4o"].Provider != "openai" {
+		t.Fatalf("pricing result = %+v", result)
+	}
+
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, RoutePricingRefresh, strings.NewReader(`{"models":["gpt-4o"]}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST pricing refresh status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if len(backend.refreshModels) != 1 || backend.refreshModels[0] != "gpt-4o" {
+		t.Fatalf("refresh models = %#v, want the submitted list", backend.refreshModels)
+	}
+
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, RoutePricing, nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET pricing status = %d, want 405", rec.Code)
+	}
+}
+
+func TestHandler_PricingRejectsMalformedBody(t *testing.T) {
+	handler := NewHandler(&stubBackend{})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, RoutePricingRefresh, strings.NewReader(`{`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
 	}
 }
 

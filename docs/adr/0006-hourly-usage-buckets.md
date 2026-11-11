@@ -15,7 +15,7 @@ ADR-0002 决策 3 选择"只保存累计计数、不做时间窗口"。随之而
 ## Decision
 
 1. 用量按 **UTC 整点小时桶** 聚合：`usage.Aggregator` 以 `SHA-256(APIKey)` → `2026-10-20T09` → `Bucket{Counters, Models}` 保存。桶是唯一带时间归属的用量数据。
-2. 状态文档 `schema_version` 升到 2：旧文件里的 `usage` 段被忽略。桶文档 **独立落盘**：`<state_path 去扩展名>-buckets.json`（默认 `data/cpa-secret-manager-cache-buckets.json`），与 `cache.json`（设置、备注、配额规则）和 `-errors.json`（失败记录）并列。设置文件保持小而可读。
+2. 状态文档 `schema_version` 升到 2：旧文件里的 `usage` 段被忽略。桶文档 **独立落盘**：`buckets.json`（旧布局为 `<state_path 去扩展名>-buckets.json`，默认 `data/cpa-secret-manager-cache-buckets.json`），与 `state.json`（设置、备注、配额规则）、`errors.json`（失败记录）和 `prices.json`（参考价缓存）并列在插件数据目录中；文件命名与迁移规则见 ADR-0008。设置文件保持小而可读。
 3. `resolve` 接受 `start` / `end`（RFC3339）。缺省边界回退到保留窗口；**请求超出保留期的部分被裁剪**，完全落在保留期外的区间返回空结果，绝不退化成"全量"。
 4. 每次刷盘先按保留天数裁剪桶（`cutoff = now - retention_days`）再写入，窗口外的桶不会回写；失败记录沿用同一 `cutoff`。
 5. 页面以下限 `now - (retention_days - 1) 天` 的零点、上限 `now` 约束日期选择器，超出范围的日期不可点选，并随设置变更实时收紧。

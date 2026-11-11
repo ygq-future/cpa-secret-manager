@@ -1755,6 +1755,119 @@ func TestPage_QuotaRuleFlexibilityContract(t *testing.T) {
 	}
 }
 
+func TestPage_PricingSuggestionContract(t *testing.T) {
+	script := settingsFeature.scripts
+	for _, token := range []string{
+		"var PRICING_PATH = PLUGIN_BASE + '/pricing';",
+		"var PRICING_REFRESH_PATH = PLUGIN_BASE + '/pricing/refresh';",
+		"settings-pricing-suggest",
+		"settings-pricing-sync",
+		"settings-pricing-meta",
+		"loadPricingSuggestions",
+		"syncPricingSuggestions",
+		"mergePricingSuggestions",
+		"saveModelPrices(merge.prices",
+		"refreshCacheFiles()",
+		"settings.pricing_pending_update",
+		"settings.pricing_pending_add",
+		"var path = force ? PRICING_REFRESH_PATH : PRICING_PATH;",
+		"bindClick('settings-pricing-sync', syncPricingSuggestions)",
+	} {
+		if !strings.Contains(script, token) {
+			t.Fatalf("settings script missing pricing suggestion token %q", token)
+		}
+	}
+	for _, token := range []string{
+		`id="settings-pricing-suggest"`,
+		`id="settings-pricing-sync"`,
+		`id="settings-pricing-meta"`,
+		`data-i18n="settings.pricing_sync"`,
+	} {
+		if !strings.Contains(PageHTML, token) {
+			t.Fatalf("page markup missing pricing suggestion token %q", token)
+		}
+	}
+
+	// Syncing merges reference prices into the saved set: identical prices are
+	// ignored, changed prices are updated, missing models are added, and saved
+	// models absent from the reference are retained.
+	mergeBlock := extractJSFunction(script, "mergePricingSuggestions")
+	equalBlock := extractJSFunction(script, "pricingValuesEqual")
+	roundBlock := extractJSFunction(script, "roundPricingValue")
+	if mergeBlock == "" || equalBlock == "" || roundBlock == "" {
+		t.Fatal("cannot find pricing merge helpers in settings script")
+	}
+
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed; skipping the merge runtime check")
+	}
+	runner := `
+var state = { settings: { model_prices: {
+  "gpt-4o": { input: 2.5, output: 10, cache: 1.25 },
+  "keep-me": { input: 1, output: 2, cache: 0.5 },
+  "changed": { input: 1, output: 1, cache: 0 }
+} } };
+` + roundBlock + `
+` + equalBlock + `
+` + mergeBlock + `
+var result = mergePricingSuggestions({ models: {
+  "gpt-4o": { input: 2.5, output: 10, cache: 1.25 },
+  "changed": { input: 2, output: 8, cache: 1 },
+  "added": { input: 0.15, output: 0.6, cache: 0.075 }
+}});
+if (result.added !== 1 || result.updated !== 1 || result.unchanged !== 1) {
+  console.error('merge counters:', JSON.stringify(result));
+  process.exit(1);
+}
+if (!result.prices['keep-me']) {
+  console.error('a saved model absent from the reference was deleted');
+  process.exit(1);
+}
+if (result.prices['changed'].input !== 2 || result.prices['changed'].output !== 8) {
+  console.error('a changed price was not updated:', JSON.stringify(result.prices['changed']));
+  process.exit(1);
+}
+if (result.prices['added'].input !== 0.15 || result.prices['added'].cache !== 0.075) {
+  console.error('a missing model was not added:', JSON.stringify(result.prices['added']));
+  process.exit(1);
+}
+if (result.prices['gpt-4o'].input !== 2.5) {
+  console.error('an identical price was not preserved:', JSON.stringify(result.prices['gpt-4o']));
+  process.exit(1);
+}
+`
+	cmd := exec.Command(nodePath, "-e", runner)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("mergePricingSuggestions runtime check failed: %v\n%s", err, output)
+	}
+}
+
+func extractJSFunction(script, name string) string {
+	start := strings.Index(script, "function "+name+"(")
+	if start < 0 {
+		return ""
+	}
+	depth := 0
+	started := false
+	for index := start; index < len(script); index++ {
+		switch script[index] {
+		case '{':
+			depth++
+			started = true
+		case '}':
+			if !started {
+				continue
+			}
+			depth--
+			if depth == 0 {
+				return script[start : index+1]
+			}
+		}
+	}
+	return ""
+}
+
 func TestPage_ShellModalsTagBalance(t *testing.T) {
 	// Line 61 of shellModals closes <div class="app"> from shellMarkupTemplate,
 	// so PageHTML has exact balance.

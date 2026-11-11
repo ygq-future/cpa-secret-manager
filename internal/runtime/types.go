@@ -3,6 +3,7 @@ package runtime
 import (
 	"errors"
 	"io"
+	"net/http"
 	"time"
 )
 
@@ -49,6 +50,12 @@ type Options struct {
 	// FlushInterval bounds how much usage accounting a crash can lose; zero uses
 	// the default.
 	FlushInterval time.Duration
+	// PricingURL overrides the reference-price catalog endpoint; empty uses
+	// models.dev. It exists for local harnesses and tests.
+	PricingURL string
+	// HTTPClient overrides the client used to fetch the catalog; nil uses a
+	// bounded client with a fixed timeout.
+	HTTPClient *http.Client
 }
 
 // RegisterResult is the metadata and capability declaration returned on

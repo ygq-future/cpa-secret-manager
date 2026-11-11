@@ -17,6 +17,7 @@ import (
 	"cpa-secret-manager/internal/errorslog"
 	"cpa-secret-manager/internal/keys"
 	"cpa-secret-manager/internal/management"
+	"cpa-secret-manager/internal/pricing"
 	"cpa-secret-manager/internal/quota"
 	"cpa-secret-manager/internal/remarks"
 	"cpa-secret-manager/internal/state"
@@ -41,12 +42,18 @@ type Runtime struct {
 	// flushMu guards the usage flush loop handle.
 	flushMu   sync.Mutex
 	flushStop chan struct{}
+	// pricingMu single-flights catalog refreshes and state-path swaps.
+	pricingMu sync.Mutex
 
 	mu             sync.RWMutex
 	cfg            config.Config
 	store          *state.Store
 	bucketStore    *state.BucketStore
 	errorsStore    *errorslog.Store
+	priceStore     *state.PriceStore
+	priceErr       error
+	pricingURL     string
+	httpClient     *http.Client
 	stateErr       error
 	configWarnings []string
 	usageWarning   string
@@ -72,6 +79,14 @@ func New(opts Options) *Runtime {
 	if flushInterval <= 0 {
 		flushInterval = defaultFlushInterval
 	}
+	pricingURL := strings.TrimSpace(opts.PricingURL)
+	if pricingURL == "" {
+		pricingURL = pricing.SourceURL
+	}
+	httpClient := opts.HTTPClient
+	if httpClient == nil {
+		httpClient = newPricingClient()
+	}
 
 	r := &Runtime{
 		clock:         clock,
@@ -80,6 +95,8 @@ func New(opts Options) *Runtime {
 		aggregator:    usage.NewAggregator(),
 		quota:         quota.NewManager(),
 		flushInterval: flushInterval,
+		pricingURL:    pricingURL,
+		httpClient:    httpClient,
 	}
 	r.handler = management.NewHandler(r)
 	r.loadState(cfg.StatePath)
@@ -145,6 +162,7 @@ func (r *Runtime) Settings(_ context.Context) (management.Settings, error) {
 		UsageEnabled:  true,
 		RetentionDays: state.DefaultRetentionDays,
 		UsageWarning:  r.usageWarning,
+		Pricing:       management.PriceStatus{Source: pricing.Source, Stale: true},
 	}
 	if r.store != nil {
 		cfg := r.store.AppConfig()
@@ -154,6 +172,17 @@ func (r *Runtime) Settings(_ context.Context) (management.Settings, error) {
 		if storePath := strings.TrimSpace(r.store.Path()); storePath != "" {
 			statePath = storePath
 		}
+	}
+	if r.priceStore != nil {
+		source, fetchedAt, _ := r.priceStore.Meta()
+		if source != "" {
+			settings.Pricing.Source = source
+		}
+		settings.Pricing.FetchedAt = fetchedAt
+		settings.Pricing.Stale = priceStale(fetchedAt, r.clock.Now().UTC())
+	}
+	if r.priceErr != nil {
+		settings.PricingWarning = r.priceErr.Error()
 	}
 	settings.StatePath = statePath
 	if len(r.configWarnings) > 0 {
@@ -179,6 +208,7 @@ func probeCacheFiles(statePath string) []management.CacheFile {
 		{key: "state", name: "State Cache", path: trimmed},
 		{key: "buckets", name: "Usage Buckets", path: BucketsPath(trimmed)},
 		{key: "errors", name: "Error Logs", path: ErrorsPath(trimmed)},
+		{key: "prices", name: "Price Catalog", path: PricesPath(trimmed)},
 	}
 	out := make([]management.CacheFile, 0, len(specs))
 	for _, spec := range specs {
@@ -731,6 +761,11 @@ func (r *Runtime) applyConfig(cfg config.Config, warnings []string) {
 }
 
 func (r *Runtime) loadState(path string) {
+	r.pricingMu.Lock()
+	defer r.pricingMu.Unlock()
+
+	path, layoutWarnings := state.MigrateLayout(path, config.DefaultStatePath)
+
 	store, err := state.Load(path)
 	if store != nil {
 		r.quota.Import(store.QuotaRules(), store.QuotaStates())
@@ -738,51 +773,56 @@ func (r *Runtime) loadState(path string) {
 	}
 	var errorsStore *errorslog.Store
 	var bucketStore *state.BucketStore
+	var priceStore *state.PriceStore
+	var priceErr error
 	if strings.TrimSpace(path) != "" {
-		errorsStore, _ = errorslog.Load(deriveErrorsPath(path))
-		bucketStore, _ = state.LoadBuckets(deriveSiblingPath(path, "-buckets"))
+		errorsStore, _ = errorslog.Load(ErrorsPath(path))
+		bucketStore, _ = state.LoadBuckets(BucketsPath(path))
+		priceStore, priceErr = state.LoadPrices(PricesPath(path))
 	}
 	if bucketStore != nil {
 		r.aggregator.SeedBuckets(bucketStore.Buckets())
 	}
 	r.mu.Lock()
+	if len(layoutWarnings) > 0 {
+		r.configWarnings = append(r.configWarnings, layoutWarnings...)
+	}
 	r.store = store
 	r.bucketStore = bucketStore
 	r.errorsStore = errorsStore
+	r.priceStore = priceStore
+	r.priceErr = priceErr
 	r.stateErr = err
 	r.mu.Unlock()
 }
 
 // ErrorsPath returns the error log document that belongs to a plugin state
-// path. The error log lives in its own file, so anything that resets the plugin
-// state (local harnesses) must clear both.
+// path. All cache documents live beside the state file in the plugin data
+// directory, so local harnesses can clear one known set of files.
 func ErrorsPath(statePath string) string {
-	return deriveErrorsPath(statePath)
+	return dataFile(statePath, "errors.json")
 }
 
 // BucketsPath returns the time-bucketed usage document that belongs to a plugin
 // state path.
 func BucketsPath(statePath string) string {
-	return deriveSiblingPath(statePath, "-buckets")
+	return dataFile(statePath, "buckets.json")
 }
 
-func deriveErrorsPath(statePath string) string {
-	return deriveSiblingPath(statePath, "-errors")
+// PricesPath returns the compact reference-price cache that belongs to a plugin
+// state path. It is derived data: deleting it only removes cached suggestions.
+func PricesPath(statePath string) string {
+	return dataFile(statePath, "prices.json")
 }
 
-// deriveSiblingPath names a document that sits beside the state file, keeping
-// its directory and extension so one configured state path maps to exactly one
-// set of documents.
-func deriveSiblingPath(statePath, suffix string) string {
+// dataFile names a document in the plugin data directory. The directory is the
+// one containing the configured state file.
+func dataFile(statePath, name string) string {
 	trimmed := strings.TrimSpace(statePath)
 	if trimmed == "" {
 		return ""
 	}
-	ext := filepath.Ext(trimmed)
-	if ext != "" {
-		return strings.TrimSuffix(trimmed, ext) + suffix + ext
-	}
-	return trimmed + suffix + ".json"
+	return filepath.Join(filepath.Dir(trimmed), name)
 }
 
 // parseInstant parses an RFC3339 instant. An absent or malformed value reports

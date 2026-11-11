@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"cpa-secret-manager/internal/config"
 	"cpa-secret-manager/internal/keys"
 	"cpa-secret-manager/internal/management"
 	"cpa-secret-manager/internal/remarks"
@@ -249,8 +250,8 @@ func TestSettings_ReportsCacheFiles(t *testing.T) {
 	if err := json.Unmarshal(body, &settings); err != nil {
 		t.Fatalf("decode settings: %v", err)
 	}
-	if len(settings.CacheFiles) != 3 {
-		t.Fatalf("got %d cache files, want 3", len(settings.CacheFiles))
+	if len(settings.CacheFiles) != 4 {
+		t.Fatalf("got %d cache files, want 4", len(settings.CacheFiles))
 	}
 	stateFile := settings.CacheFiles[0]
 	if stateFile.Key != "state" || !stateFile.Exists || stateFile.SizeBytes <= 0 {
@@ -263,6 +264,10 @@ func TestSettings_ReportsCacheFiles(t *testing.T) {
 	errorsFile := settings.CacheFiles[2]
 	if errorsFile.Key != "errors" || errorsFile.Exists {
 		t.Fatalf("errors file info unexpected: %+v", errorsFile)
+	}
+	pricesFile := settings.CacheFiles[3]
+	if pricesFile.Key != "prices" || pricesFile.Exists || filepath.ToSlash(pricesFile.Path) != filepath.ToSlash(PricesPath(statePath)) {
+		t.Fatalf("prices file info unexpected: %+v (want path %s)", pricesFile, PricesPath(statePath))
 	}
 }
 
@@ -896,7 +901,7 @@ func TestRuntime_ErrorLogRecordingAndQuery(t *testing.T) {
 
 	// Flush and verify errors file exists
 	rt.FlushUsage()
-	errorsPath := filepath.Join(filepath.Dir(statePath), "state-errors.json")
+	errorsPath := ErrorsPath(statePath)
 	if _, err := os.Stat(errorsPath); err != nil {
 		t.Fatalf("expected errors file at %s: %v", errorsPath, err)
 	}
@@ -1201,5 +1206,48 @@ func TestHandle_ModelOnlyAndTokenOnlyQuotaRules(t *testing.T) {
 	}
 	if strings.Contains(respDisallowed.ResponseBody, "Quota will reset at") {
 		t.Fatalf("model-only restriction should not contain reset message: %s", respDisallowed.ResponseBody)
+	}
+}
+
+func TestRuntime_MigratesOldDefaultLayout(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	oldState := filepath.Join("data", "cpa-secret-manager-cache.json")
+	if err := os.MkdirAll(filepath.Dir(oldState), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(oldState, []byte(`{"schema_version":1}`), 0o600); err != nil {
+		t.Fatalf("write old state: %v", err)
+	}
+
+	rt := New(Options{StatePath: oldState})
+	settings, err := rt.Settings(context.Background())
+	if err != nil {
+		t.Fatalf("Settings() error = %v", err)
+	}
+	if filepath.Clean(settings.StatePath) != filepath.Clean(config.DefaultStatePath) {
+		t.Fatalf("StatePath = %q, want migrated %q", settings.StatePath, config.DefaultStatePath)
+	}
+	if _, err := os.Stat(config.DefaultStatePath); err != nil {
+		t.Fatalf("migrated state file: %v", err)
+	}
+	if _, err := os.Stat(oldState); !os.IsNotExist(err) {
+		t.Fatalf("old state file still exists at %s", oldState)
+	}
+}
+
+func TestDataPathsUseFixedNames(t *testing.T) {
+	statePath := filepath.Join("data", "cpa-secret-manager", "state.json")
+	dir := filepath.Join("data", "cpa-secret-manager")
+	for name, got := range map[string]string{
+		"buckets.json": BucketsPath(statePath),
+		"errors.json":  ErrorsPath(statePath),
+		"prices.json":  PricesPath(statePath),
+	} {
+		want := filepath.Join(dir, name)
+		if filepath.Clean(got) != filepath.Clean(want) {
+			t.Fatalf("%s path = %q, want %q", name, got, want)
+		}
 	}
 }

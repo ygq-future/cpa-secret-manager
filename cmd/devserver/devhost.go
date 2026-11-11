@@ -26,6 +26,7 @@ type devHost struct {
 	managementKey string
 	keysPath      string
 	statePath     string
+	pricingURL    string
 	shellHTML     string
 	runtime       *pluginruntime.Runtime
 	// latency delays every management response so the page's loading states are
@@ -40,6 +41,7 @@ type devHostOptions struct {
 	ManagementKey string
 	KeysPath      string
 	StatePath     string
+	PricingURL    string
 	Latency       time.Duration
 }
 
@@ -52,8 +54,9 @@ func newDevHost(options devHostOptions) (*devHost, error) {
 		managementKey: options.ManagementKey,
 		keysPath:      options.KeysPath,
 		statePath:     options.StatePath,
+		pricingURL:    options.PricingURL,
 		shellHTML:     hostShellHTML(options.ManagementKey),
-		runtime:       pluginruntime.New(pluginruntime.Options{StatePath: options.StatePath}),
+		runtime:       pluginruntime.New(pluginruntime.Options{StatePath: options.StatePath, PricingURL: options.PricingURL}),
 		latency:       options.Latency,
 		keys:          keys,
 	}
@@ -571,7 +574,7 @@ func (h *devHost) handleReset(w http.ResponseWriter, r *http.Request) {
 // and starts a fresh runtime against the same paths.
 func (h *devHost) resetState() error {
 	_ = h.runtime.Shutdown(context.Background())
-	for _, path := range []string{h.statePath, pluginruntime.ErrorsPath(h.statePath), pluginruntime.BucketsPath(h.statePath), pluginruntime.BucketsPath(h.statePath) + ".bak"} {
+	for _, path := range []string{h.statePath, pluginruntime.ErrorsPath(h.statePath), pluginruntime.BucketsPath(h.statePath), pluginruntime.BucketsPath(h.statePath) + ".bak", pluginruntime.PricesPath(h.statePath)} {
 		if path == "" {
 			continue
 		}
@@ -579,7 +582,7 @@ func (h *devHost) resetState() error {
 			return fmt.Errorf("remove %s: %w", path, err)
 		}
 	}
-	h.runtime = pluginruntime.New(pluginruntime.Options{StatePath: h.statePath})
+	h.runtime = pluginruntime.New(pluginruntime.Options{StatePath: h.statePath, PricingURL: h.pricingURL})
 	return h.register()
 }
 

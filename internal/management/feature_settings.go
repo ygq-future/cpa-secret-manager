@@ -10,8 +10,19 @@ var settingsFeature = pageFeature{
         <div class="settings-col-main">
           <div class="card pricing-card">
             <div class="card-body">
-              <h2 class="card-title" data-i18n="settings.pricing_title">Model Pricing</h2>
-              <p class="hint" data-i18n="settings.pricing_hint">Configure price per 1M tokens ($). Cost-limited keys only call models priced here.</p>
+              <div class="pricing-head">
+                <div class="pricing-head-text">
+                  <h2 class="card-title" data-i18n="settings.pricing_title">Model Pricing</h2>
+                </div>
+                <div class="pricing-head-actions">
+                  <span id="settings-pricing-meta" class="pricing-meta"></span>
+                  <button id="settings-pricing-sync" class="btn btn-secondary pricing-sync-btn" type="button" aria-busy="false" data-i18n-title="settings.pricing_sync_title" title="Sync reference prices">
+                    <span class="spinner" aria-hidden="true"></span>
+                    {{ICON:refresh}}
+                    <span data-i18n="settings.pricing_sync">Sync</span>
+                  </button>
+                </div>
+              </div>
               <div class="pricing-add-bar">
                 <div id="settings-pricing-model-select" class="pricing-select-wrap"></div>
                 <div class="input-unit-group">
@@ -34,6 +45,7 @@ var settingsFeature = pageFeature{
                   {{ICON:save}}
                 </button>
               </div>
+              <div id="settings-pricing-suggest" class="pricing-suggest" hidden></div>
               <div id="settings-pricing-list" class="pricing-list"></div>
             </div>
           </div>
@@ -259,6 +271,94 @@ var settingsFeature = pageFeature{
   min-height: 0;
   overflow: visible;
 }
+.pricing-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.pricing-head-text {
+  min-width: 0;
+}
+.pricing-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.pricing-meta {
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+.pricing-meta.is-muted {
+  color: var(--text-tertiary);
+}
+.pricing-sync-btn {
+  height: 30px;
+  padding: 0 10px;
+  gap: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.pricing-sync-btn .icon {
+  width: 14px;
+  height: 14px;
+}
+.pricing-suggest {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-height: 30px;
+  margin: -2px 0 10px;
+  padding: 6px 10px;
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  font-size: 12px;
+}
+.pricing-suggest[hidden] {
+  display: none;
+}
+.pricing-suggest-label {
+  font-weight: 650;
+  color: var(--text-primary);
+}
+.pricing-suggest-price {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+.pricing-suggest-price.is-zero {
+  color: var(--accent-amber-text);
+}
+.pricing-suggest-source {
+  color: var(--text-tertiary);
+  font-size: 11.5px;
+}
+.pricing-suggest-status {
+  margin-left: auto;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.pricing-suggest-status.is-applied {
+  color: var(--accent-green-text);
+}
+.pricing-suggest-status.is-pending {
+  color: var(--accent-amber-text);
+}
+.pricing-suggest.is-empty .pricing-suggest-text {
+  color: var(--text-tertiary);
+}
+@media (max-width: 640px) {
+  .pricing-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .pricing-head-actions {
+    justify-content: space-between;
+  }
+}
 .pricing-add-bar {
   display: flex;
   align-items: center;
@@ -440,9 +540,13 @@ var settingsFeature = pageFeature{
 }
 `,
 	scripts: `
+var PRICING_PATH = PLUGIN_BASE + '/pricing';
+var PRICING_REFRESH_PATH = PLUGIN_BASE + '/pricing/refresh';
+
 function loadSettings() {
   return apiFetch(SETTINGS_PATH).then(function (payload) {
     state.settings = payload || null;
+    pricingMeta = (payload && payload.pricing) || null;
     renderSettings();
   });
 }
@@ -533,7 +637,8 @@ function renderCacheFiles() {
   var keyMap = {
     'state': 'settings.file_state',
     'buckets': 'settings.file_buckets',
-    'errors': 'settings.file_errors'
+    'errors': 'settings.file_errors',
+    'prices': 'settings.file_prices'
   };
 
   for (var i = 0; i < files.length; i++) {
@@ -609,6 +714,9 @@ function renderSettings() {
   if (state.settings && state.settings.usage_warning) {
     messages.push(t('settings.usage_warning') + ': ' + state.settings.usage_warning);
   }
+  if (state.settings && state.settings.pricing_warning) {
+    messages.push(t('settings.pricing_warning') + ': ' + state.settings.pricing_warning);
+  }
   if (state.settings && Array.isArray(state.settings.config_warnings)) {
     messages = messages.concat(state.settings.config_warnings);
   }
@@ -622,7 +730,9 @@ function renderSettings() {
     warning.hidden = messages.length === 0;
   }
   renderCacheFiles();
+  renderPricingMeta();
   renderPricingList();
+  renderPricingSuggestion(pricingModelSelect ? pricingModelSelect.getValue() : '');
   if (state.activeTab === 'settings') {
     initPricingModelSelect();
   }
@@ -677,6 +787,255 @@ function setPricingSaving(saving) {
     btn.disabled = saving;
     btn.setAttribute('aria-busy', saving ? 'true' : 'false');
   }
+}
+
+var pricingMeta = null;
+
+function currentPricingMeta() {
+  if (pricingMeta) {
+    return pricingMeta;
+  }
+  if (state.settings && state.settings.pricing) {
+    return state.settings.pricing;
+  }
+  return {};
+}
+
+function formatPricingValue(value) {
+  var number = Number(value);
+  return isFinite(number) ? number.toFixed(3) : '0.000';
+}
+
+function renderPricingMeta() {
+  var meta = byId('settings-pricing-meta');
+  if (!meta) return;
+  var status = currentPricingMeta();
+  if (!status.fetched_at) {
+    meta.textContent = t('settings.pricing_never_synced');
+    meta.classList.add('is-muted');
+    return;
+  }
+  meta.classList.remove('is-muted');
+  meta.textContent = status.stale
+    ? tf('settings.pricing_stale', { time: formatTimestamp(status.fetched_at) })
+    : tf('settings.pricing_synced_at', { time: formatTimestamp(status.fetched_at) });
+  meta.title = t('settings.pricing_sync_title');
+}
+
+function pricingSuggestionFor(model) {
+  if (!model || !pricingSuggestions || !pricingSuggestions.models) {
+    return null;
+  }
+  return pricingSuggestions.models[model] || null;
+}
+
+function pricingValuesEqual(a, b) {
+  return Math.abs(Number(a && a.input || 0) - Number(b && b.input || 0)) < 0.0005 &&
+    Math.abs(Number(a && a.output || 0) - Number(b && b.output || 0)) < 0.0005 &&
+    Math.abs(Number(a && a.cache || 0) - Number(b && b.cache || 0)) < 0.0005;
+}
+
+function renderPricingSuggestion(model) {
+  var box = byId('settings-pricing-suggest');
+  if (!box) return;
+  box.innerHTML = '';
+  if (!model) {
+    box.hidden = true;
+    return;
+  }
+
+  var suggestion = pricingSuggestionFor(model);
+  if (!suggestion) {
+    if (!currentPricingMeta().fetched_at) {
+      box.hidden = true;
+      return;
+    }
+    box.hidden = false;
+    box.className = 'pricing-suggest is-empty';
+    var empty = document.createElement('span');
+    empty.className = 'pricing-suggest-text';
+    empty.textContent = t('settings.pricing_no_suggestion');
+    box.appendChild(empty);
+    return;
+  }
+
+  box.hidden = false;
+  box.className = 'pricing-suggest';
+
+  var label = document.createElement('span');
+  label.className = 'pricing-suggest-label';
+  label.textContent = t('settings.pricing_reference');
+  box.appendChild(label);
+
+  var price = document.createElement('span');
+  price.className = 'pricing-suggest-price';
+  price.textContent = '$' + formatPricingValue(suggestion.input) +
+    ' / $' + formatPricingValue(suggestion.output) +
+    ' / $' + formatPricingValue(suggestion.cache);
+  if (Number(suggestion.input) <= 0 && Number(suggestion.output) <= 0 && Number(suggestion.cache) <= 0) {
+    price.classList.add('is-zero');
+    price.title = t('settings.pricing_zero_hint');
+  }
+  box.appendChild(price);
+
+  var source = document.createElement('span');
+  source.className = 'pricing-suggest-source';
+  var sourceText = (currentPricingMeta().source || 'models.dev') + ' · ' + (suggestion.provider || '—');
+  if (suggestion.providers > 1) {
+    sourceText += ' · ' + tf('settings.pricing_provider_count', { count: suggestion.providers });
+  }
+  source.textContent = sourceText;
+  source.title = suggestion.model || '';
+  if (suggestion.updated_at) {
+    source.title += ' · ' + suggestion.updated_at;
+  }
+  box.appendChild(source);
+
+  var prices = (state.settings && state.settings.model_prices) || {};
+  var configured = prices[model];
+  var status = document.createElement('span');
+  status.className = 'pricing-suggest-status';
+  if (configured && pricingValuesEqual(configured, suggestion)) {
+    status.classList.add('is-applied');
+    status.textContent = t('settings.pricing_applied');
+  } else if (configured) {
+    status.classList.add('is-pending');
+    status.textContent = t('settings.pricing_pending_update');
+  } else {
+    status.classList.add('is-pending');
+    status.textContent = t('settings.pricing_pending_add');
+  }
+  status.title = t('settings.pricing_sync_title');
+  box.appendChild(status);
+}
+
+function roundPricingValue(value) {
+  return Math.round((Number(value) || 0) * 1000) / 1000;
+}
+
+// mergePricingSuggestions applies the synced reference prices on top of the
+// saved prices. It never deletes a saved model: a model absent from the
+// reference (for example, removed upstream) is retained unchanged.
+function mergePricingSuggestions(suggestions) {
+  var current = (state.settings && state.settings.model_prices) || {};
+  var next = {};
+  for (var existingModel in current) {
+    next[existingModel] = current[existingModel];
+  }
+
+  var added = 0;
+  var updated = 0;
+  var unchanged = 0;
+  var models = (suggestions && suggestions.models) || {};
+  for (var model in models) {
+    var suggestion = models[model];
+    var price = {
+      input: roundPricingValue(suggestion.input),
+      output: roundPricingValue(suggestion.output),
+      cache: roundPricingValue(suggestion.cache)
+    };
+    var existing = next[model];
+    if (!existing) {
+      next[model] = price;
+      added += 1;
+    } else if (pricingValuesEqual(existing, price)) {
+      unchanged += 1;
+    } else {
+      next[model] = price;
+      updated += 1;
+    }
+  }
+  return { prices: next, added: added, updated: updated, unchanged: unchanged };
+}
+
+function loadPricingSuggestions(models, force) {
+  var list = (models || []).slice();
+  var signature = list.join('\n');
+  if (!force && pricingSuggestions && pricingSuggestionsSignature === signature) {
+    return Promise.resolve(pricingSuggestions);
+  }
+  if (!force && pricingSuggestionsPending && pricingSuggestionsSignature === signature) {
+    return pricingSuggestionsPending;
+  }
+
+  pricingSuggestionsSignature = signature;
+  var path = force ? PRICING_REFRESH_PATH : PRICING_PATH;
+  var pending = apiFetch(path, {
+    method: 'POST',
+    body: JSON.stringify({ models: list })
+  }).then(function (payload) {
+    pricingSuggestions = payload || { models: {} };
+    pricingMeta = {
+      source: payload.source,
+      fetched_at: payload.fetched_at,
+      stale: payload.stale
+    };
+    return pricingSuggestions;
+  }).catch(function (error) {
+    pricingSuggestions = null;
+    throw error;
+  });
+  pricingSuggestionsPending = pending;
+  var clearPending = function () {
+    if (pricingSuggestionsPending === pending) {
+      pricingSuggestionsPending = null;
+    }
+  };
+  pending.then(clearPending, clearPending);
+  return pending;
+}
+
+function setPricingSyncBusy(busy) {
+  var button = byId('settings-pricing-sync');
+  if (!button) return;
+  button.disabled = busy;
+  button.classList.toggle('is-loading', busy);
+  button.setAttribute('aria-busy', busy ? 'true' : 'false');
+}
+
+function refreshCacheFiles() {
+  return apiFetch(SETTINGS_PATH).then(function (payload) {
+    if (!payload || !state.settings) return;
+    state.settings.cache_files = payload.cache_files || [];
+    state.settings.state_warning = payload.state_warning || '';
+    state.settings.usage_warning = payload.usage_warning || '';
+    state.settings.pricing_warning = payload.pricing_warning || '';
+    renderCacheFiles();
+  }).catch(function () {
+    // The sync/save already succeeded; a stale cache-file badge is harmless.
+  });
+}
+
+function syncPricingSuggestions() {
+  var models = pricingLoadedModels.slice();
+  if (models.length === 0) {
+    showToast(t('settings.pricing_no_models'), 'error');
+    return;
+  }
+  setPricingSyncBusy(true);
+  loadPricingSuggestions(models, true)
+    .then(function (result) {
+      renderPricingMeta();
+      var merge = mergePricingSuggestions(result);
+      if (merge.added === 0 && merge.updated === 0) {
+        renderPricingSuggestion(pricingModelSelect ? pricingModelSelect.getValue() : '');
+        showToast(t('settings.pricing_unchanged'), 'success');
+        return refreshCacheFiles();
+      }
+      return saveModelPrices(merge.prices, tf('settings.pricing_synced_saved', {
+        added: merge.added,
+        updated: merge.updated,
+        unchanged: merge.unchanged
+      })).then(function () {
+        return refreshCacheFiles();
+      });
+    })
+    .catch(function (error) {
+      showToast(error && error.message ? error.message : t('settings.pricing_sync_failed'), 'error');
+    })
+    .then(function () {
+      setPricingSyncBusy(false);
+    });
 }
 
 function renderPricingList() {
@@ -752,6 +1111,7 @@ function syncPricingInputs(model) {
     inInput.value = '0.000';
     outInput.value = '0.000';
     cacheInput.value = '0.000';
+    renderPricingSuggestion('');
     return;
   }
   var prices = (state.settings && state.settings.model_prices) || {};
@@ -765,6 +1125,7 @@ function syncPricingInputs(model) {
     outInput.value = '0.000';
     cacheInput.value = '0.000';
   }
+  renderPricingSuggestion(model);
 }
 
 function editPricingModel(model, price) {
@@ -779,6 +1140,9 @@ function editPricingModel(model, price) {
 var pricingModelSelect = null;
 var pricingLoadedModels = [];
 var pricingModelsLoaded = false;
+var pricingSuggestions = null;
+var pricingSuggestionsSignature = '';
+var pricingSuggestionsPending = null;
 
 function buildPricingModelOptions(models) {
   var prices = (state.settings && state.settings.model_prices) || {};
@@ -846,6 +1210,12 @@ function initPricingModelSelect() {
     pricingLoadedModels = models || [];
     pricingModelsLoaded = true;
     refreshPricingModelOptions();
+    return loadPricingSuggestions(pricingLoadedModels).catch(function () {
+      return null;
+    });
+  }).then(function () {
+    renderPricingMeta();
+    renderPricingSuggestion(pricingModelSelect ? pricingModelSelect.getValue() : '');
   }).catch(function () {
     // Keep the current options; the next init retries the fetch.
   });
@@ -896,7 +1266,7 @@ function deletePricingModel(model) {
   });
 }
 
-function saveModelPrices(prices) {
+function saveModelPrices(prices, successMessage) {
   setPricingSaving(true);
   setGlobalLoading(true, t('shell.loading'));
   return apiFetch(SETTINGS_PATH, { method: 'PUT', body: JSON.stringify({ model_prices: prices }) })
@@ -905,7 +1275,7 @@ function saveModelPrices(prices) {
       state.settings.model_prices = prices;
       renderPricingList();
       refreshPricingModelOptions();
-      showToast(t('settings.price_saved'), 'success');
+      showToast(successMessage || t('settings.price_saved'), 'success');
       var selected = pricingModelSelect ? pricingModelSelect.getValue() : '';
       syncPricingInputs(selected);
       if (typeof loadAvailableModels === 'function') {
@@ -938,6 +1308,7 @@ function bindSettingsEvents() {
     });
   }
   bindClick('settings-pricing-add', addPricingModel);
+  bindClick('settings-pricing-sync', syncPricingSuggestions);
   function bindDecimalInput(id) {
     var el = byId(id);
     if (!el) return;
@@ -995,6 +1366,7 @@ var helpFeature = pageFeature{
             <h2 class="card-title" data-i18n="help.quota_title">Quotas &amp; Pricing</h2>
             <ul class="help-list">
               <li data-i18n="help.quota_pricing_body"></li>
+              <li data-i18n="help.pricing_source_body"></li>
               <li data-i18n="help.quota_limits_body"></li>
             </ul>
           </div>

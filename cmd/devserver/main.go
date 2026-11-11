@@ -23,6 +23,7 @@ type options struct {
 	managementKey string
 	keysPath      string
 	statePath     string
+	pricingURL    string
 	latency       time.Duration
 }
 
@@ -33,6 +34,7 @@ func main() {
 		ManagementKey: parsed.managementKey,
 		KeysPath:      parsed.keysPath,
 		StatePath:     parsed.statePath,
+		PricingURL:    parsed.pricingURL,
 		Latency:       parsed.latency,
 	})
 	if err != nil {
@@ -84,6 +86,7 @@ func parseOptions() options {
 	flag.StringVar(&parsed.managementKey, "management-key", envString("CPA_SECRET_MANAGER_DEVSERVER_KEY", "devkey"), "simulated management key")
 	flag.StringVar(&parsed.keysPath, "keys", envString("CPA_SECRET_MANAGER_DEVSERVER_KEYS", "data/devserver/api-keys.json"), "simulated proxy API key store")
 	flag.StringVar(&parsed.statePath, "state", envString("CPA_SECRET_MANAGER_DEVSERVER_STATE", "data/devserver/cache.json"), "plugin state document path")
+	flag.StringVar(&parsed.pricingURL, "pricing-url", envString("CPA_SECRET_MANAGER_DEVSERVER_PRICING_URL", ""), "reference-price catalog URL; empty uses models.dev")
 	flag.DurationVar(&parsed.latency, "latency", envDuration("CPA_SECRET_MANAGER_DEVSERVER_LATENCY", 800*time.Millisecond), "artificial management API latency so the page's loading states are visible; 0 disables it")
 	flag.Parse()
 	return parsed

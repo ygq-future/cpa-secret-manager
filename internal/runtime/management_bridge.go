@@ -70,6 +70,8 @@ func managementRoutes() []managementRoute {
 		{Method: http.MethodPut, Path: management.RouteQuota},
 		{Method: http.MethodDelete, Path: management.RouteQuota},
 		{Method: http.MethodGet, Path: management.RouteModels},
+		{Method: http.MethodPost, Path: management.RoutePricing},
+		{Method: http.MethodPost, Path: management.RoutePricingRefresh},
 	}
 }
 

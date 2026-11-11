@@ -32,6 +32,7 @@ It provides **per-key remarks**, **per-key token usage attribution**, and **quot
 - **1:1 Official Key Generation Algorithm**: Generated keys use an `sk-` prefix plus 48 alphanumeric characters `[A-Za-z0-9]`, with modulo bias removed through rejection sampling (threshold 248), matching the official management console algorithm.
 - **Full-Dimensional Token Attribution**: Intercepts requests through the host `usage_plugin` capability, aggregating request counts, failure counts, and Input/Output tokens, as well as Reasoning, Cached, and CacheRead token breakdowns grouped by model.
 - **Per-Key Quotas, Independent Model Restrictions & Cost Budgets**: Set token limits, monetary cost budgets (Quota Cost Limit), or independent model allowlists (restricting models without requiring token/cost limits) per key with automatic rejection on violation and one-click quota resets; configure custom token pricing per model with automatic expenditure estimation.
+- **Model Reference Price Suggestions**: “Sync & save prices” in Settings pulls reference prices from models.dev and merges them automatically: it adds missing models, updates changed prices, and keeps saved models absent from the reference; identical prices are ignored. Network access happens only on click, and the streamed catalog keeps only matches for the current model list, never the full catalog.
 - **Range Dashboard and Failure Triage**: A single date range drives the stat cards, per-key columns, and model breakdown, including each key's last-seen time. Failure records are grouped into a timeline with upstream-credential and HTTP status filtering and the upstream credential that served the request (masked to four characters), for locating abnormal keys and upstream errors.
 - **Automatic Orphan Metadata Pruning**: Implements the `/forget` protocol; when keys are deleted from the host, the plugin detects and safely purges corresponding orphaned metadata and usage counters.
 - **Deep CPA Integration & Native Feel**: The embedded management page is completely self-contained (zero external CDNs, zero inline event handlers). It dynamically extracts host CSS variables via same-origin iframe to follow CPA themes (light, white, dark, and custom themes) and UI language (`cli-proxy-language`).
@@ -127,16 +128,16 @@ plugins:
     cpa-secret-manager:
       enabled: true
       priority: 1
-      # state_path: "data/cpa-secret-manager-cache.json" # Optional custom cache path
+      # state_path: "data/cpa-secret-manager/state.json" # Optional state document inside the plugin data directory
 ```
 
 | Host Parameter | Default | Required | Description |
 | :--- | :--- | :--- | :--- |
 | **`enabled`** | `true` | Yes | Global plugin switch. When `false`, all routes and usage interception are deactivated. |
 | **`priority`** | `1` | No | Execution priority in the CPA plugin pipeline. |
-| **`state_path`** | `data/cpa-secret-manager-cache.json` | No | Path of the state document; the same directory also holds `-buckets.json` (hourly usage buckets) and `-errors.json` (failure records). |
+| **`state_path`** | `data/cpa-secret-manager/state.json` | No | State document inside the plugin data directory; the same directory always holds `buckets.json` (hourly usage buckets), `errors.json` (failure records), and `prices.json` (reference-price cache). |
 
-> **Persistence Guarantee**: All three documents (state, usage buckets, failure records) write through `*.tmp` temporary files followed by atomic `os.Rename`, locked to `0600` file permissions. Deleting them completely resets remarks, usage and failure history.
+> **Persistence Guarantee**: All four documents (state, usage buckets, failure records, reference-price cache) write through `*.tmp` temporary files followed by atomic `os.Rename`, locked to `0600` file permissions. Deleting them completely resets remarks, usage, failure history, and reference prices. Legacy `data/cpa-secret-manager-cache*.json` files are moved into the new directory on startup without a backup.
 
 ---
 
@@ -185,7 +186,9 @@ All management endpoints require `Authorization: Bearer <management_key>` or `X-
 | **`DELETE`** | `/v0/management/plugins/cpa-secret-manager/quota` | Deletes a key's quota rule |
 | **`POST`** | `/v0/management/plugins/cpa-secret-manager/failures` | Queries failure records by key digest and time range, including HTTP status and upstream credential identifiers |
 | **`GET`** | `/v0/management/plugins/cpa-secret-manager/models` | Lists models observed by the plugin |
-| **`GET`** | `/v0/management/plugins/cpa-secret-manager/settings` | Reads runtime settings (cache path, usage toggle, retention days, warnings) |
+| **`POST`** | `/v0/management/plugins/cpa-secret-manager/pricing` | Reads cached model reference prices (cache-only, no network) |
+| **`POST`** | `/v0/management/plugins/cpa-secret-manager/pricing/refresh` | Explicitly syncs the models.dev catalog, retaining only matches for the submitted models |
+| **`GET`** | `/v0/management/plugins/cpa-secret-manager/settings` | Reads runtime settings (cache path, usage toggle, retention days, reference-price status, warnings) |
 | **`PUT`** | `/v0/management/plugins/cpa-secret-manager/settings` | Updates the usage toggle and data retention days |
 
 ---

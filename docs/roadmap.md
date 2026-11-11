@@ -38,7 +38,7 @@
 
 ### 2.2 非目标
 
-不做：费用与价格估算、models.dev 同步、CSV / PNG 导出、数据库备份恢复、按时间窗口或趋势图、逐请求明细表、完整模式二次鉴权会话、名称字段、备注随宿主配置迁移、用量按时间桶重置、第三语言。
+不做（v1.0.0 范围）：费用与价格估算、models.dev 同步、CSV / PNG 导出、数据库备份恢复、按时间窗口或趋势图、逐请求明细表、完整模式二次鉴权会话、名称字段、备注随宿主配置迁移、用量按时间桶重置、第三语言。其中费用估算已在 v1.2.0 加入，models.dev 参考价建议已在后续增量中加入（见 ADR-0007）。
 
 ---
 
@@ -53,11 +53,15 @@ CPA 宿主进程
 │   ├── internal/usage          用量聚合与归因
 │   └── internal/state          状态文档 + 原子落盘（唯一持久化入口）
 ├── internal/management         嵌入式 Web UI（纯字符串拼装，零外部 CDN）
-└── data/cpa-secret-manager-cache.json
+└── data/cpa-secret-manager/     插件数据目录
+    ├── state.json               备注 / 配额 / 设置
+    ├── buckets.json             小时用量桶
+    ├── errors.json              失败记录
+    └── prices.json              参考价缓存
 官方管理端 ── 同源 iframe ──► /v0/resource/plugins/cpa-secret-manager/keys
 ```
 
-- **零 host 回调**：本插件不读写宿主凭证文件、不发起上游请求，因此不使用 `host.*` RPC。
+- **零 host 回调**：本插件不读写宿主凭证文件；除用户显式触发的 models.dev 参考价同步外，不发起其他上游请求，因此不使用 `host.*` RPC。
 - 插件能力声明：`{"management_api": true, "usage_plugin": true}`，`schema_version: 1`。
 
 ---
@@ -188,3 +192,11 @@ usage.handle(record)
 - 宿主最低版本：**v7.2.0**（该版本起存在 `sdk/pluginabi` 与 `usage_plugin` / `management_api` 能力，且 `UsageRecord.APIKey` 已为客户端密钥）；推荐使用当前最新版。
 - 官方管理端 ≥ 7.2.147（插件菜单与资源 iframe）。
 - 构建需要 Go + CGO + 平台 C 编译器，产物为动态库：`cpa-secret-manager.{so,dylib,dll}`。
+
+---
+
+## 9. 后续增量（v1.0.0 之后）
+
+- **v1.2.0**：逐模型单价、消费金额配额、失败诊断下钻与缓存文件可视化。
+- **v1.3.0**：独立模型限制、配额维度解耦、管理密钥持久化。
+- **参考价建议（ADR-0007）**：设置页按当前模型列表显式同步 models.dev 参考价；流式解析只保留匹配项，紧凑缓存不保存完整目录；建议只填入输入框，保存仍是独立动作。

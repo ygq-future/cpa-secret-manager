@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"cpa-secret-manager/internal/errorslog"
+	"cpa-secret-manager/internal/pricing"
 	"cpa-secret-manager/internal/quota"
 	"cpa-secret-manager/internal/remarks"
 	"cpa-secret-manager/internal/usage"
@@ -46,8 +47,12 @@ const (
 	PathFailures = "/failures"
 	PathQuota    = "/quota"
 	// PathModels returns known model names.
-	PathModels    = "/models"
-	RouteSettings = legacyBase + PathSettings
+	PathModels = "/models"
+	// PathPricing returns the cached reference prices for a model list.
+	PathPricing = "/pricing"
+	// PathPricingRefresh fetches the upstream catalog and refreshes the cache.
+	PathPricingRefresh = "/pricing/refresh"
+	RouteSettings      = legacyBase + PathSettings
 	// RouteResolve is the resolve route path registered with the host.
 	RouteResolve = legacyBase + PathResolve
 	// RouteRemarks is the remark route path registered with the host.
@@ -60,8 +65,12 @@ const (
 	RouteFailures = legacyBase + PathFailures
 	RouteQuota    = legacyBase + PathQuota
 	// RouteModels is the models route registered with the host.
-	RouteModels    = legacyBase + PathModels
-	maxRequestBody = 1 << 20
+	RouteModels = legacyBase + PathModels
+	// RoutePricing is the cached reference-price route.
+	RoutePricing = legacyBase + PathPricing
+	// RoutePricingRefresh is the explicit upstream refresh route.
+	RoutePricingRefresh = legacyBase + PathPricingRefresh
+	maxRequestBody      = 1 << 20
 )
 
 // CacheFile describes a cache or state file on disk and its probed size.
@@ -81,8 +90,35 @@ type Settings struct {
 	StatePath      string                      `json:"state_path"`
 	StateWarning   string                      `json:"state_warning,omitempty"`
 	UsageWarning   string                      `json:"usage_warning,omitempty"`
+	PricingWarning string                      `json:"pricing_warning,omitempty"`
+	Pricing        PriceStatus                 `json:"pricing"`
 	ConfigWarnings []string                    `json:"config_warnings,omitempty"`
 	CacheFiles     []CacheFile                 `json:"cache_files,omitempty"`
+}
+
+// PriceStatus describes the cached reference-price catalog without loading its
+// model entries into the settings response.
+type PriceStatus struct {
+	Source    string `json:"source"`
+	FetchedAt string `json:"fetched_at,omitempty"`
+	Stale     bool   `json:"stale"`
+}
+
+// PricingRequest carries the models whose reference prices the page needs.
+type PricingRequest struct {
+	Models []string `json:"models"`
+}
+
+// PricingResult carries cached or freshly fetched reference prices. Models is
+// keyed by the exact model name the caller submitted.
+type PricingResult struct {
+	Source      string                        `json:"source"`
+	FetchedAt   string                        `json:"fetched_at,omitempty"`
+	Stale       bool                          `json:"stale"`
+	Models      map[string]pricing.Suggestion `json:"models"`
+	Matched     int                           `json:"matched"`
+	Requested   int                           `json:"requested"`
+	NotModified bool                          `json:"not_modified,omitempty"`
 }
 
 // SettingsUpdate is the request payload for updating business settings.
@@ -228,6 +264,8 @@ type Backend interface {
 	SetQuota(ctx context.Context, update QuotaUpdate) error
 	DeleteQuota(ctx context.Context, hash string) error
 	Models(ctx context.Context) ([]string, error)
+	Pricing(ctx context.Context, models []string) (PricingResult, error)
+	RefreshPricing(ctx context.Context, models []string) (PricingResult, error)
 }
 
 // Handler serves the plugin-owned Management API routes.
@@ -270,6 +308,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveQuota(w, r)
 	case PathModels:
 		h.serveModels(w, r)
+	case PathPricing:
+		h.servePricing(w, r)
+	case PathPricingRefresh:
+		h.servePricingRefresh(w, r)
 	default:
 		writeJSON(w, http.StatusNotFound, errorBody("not_found", "unknown plugin route"))
 	}
@@ -457,6 +499,42 @@ func (h *Handler) serveModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string][]string{"models": models})
+}
+
+// servePricing reads the compact cache. It never performs network I/O, so the
+// settings page can render suggestions even when the host has no egress.
+func (h *Handler) servePricing(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, http.MethodPost)
+		return
+	}
+	var request PricingRequest
+	if !decodeBody(w, r, &request) {
+		return
+	}
+	result, err := h.backend.Pricing(r.Context(), request.Models)
+	if h.fail(w, err) {
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// servePricingRefresh is the only route that contacts the upstream catalog. The
+// page calls it from an explicit sync action, never on load.
+func (h *Handler) servePricingRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, http.MethodPost)
+		return
+	}
+	var request PricingRequest
+	if !decodeBody(w, r, &request) {
+		return
+	}
+	result, err := h.backend.RefreshPricing(r.Context(), request.Models)
+	if h.fail(w, err) {
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 // fail writes an error response and reports whether the request is finished.
