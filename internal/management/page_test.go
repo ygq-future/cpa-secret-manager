@@ -1,6 +1,7 @@
 package management
 
 import (
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -27,7 +29,9 @@ var (
 	rootBlockPattern        = regexp.MustCompile(`(?s):root\s*\{(.*?)\}`)
 	whiteBlockPattern       = regexp.MustCompile(`(?s)\[data-theme='white'\]\s*\{(.*?)\}`)
 	darkBlockPattern        = regexp.MustCompile(`(?s)\[data-theme='dark'\]\s*\{(.*?)\}`)
+	mediaDarkBlockPattern   = regexp.MustCompile(`(?s)@media \(prefers-color-scheme: dark\)\s*\{\s*:root[^{]*\{([^{}]*)\}`)
 	tokenPattern            = regexp.MustCompile(`(--[a-z0-9-]+)\s*:`)
+	tokenValuePattern       = regexp.MustCompile(`(--[a-z0-9-]+)\s*:\s*([^;]+);`)
 	referencePattern        = regexp.MustCompile(`var\(\s*(--[a-z0-9-]+)`)
 	hostVarPattern          = regexp.MustCompile(`'(--[a-z0-9-]+)'`)
 	translationPattern      = regexp.MustCompile(`data-i18n[a-z-]*="([^"]+)"`)
@@ -85,6 +89,57 @@ func extractTokens(t *testing.T, pattern *regexp.Regexp, source string, label st
 	}
 	sort.Strings(names)
 	return names
+}
+
+// extractTokenValues maps every custom property declared in one palette block to
+// its literal value, which lets the contrast guard read the real colours instead
+// of restating them.
+func extractTokenValues(t *testing.T, pattern *regexp.Regexp, source string, label string) map[string]string {
+	t.Helper()
+	match := pattern.FindStringSubmatch(source)
+	if match == nil {
+		t.Fatalf("page has no %s block", label)
+	}
+	values := map[string]string{}
+	for _, token := range tokenValuePattern.FindAllStringSubmatch(match[1], -1) {
+		values[token[1]] = strings.TrimSpace(token[2])
+	}
+	return values
+}
+
+func parseHexColor(t *testing.T, value string, label string, token string) [3]float64 {
+	t.Helper()
+	if len(value) != 7 || value[0] != '#' {
+		t.Fatalf("%s: %s = %q, want a #rrggbb literal so its contrast is measurable", label, token, value)
+	}
+	var channels [3]float64
+	for index := range channels {
+		parsed, err := strconv.ParseUint(value[1+index*2:3+index*2], 16, 8)
+		if err != nil {
+			t.Fatalf("%s: %s = %q is not a hex colour: %v", label, token, value, err)
+		}
+		channels[index] = float64(parsed) / 255
+	}
+	return channels
+}
+
+func linearChannel(channel float64) float64 {
+	if channel <= 0.03928 {
+		return channel / 12.92
+	}
+	return math.Pow((channel+0.055)/1.055, 2.4)
+}
+
+// contrastRatio returns the WCAG 2.1 ratio between two sRGB colours.
+func contrastRatio(first [3]float64, second [3]float64) float64 {
+	luminance := func(rgb [3]float64) float64 {
+		return 0.2126*linearChannel(rgb[0]) + 0.7152*linearChannel(rgb[1]) + 0.0722*linearChannel(rgb[2])
+	}
+	high, low := luminance(first), luminance(second)
+	if high < low {
+		high, low = low, high
+	}
+	return (high + 0.05) / (low + 0.05)
 }
 
 func TestPage_ServesEmbeddedMarkup(t *testing.T) {
@@ -157,6 +212,31 @@ func TestPageThemeTokensAreComplete(t *testing.T) {
 			if !declared[name] {
 				t.Fatalf("token %s is declared in :root but missing from the %s theme block", name, label)
 			}
+		}
+	}
+}
+
+// TestPageCalendarSelectionStaysLegible guards the readability of the two chosen
+// days: their fill carries white numerals at 12.5px, so every palette has to
+// clear the WCAG AA text ratio. The accent's own lightness sat at 3.7:1, which
+// left the numerals looking washed out instead of selected.
+func TestPageCalendarSelectionStaysLegible(t *testing.T) {
+	style := extractPageStyle(t)
+	palettes := []struct {
+		label   string
+		pattern *regexp.Regexp
+	}{
+		{label: ":root", pattern: rootBlockPattern},
+		{label: "media dark", pattern: mediaDarkBlockPattern},
+		{label: "white", pattern: whiteBlockPattern},
+		{label: "dark", pattern: darkBlockPattern},
+	}
+	for _, palette := range palettes {
+		values := extractTokenValues(t, palette.pattern, style, palette.label)
+		fill := parseHexColor(t, values["--calendar-edge-bg"], palette.label, "--calendar-edge-bg")
+		ink := parseHexColor(t, values["--on-accent"], palette.label, "--on-accent")
+		if ratio := contrastRatio(fill, ink); ratio < 4.5 {
+			t.Fatalf("%s: selected day text contrast is %.2f:1, want at least 4.5:1", palette.label, ratio)
 		}
 	}
 }

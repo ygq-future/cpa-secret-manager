@@ -290,15 +290,23 @@ const templateStyleOverlays = `
 
 .calendar-day.is-disabled:hover { background: transparent; }
 
+/* One hue, two steps: the days inside the window carry a quiet wash of the
+   accent, and the two chosen days deepen within the same hue. The endpoints stay
+   below the accent's own lightness so the numerals keep AA contrast (5.2:1) and
+   the window still reads as a single material. */
 .calendar-day.range-start,
 .calendar-day.range-end {
-  background: var(--accent-blue) !important;
+  background: var(--calendar-edge-bg) !important;
   color: var(--on-accent) !important;
   font-weight: 650;
 }
 
 .calendar-day.in-range {
-  background: var(--accent-blue-soft);
+  background: var(--calendar-range-bg);
+}
+
+.calendar-day.in-range:hover {
+  background: var(--accent-blue-border);
 }
 
 .time-pickers-row {

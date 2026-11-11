@@ -63,6 +63,8 @@ const ThemePaletteCSS = `
   --accent-violet-soft: rgba(139, 92, 246, 0.10);
   --accent-violet-border: rgba(139, 92, 246, 0.25);
   --accent-violet-text: #6d28d9;
+  --calendar-range-bg: rgba(59, 130, 246, 0.12);
+  --calendar-edge-bg: #2563eb;
   --on-accent: #ffffff;
   --btn-primary-bg: #0f172a;
   --btn-primary-hover: #1e293b;
@@ -123,6 +125,8 @@ const ThemePaletteCSS = `
     --accent-violet-soft: rgba(167, 139, 250, 0.16);
     --accent-violet-border: rgba(167, 139, 250, 0.35);
     --accent-violet-text: #c4b5fd;
+    --calendar-range-bg: rgba(96, 165, 250, 0.20);
+    --calendar-edge-bg: #2563eb;
     --on-accent: #ffffff;
     --btn-primary-bg: #f4f4f5;
     --btn-primary-hover: #e4e4e7;
@@ -178,6 +182,8 @@ const ThemePaletteCSS = `
   --accent-violet-soft: rgba(139, 92, 246, 0.10);
   --accent-violet-border: rgba(139, 92, 246, 0.25);
   --accent-violet-text: #6d28d9;
+  --calendar-range-bg: rgba(59, 130, 246, 0.12);
+  --calendar-edge-bg: #2563eb;
   --on-accent: #ffffff;
   --btn-primary-bg: #0f172a;
   --btn-primary-hover: #1e293b;
@@ -238,6 +244,8 @@ const ThemePaletteCSS = `
   --accent-violet-soft: rgba(167, 139, 250, 0.16);
   --accent-violet-border: rgba(167, 139, 250, 0.35);
   --accent-violet-text: #c4b5fd;
+  --calendar-range-bg: rgba(96, 165, 250, 0.20);
+  --calendar-edge-bg: #2563eb;
   --on-accent: #ffffff;
   --btn-primary-bg: #f4f4f5;
   --btn-primary-hover: #e4e4e7;
