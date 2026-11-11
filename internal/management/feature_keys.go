@@ -2440,9 +2440,34 @@ function handleDateClick(selectedDate) {
   renderDateCalendars();
 }
 
+// Credential IDs are host auth file names shaped like
+// "<provider>-<account>.json". Keep the provider and the account's domain while
+// masking the account body, so credentials from the same provider stay
+// distinguishable without printing the full address.
 function maskCredential(value) {
   if (!value) return '';
-  return value.slice(0, 4) + '…';
+  var name = String(value).replace(/\.json$/i, '');
+  var dash = name.indexOf('-');
+  var provider = '';
+  var account = name;
+  if (dash > 0 && dash < name.length - 1) {
+    provider = name.slice(0, dash + 1);
+    account = name.slice(dash + 1);
+  }
+  var at = account.indexOf('@');
+  var local = at > 0 ? account.slice(0, at) : account;
+  var domain = at > 0 ? account.slice(at) : '';
+  return provider + maskCredentialAccount(local) + domain;
+}
+
+function maskCredentialAccount(local) {
+  var chars = Array.from(local);
+  var head = Math.min(4, Math.max(0, chars.length - 1));
+  var masked = chars.slice(0, head).join('') + '••';
+  if (chars.length > 8) {
+    masked += chars.slice(-2).join('');
+  }
+  return masked;
 }
 
 // The failure viewer is rebuilt on every open. Its four filters are shared
@@ -2690,7 +2715,7 @@ function openFailuresModal(index, initialModel) {
       for (var b = 0; b < authIDs.length; b++) {
         newAuthOpts.push({
           value: authIDs[b],
-          label: authIDs[b],
+          label: maskCredential(authIDs[b]),
           triggerLabel: maskCredential(authIDs[b])
         });
       }
