@@ -1,6 +1,6 @@
 # 0007: 参考价建议采用 models.dev 流式裁剪与显式同步
 
-> 后续变更：模型名的分段前缀匹配与多报价下拉选择见 [ADR-0009](./0009-prefix-price-matching.md)。
+> 后续变更：模型名的分段前缀匹配与多报价下拉选择见 [ADR-0009](./0009-prefix-price-matching.md)；同步时同价保留、就近回退与缓存裁剪见 [ADR-0010](./0010-price-sync-offer-retention.md)。
 
 ## Context
 
