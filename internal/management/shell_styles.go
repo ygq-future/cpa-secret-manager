@@ -299,7 +299,6 @@ const templateStyleOverlays = `
 
 .calendar-day.in-range {
   background: var(--accent-blue-soft);
-  border-radius: 0;
 }
 
 .time-pickers-row {

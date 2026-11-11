@@ -110,7 +110,7 @@ const ThemePaletteCSS = `
     --accent-red: #ef4444;
     --accent-red-subtle: rgba(127, 29, 29, 0.25);
     --accent-red-text: #f87171;
-    --accent-blue-soft: rgba(59, 130, 246, 0.18);
+    --accent-blue-soft: rgba(96, 165, 250, 0.30);
     --accent-blue-border: rgba(96, 165, 250, 0.35);
     --accent-red-soft: rgba(239, 68, 68, 0.16);
     --accent-red-border: rgba(248, 113, 113, 0.35);
@@ -225,7 +225,7 @@ const ThemePaletteCSS = `
   --accent-red: #ef4444;
   --accent-red-subtle: rgba(127, 29, 29, 0.25);
   --accent-red-text: #f87171;
-  --accent-blue-soft: rgba(59, 130, 246, 0.18);
+  --accent-blue-soft: rgba(96, 165, 250, 0.30);
   --accent-blue-border: rgba(96, 165, 250, 0.35);
   --accent-red-soft: rgba(239, 68, 68, 0.16);
   --accent-red-border: rgba(248, 113, 113, 0.35);
