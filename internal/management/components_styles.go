@@ -411,7 +411,9 @@ a.btn { text-decoration: none; }
 
 .tab.active .icon { opacity: 1; }
 
-/* --- focus rings --- */
+/* --- focus rings ---
+   Text fields carry their own ring in the fields section, where it can follow
+   the declarations it has to outrank. */
 .btn:focus-visible,
 .btn-icon:focus-visible,
 .tab:focus-visible,
@@ -425,13 +427,6 @@ a.btn { text-decoration: none; }
 .calendar-day:focus-visible {
   outline: none;
   border-color: var(--border-focus);
-  box-shadow: 0 0 0 3px var(--focus-ring);
-}
-
-input:focus-visible,
-textarea:focus-visible {
-  outline: none;
-  border-color: var(--accent-blue);
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
@@ -707,6 +702,18 @@ textarea {
   resize: vertical;
 }
 
+/* One focus treatment for every text field. The rule must follow the base input
+   declarations above: the type selectors tie input:focus-visible on
+   specificity and would otherwise win the border colour. The halo stays at
+   2px, because 3px around a 34px field reads as a second, thicker border;
+   buttons and switches keep the wider ring. */
+input:focus-visible,
+textarea:focus-visible {
+  outline: none;
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
 input[readonly] {
   background: var(--bg-secondary) !important;
   color: var(--text-primary);
@@ -786,7 +793,7 @@ input[readonly] {
 
 .input-unit-group:focus-within {
   border-color: var(--accent-blue);
-  box-shadow: 0 0 0 3px var(--focus-ring);
+  box-shadow: 0 0 0 2px var(--focus-ring);
 }
 
 .input-unit-group .unit-prefix {
