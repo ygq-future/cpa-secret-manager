@@ -145,7 +145,6 @@ const shellModals = `  </main>
               <div class="input-unit-group">
                 <span class="unit-prefix">$</span>
                 <input id="key-form-quota-cost-val" class="unit-input" type="number" min="0.001" step="any" inputmode="decimal" placeholder="0.000">
-                <span class="unit-suffix">/ M</span>
               </div>
             </div>
           </div>
