@@ -39,14 +39,17 @@ type pricingTestServer struct {
 	*httptest.Server
 	fail      atomic.Bool
 	malformed atomic.Bool
-	etag      string
+	etag      atomic.Value
+	catalog   atomic.Value
 	requests  atomic.Int32
 	notMod    atomic.Int32
 }
 
 func newPricingTestServer(t *testing.T) *pricingTestServer {
 	t.Helper()
-	server := &pricingTestServer{etag: `"catalog-1"`}
+	server := &pricingTestServer{}
+	server.etag.Store(`"catalog-1"`)
+	server.catalog.Store(pricingCatalog)
 	server.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		server.requests.Add(1)
 		if server.fail.Load() {
@@ -58,17 +61,25 @@ func newPricingTestServer(t *testing.T) *pricingTestServer {
 			_, _ = w.Write([]byte(`{"openai":`))
 			return
 		}
-		if r.Header.Get("If-None-Match") == server.etag {
+		etag := server.etag.Load().(string)
+		if r.Header.Get("If-None-Match") == etag {
 			server.notMod.Add(1)
 			w.WriteHeader(http.StatusNotModified)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("ETag", server.etag)
-		_, _ = w.Write([]byte(pricingCatalog))
+		w.Header().Set("ETag", etag)
+		_, _ = w.Write([]byte(server.catalog.Load().(string)))
 	}))
 	t.Cleanup(server.Close)
 	return server
+}
+
+// setCatalog swaps the served catalog and its ETag, so a test can model an
+// upstream listing disappearing between two refreshes.
+func (s *pricingTestServer) setCatalog(etag, catalog string) {
+	s.etag.Store(etag)
+	s.catalog.Store(catalog)
 }
 
 func TestRefreshPricing_StreamsCachesAndReusesETag(t *testing.T) {
@@ -210,6 +221,94 @@ func TestRefreshPricing_MergePreservesOtherModels(t *testing.T) {
 	}
 	if !seen["gpt-4o"] || !seen["claude-sonnet-4-5"] {
 		t.Fatalf("known models = %#v, want the union of both refreshes", known)
+	}
+}
+
+func TestRefreshPricing_ReplacesVanishedOffers(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	server := newPricingTestServer(t)
+	rt := registerRuntimeWith(t, Options{
+		StatePath:  statePath,
+		PricingURL: server.URL,
+		HTTPClient: server.Client(),
+	})
+
+	body := []byte(`{"models":["gpt-4o"],"merge":true}`)
+	if status, raw := managementCall(t, rt, http.MethodPost, management.RoutePricingRefresh, body); status != http.StatusOK {
+		t.Fatalf("first refresh status = %d: %s", status, raw)
+	}
+	cache, err := state.LoadPrices(PricesPath(statePath))
+	if err != nil {
+		t.Fatalf("load price cache: %v", err)
+	}
+	before := cache.Suggestions()["gpt-4o"]
+	if len(before.Offers) != 3 {
+		t.Fatalf("initial offers = %+v, want the three catalog listings", before.Offers)
+	}
+
+	// The reseller listing disappears upstream. A refresh of the same model must
+	// replace the cached offer list instead of appending to it.
+	server.setCatalog(`"catalog-2"`, `{
+	  "openai": {
+	    "models": {
+	      "gpt-4o": {"id": "gpt-4o", "cost": {"input": 2.5, "output": 10, "cache_read": 1.25}}
+	    }
+	  }
+	}`)
+	if status, raw := managementCall(t, rt, http.MethodPost, management.RoutePricingRefresh, body); status != http.StatusOK {
+		t.Fatalf("second refresh status = %d: %s", status, raw)
+	}
+	cache, err = state.LoadPrices(PricesPath(statePath))
+	if err != nil {
+		t.Fatalf("reload price cache: %v", err)
+	}
+	after := cache.Suggestions()["gpt-4o"]
+	if len(after.Offers) != 1 || after.Offers[0].Provider != "openai" || after.Providers != 1 {
+		t.Fatalf("offers after the listing vanished = %+v, want only the remaining OpenAI offer", after.Offers)
+	}
+}
+
+func TestRefreshPricing_FullRefreshPrunesDroppedModels(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	server := newPricingTestServer(t)
+	rt := registerRuntimeWith(t, Options{
+		StatePath:  statePath,
+		PricingURL: server.URL,
+		HTTPClient: server.Client(),
+	})
+
+	if status, raw := managementCall(t, rt, http.MethodPost, management.RoutePricingRefresh, []byte(`{"models":["gpt-4o","claude-sonnet-4-5"]}`)); status != http.StatusOK {
+		t.Fatalf("first refresh status = %d: %s", status, raw)
+	}
+
+	// The host model list shrank, but the upstream catalog is unchanged. A full
+	// refresh must still drop the model that is no longer requested.
+	status, raw := managementCall(t, rt, http.MethodPost, management.RoutePricingRefresh, []byte(`{"models":["gpt-4o"]}`))
+	if status != http.StatusOK {
+		t.Fatalf("second refresh status = %d: %s", status, raw)
+	}
+	var result management.PricingResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatalf("decode second refresh: %v", err)
+	}
+	if !result.NotModified || result.Matched != 1 {
+		t.Fatalf("second refresh = %+v, want not_modified with one match", result)
+	}
+
+	cache, err := state.LoadPrices(PricesPath(statePath))
+	if err != nil {
+		t.Fatalf("load price cache: %v", err)
+	}
+	suggestions := cache.Suggestions()
+	if len(suggestions) != 1 {
+		t.Fatalf("cached suggestions = %+v, want only the requested model", suggestions)
+	}
+	if _, ok := suggestions["gpt-4o"]; !ok {
+		t.Fatal("the requested model was dropped")
+	}
+	known := cache.Known()
+	if len(known) != 1 || known[0] != "gpt-4o" {
+		t.Fatalf("known models = %#v, want only gpt-4o", known)
 	}
 }
 

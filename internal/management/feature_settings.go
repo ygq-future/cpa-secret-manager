@@ -386,7 +386,10 @@ var settingsFeature = pageFeature{
 .pricing-offer-sep {
   color: var(--text-tertiary);
 }
-.pricing-offer-best {
+.pricing-offer-name {
+  color: var(--text-primary);
+}
+.pricing-offer-name.is-best {
   color: var(--accent-green-text);
   font-weight: 650;
 }
@@ -916,13 +919,42 @@ function pricingOfferPrices(offer) {
     ' / $' + formatPricingValue(offer.cache);
 }
 
+function pricingOfferPrice(offer) {
+  return {
+    input: roundPricingValue(offer.input),
+    output: roundPricingValue(offer.output),
+    cache: roundPricingValue(offer.cache)
+  };
+}
+
+function pricingOfferDistance(left, right) {
+  return Math.abs(Number(left && left.input || 0) - Number(right && right.input || 0)) +
+    Math.abs(Number(left && left.output || 0) - Number(right && right.output || 0)) +
+    Math.abs(Number(left && left.cache || 0) - Number(right && right.cache || 0));
+}
+
+// nearestPricingOffer picks the remaining offer closest to the configured
+// price, so a disappeared applied offer degrades to the least surprising quote.
+function nearestPricingOffer(offers, configured) {
+  var nearest = null;
+  var distance = Infinity;
+  for (var index = 0; index < offers.length; index++) {
+    var candidate = pricingOfferDistance(configured, offers[index]);
+    if (candidate < distance) {
+      nearest = offers[index];
+      distance = candidate;
+    }
+  }
+  return nearest;
+}
+
 function pricingPriceParts(offer) {
   return [
-    { text: t('settings.tag_input') + ' $' + formatPricingValue(offer.input), className: 'pricing-offer-price is-in' },
+    { text: '$' + formatPricingValue(offer.input), className: 'pricing-offer-price is-in' },
     { text: ' / ', className: 'pricing-offer-sep' },
-    { text: t('settings.tag_output') + ' $' + formatPricingValue(offer.output), className: 'pricing-offer-price is-out' },
+    { text: '$' + formatPricingValue(offer.output), className: 'pricing-offer-price is-out' },
     { text: ' / ', className: 'pricing-offer-sep' },
-    { text: t('settings.tag_cache') + ' $' + formatPricingValue(offer.cache), className: 'pricing-offer-price is-cache' }
+    { text: '$' + formatPricingValue(offer.cache), className: 'pricing-offer-price is-cache' }
   ];
 }
 
@@ -941,21 +973,19 @@ function buildPricingOfferOptions(offers, configured) {
     var provider = offer.provider || '—';
     var prices = pricingOfferPrices(offer);
     var status = pricingOfferStatus(offer, configured);
-    var nameParts = [];
-    if (index === 0) {
-      nameParts.push({ text: t('settings.pricing_best') + ' · ', className: 'pricing-offer-best' });
-    }
-    nameParts.push({ text: provider, className: 'pricing-offer-source' });
+    var nameClass = index === 0 ? 'pricing-offer-name is-best' : 'pricing-offer-name';
+    var nameParts = [
+      { text: provider, className: index === 0 ? nameClass : 'pricing-offer-source' }
+    ];
     if (offer.model) {
-      nameParts.push({ text: ' · ' + offer.model, className: 'pricing-offer-model' });
+      nameParts.push({ text: ' · ' + offer.model, className: nameClass });
     }
     var triggerParts = pricingPriceParts(offer);
     triggerParts.push({ text: ' · ' + provider, className: 'pricing-offer-source' });
     triggerParts.push({ text: ' · ' + status.text, className: 'pricing-offer-status ' + status.className });
     return {
       value: String(index),
-      label: (index === 0 ? t('settings.pricing_best') + ' · ' : '') + provider +
-        (offer.model ? ' · ' + offer.model : '') + ' · ' + prices,
+      label: provider + (offer.model ? ' · ' + offer.model : '') + ' · ' + prices + ' · ' + status.text,
       triggerLabel: prices + ' · ' + provider + ' · ' + status.text,
       triggerParts: triggerParts,
       labelParts: nameParts,
@@ -1063,8 +1093,11 @@ function roundPricingValue(value) {
 }
 
 // mergePricingSuggestions applies the synced reference prices on top of the
-// saved prices. It never deletes a saved model: a model absent from the
-// reference (for example, removed upstream) is retained unchanged.
+// saved prices. A configured price that still matches any listed offer is kept,
+// so an applied offer that vanished upstream falls back to a same-price offer;
+// otherwise the nearest remaining offer is applied. When a model has no offer
+// left, the saved price stays untouched and the page shows no applied offer. A
+// saved model absent from the reference is retained unchanged.
 function mergePricingSuggestions(suggestions) {
   var current = (state.settings && state.settings.model_prices) || {};
   var next = {};
@@ -1078,21 +1111,31 @@ function mergePricingSuggestions(suggestions) {
   var models = (suggestions && suggestions.models) || {};
   for (var model in models) {
     var suggestion = models[model];
-    var price = {
-      input: roundPricingValue(suggestion.input),
-      output: roundPricingValue(suggestion.output),
-      cache: roundPricingValue(suggestion.cache)
-    };
+    var offers = suggestion && Array.isArray(suggestion.offers)
+      ? suggestion.offers
+      : pricingOffersFor(suggestion);
     var existing = next[model];
     if (!existing) {
-      next[model] = price;
+      if (offers.length === 0) {
+        continue;
+      }
+      next[model] = pricingOfferPrice(offers[0]);
       added += 1;
-    } else if (pricingValuesEqual(existing, price)) {
-      unchanged += 1;
-    } else {
-      next[model] = price;
-      updated += 1;
+      continue;
     }
+    var applied = false;
+    for (var index = 0; index < offers.length; index++) {
+      if (pricingValuesEqual(existing, offers[index])) {
+        applied = true;
+        break;
+      }
+    }
+    if (applied || offers.length === 0) {
+      unchanged += 1;
+      continue;
+    }
+    next[model] = pricingOfferPrice(nearestPricingOffer(offers, existing));
+    updated += 1;
   }
   return { prices: next, added: added, updated: updated, unchanged: unchanged };
 }

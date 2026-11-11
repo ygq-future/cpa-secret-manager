@@ -1780,7 +1780,6 @@ func TestPage_PricingSuggestionContract(t *testing.T) {
 		"merge: true",
 		"saveModelPrices(merge.prices",
 		"refreshCacheFiles()",
-		"settings.pricing_best",
 		"settings.pricing_pending_update",
 		"settings.pricing_pending_add",
 		"var path = force ? PRICING_REFRESH_PATH : PRICING_PATH;",
@@ -1806,13 +1805,19 @@ func TestPage_PricingSuggestionContract(t *testing.T) {
 		}
 	}
 
-	// Syncing merges reference prices into the saved set: identical prices are
-	// ignored, changed prices are updated, missing models are added, and saved
-	// models absent from the reference are retained.
+	// Syncing merges reference prices into the saved set: an applied price that
+	// still matches a listed offer is kept, a vanished applied offer falls back
+	// to the nearest remaining offer, a model with no offer keeps its price, and
+	// saved models absent from the reference are retained.
 	mergeBlock := extractJSFunction(script, "mergePricingSuggestions")
 	equalBlock := extractJSFunction(script, "pricingValuesEqual")
 	roundBlock := extractJSFunction(script, "roundPricingValue")
-	if mergeBlock == "" || equalBlock == "" || roundBlock == "" {
+	offersBlock := extractJSFunction(script, "pricingOffersFor")
+	offerPriceBlock := extractJSFunction(script, "pricingOfferPrice")
+	offerDistanceBlock := extractJSFunction(script, "pricingOfferDistance")
+	nearestBlock := extractJSFunction(script, "nearestPricingOffer")
+	if mergeBlock == "" || equalBlock == "" || roundBlock == "" || offersBlock == "" ||
+		offerPriceBlock == "" || offerDistanceBlock == "" || nearestBlock == "" {
 		t.Fatal("cannot find pricing merge helpers in settings script")
 	}
 
@@ -1824,17 +1829,39 @@ func TestPage_PricingSuggestionContract(t *testing.T) {
 var state = { settings: { model_prices: {
   "gpt-4o": { input: 2.5, output: 10, cache: 1.25 },
   "keep-me": { input: 1, output: 2, cache: 0.5 },
-  "changed": { input: 1, output: 1, cache: 0 }
+  "changed": { input: 1, output: 1, cache: 0 },
+  "same": { input: 3, output: 15, cache: 0.3 },
+  "nearest": { input: 1, output: 2, cache: 0.5 },
+  "orphan": { input: 7, output: 8, cache: 0.9 }
 } } };
 ` + roundBlock + `
 ` + equalBlock + `
+` + offersBlock + `
+` + offerPriceBlock + `
+` + offerDistanceBlock + `
+` + nearestBlock + `
 ` + mergeBlock + `
 var result = mergePricingSuggestions({ models: {
-  "gpt-4o": { input: 2.5, output: 10, cache: 1.25 },
-  "changed": { input: 2, output: 8, cache: 1 },
-  "added": { input: 0.15, output: 0.6, cache: 0.075 }
+  "gpt-4o": { input: 2.5, output: 10, cache: 1.25, offers: [
+    { provider: 'openai', input: 2.5, output: 10, cache: 1.25 }
+  ] },
+  "changed": { input: 2, output: 8, cache: 1, offers: [
+    { provider: 'openai', input: 2, output: 8, cache: 1 }
+  ] },
+  "added": { input: 0.15, output: 0.6, cache: 0.075, offers: [
+    { provider: 'openai', input: 0.15, output: 0.6, cache: 0.075 }
+  ] },
+  "same": { offers: [
+    { provider: 'best', input: 4, output: 20, cache: 0.2 },
+    { provider: 'same-price', input: 3, output: 15, cache: 0.3 }
+  ] },
+  "nearest": { offers: [
+    { provider: 'far', input: 3, output: 4, cache: 1 },
+    { provider: 'near', input: 1.5, output: 2.5, cache: 0.6 }
+  ] },
+  "orphan": { offers: [] }
 }});
-if (result.added !== 1 || result.updated !== 1 || result.unchanged !== 1) {
+if (result.added !== 1 || result.updated !== 2 || result.unchanged !== 3) {
   console.error('merge counters:', JSON.stringify(result));
   process.exit(1);
 }
@@ -1852,6 +1879,19 @@ if (result.prices['added'].input !== 0.15 || result.prices['added'].cache !== 0.
 }
 if (result.prices['gpt-4o'].input !== 2.5) {
   console.error('an identical price was not preserved:', JSON.stringify(result.prices['gpt-4o']));
+  process.exit(1);
+}
+if (result.prices['same'].input !== 3 || result.prices['same'].cache !== 0.3) {
+  console.error('a same-price offer did not preserve the applied price:', JSON.stringify(result.prices['same']));
+  process.exit(1);
+}
+if (result.prices['nearest'].input !== 1.5 || result.prices['nearest'].output !== 2.5 ||
+    result.prices['nearest'].cache !== 0.6) {
+  console.error('the nearest remaining offer was not applied:', JSON.stringify(result.prices['nearest']));
+  process.exit(1);
+}
+if (result.prices['orphan'].input !== 7 || result.prices['orphan'].cache !== 0.9) {
+  console.error('a model without offers lost its saved price:', JSON.stringify(result.prices['orphan']));
   process.exit(1);
 }
 `
@@ -1892,8 +1932,24 @@ if (options[0].value !== '0' || options[0].configured !== true) {
   console.error('the first offer should be selected and marked as applied:', JSON.stringify(options[0]));
   process.exit(1);
 }
-if (options[0].label.indexOf('settings.pricing_best') !== 0) {
-  console.error('the first offer is not tagged as the best match:', options[0].label);
+if (options[0].labelParts[0].className.indexOf('is-best') < 0) {
+  console.error('the first offer is not marked as the best match:', JSON.stringify(options[0].labelParts));
+  process.exit(1);
+}
+if (options[0].label.indexOf('Best match') >= 0 || options[0].labelParts.some(function (part) {
+  return part.text.indexOf('Best match') >= 0;
+})) {
+  console.error('the best-match prefix label should not be rendered:', options[0].label);
+  process.exit(1);
+}
+if (options[0].trailingParts[0].text !== '$0.300' ||
+    options[0].trailingParts[2].text !== '$2.500' ||
+    options[0].trailingParts[4].text !== '$0.075') {
+  console.error('offer prices should be label-free:', JSON.stringify(options[0].trailingParts));
+  process.exit(1);
+}
+if (options[0].label.indexOf('google · gemini-3.5-flash · $0.300 / $2.500 / $0.075') < 0) {
+  console.error('the hover label is missing the full offer information:', options[0].label);
   process.exit(1);
 }
 if (options[0].triggerLabel.indexOf('settings.pricing_applied') < 0) {

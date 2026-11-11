@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"strings"
 	"time"
@@ -97,15 +98,29 @@ func (r *Runtime) RefreshPricing(ctx context.Context, models []string, merge boo
 
 	now := r.clock.Now().UTC()
 	if notModified {
-		store.Replace(pricing.Source, formatTimestamp(now), etag, store.Suggestions(), known)
+		cached := store.Suggestions()
+		cachedKnown := known
+		if !merge {
+			// A full refresh is authoritative for the requested model list even
+			// when the catalog is unchanged: drop cached models that are no
+			// longer requested so the cache cannot grow across host model changes.
+			pruned := make(map[string]pricing.Suggestion, len(normalized))
+			for _, name := range normalized {
+				key := pricing.NormalizeModel(name)
+				if suggestion, ok := cached[key]; ok {
+					pruned[key] = suggestion
+				}
+			}
+			cached = pruned
+			cachedKnown = normalized
+		}
+		store.Replace(pricing.Source, formatTimestamp(now), etag, cached, cachedKnown)
 	} else if merge {
 		cached := store.Suggestions()
 		for _, name := range normalized {
 			delete(cached, pricing.NormalizeModel(name))
 		}
-		for key, suggestion := range suggestions {
-			cached[key] = suggestion
-		}
+		maps.Copy(cached, suggestions)
 		mergedKnown := append(append([]string(nil), known...), normalized...)
 		store.Replace(pricing.Source, formatTimestamp(now), newETag, cached, mergedKnown)
 	} else {

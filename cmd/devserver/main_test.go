@@ -302,7 +302,7 @@ func TestDevHost_UsageInjectionAttributesByKey(t *testing.T) {
 		t.Fatal("failed to prepare the key list")
 	}
 	if status, body := call(t, server, http.MethodPost,
-		"/dev/simulate-usage?key=sk-manual&model=gpt-5.6&count=2&input=10&output=20&total=30", "", true); status != http.StatusOK {
+		"/dev/simulate-usage?key=sk-manual&model=gpt-6-luna&count=2&input=10&output=20&total=30", "", true); status != http.StatusOK {
 		t.Fatalf("simulate status = %d: %s", status, body)
 	}
 
@@ -315,8 +315,8 @@ func TestDevHost_UsageInjectionAttributesByKey(t *testing.T) {
 	if usage == nil || usage.Requests != 2 || usage.Input != 20 || usage.Output != 40 || usage.Total != 60 {
 		t.Fatalf("usage = %+v, want 2 requests and doubled counters", usage)
 	}
-	if usage.Models[0].Model != "gpt-5.6" {
-		t.Fatalf("models = %+v, want gpt-5.6", usage.Models)
+	if usage.Models[0].Model != "gpt-6-luna" {
+		t.Fatalf("models = %+v, want gpt-6-luna", usage.Models)
 	}
 	if resolved.Items[0].Hash != remarks.Index("sk-manual") {
 		t.Fatalf("hash = %q, want the digest of the seeded key", resolved.Items[0].Hash)
@@ -420,7 +420,7 @@ func TestDevHost_FailureInjectionAndQuery(t *testing.T) {
 	}
 
 	// Simulate a failure with status_code=429 and error_body
-	url := "/dev/simulate-usage?key=sk-failed-key&model=gpt-5.6&failed=true&status_code=429&error_body=rate+limit+exceeded"
+	url := "/dev/simulate-usage?key=sk-failed-key&model=gpt-6-luna&failed=true&status_code=429&error_body=rate+limit+exceeded"
 	if status, body := call(t, server, http.MethodPost, url, "", true); status != http.StatusOK {
 		t.Fatalf("simulate failure status = %d: %s", status, body)
 	}
@@ -438,7 +438,7 @@ func TestDevHost_FailureInjectionAndQuery(t *testing.T) {
 	if res.Items[0].StatusCode != 429 || res.Items[0].Message != "rate limit exceeded" {
 		t.Fatalf("unexpected failure item: %+v", res.Items[0])
 	}
-	if res.Items[0].AuthID != "dev-gpt-5.6" {
+	if res.Items[0].AuthID != "dev-"+devUsageModels[0] {
 		t.Fatalf("unexpected failure auth id: %+v", res.Items[0])
 	}
 }
@@ -495,7 +495,7 @@ func TestDevHost_QuotaEnforcementAndInterception(t *testing.T) {
 
 	// 5. Inject usage: 150 tokens
 	if status, body := call(t, server, http.MethodPost,
-		"/dev/simulate-usage?key="+apiKey+"&model=gpt-5.6&count=1&total=150", "", true); status != http.StatusOK {
+		"/dev/simulate-usage?key="+apiKey+"&model=gpt-6-luna&count=1&total=150", "", true); status != http.StatusOK {
 		t.Fatalf("simulate usage status = %d: %s", status, body)
 	}
 
@@ -571,7 +571,7 @@ func TestDevHost_V1ModelsAndModelRestrictions(t *testing.T) {
 		t.Fatalf("GET /v1/models status = %d", status)
 	}
 
-	// 2. Prepare key with allowed_models = ["gpt-5.6"]
+	// 2. Prepare key with allowed_models = ["gpt-6-luna"]
 	apiKey := "sk-model-restrict"
 	keyHash := remarks.Index(apiKey)
 	_, _ = call(t, server, http.MethodPut, "/v0/management/api-keys", `["`+apiKey+`"]`, true)
@@ -588,13 +588,13 @@ func TestDevHost_V1ModelsAndModelRestrictions(t *testing.T) {
 		t.Fatalf("GET /models with client key status = %d: %s", authedStatus, authedBody)
 	}
 
-	quotaPayload := fmt.Sprintf(`{"hash":%q,"enabled":true,"strategy":"token","window":"daily","limit_value":10000,"allowed_models":["gpt-5.6"]}`, keyHash)
+	quotaPayload := fmt.Sprintf(`{"hash":%q,"enabled":true,"strategy":"token","window":"daily","limit_value":10000,"allowed_models":["gpt-6-luna"]}`, keyHash)
 	if status, body := call(t, server, http.MethodPut, "/v0/management/plugins/cpa-secret-manager/quota", quotaPayload, true); status != http.StatusOK {
 		t.Fatalf("set quota status = %d: %s", status, body)
 	}
 
 	// 3. Request allowed model -> permitted
-	status, body = call(t, server, http.MethodPost, "/dev/simulate-intercept?key="+apiKey+"&model=gpt-5.6", "", true)
+	status, body = call(t, server, http.MethodPost, "/dev/simulate-intercept?key="+apiKey+"&model=gpt-6-luna", "", true)
 	if status != http.StatusOK {
 		t.Fatalf("status = %d: %s", status, body)
 	}
@@ -653,7 +653,7 @@ func TestDevHost_BackdatedInjectionSplitsByDate(t *testing.T) {
 
 	target, _ := utcDay(-2)
 	target = target.Add(9 * time.Hour)
-	path := "/dev/simulate-usage?key=sk-backdated&model=gpt-5.6&failed=true&status_code=429&at=" + url.QueryEscape(target.Format(time.RFC3339))
+	path := "/dev/simulate-usage?key=sk-backdated&model=gpt-6-luna&failed=true&status_code=429&at=" + url.QueryEscape(target.Format(time.RFC3339))
 	if status, body := call(t, server, http.MethodPost, path, "", true); status != http.StatusOK {
 		t.Fatalf("backdated simulate status = %d: %s", status, body)
 	}

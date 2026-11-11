@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"cpa-secret-manager/internal/management"
+	"cpa-secret-manager/internal/quota"
 	pluginruntime "cpa-secret-manager/internal/runtime"
 	"cpa-secret-manager/internal/version"
 )
@@ -45,6 +46,41 @@ type devHostOptions struct {
 	Latency       time.Duration
 }
 
+// devCatalog is the simulated host's model catalog with the demo prices. The
+// model list and the seeded pricing map both derive from it, so the two cannot
+// drift apart.
+var devCatalog = []struct {
+	name  string
+	price quota.ModelPrice
+}{
+	{"claude-opus-4-6-thinking", quota.ModelPrice{Input: 5, Output: 25, Cache: 0.5}},
+	{"claude-opus-5-5-high", quota.ModelPrice{Input: 4, Output: 20, Cache: 0.2}},
+	{"claude-sonnet-4-6", quota.ModelPrice{Input: 3, Output: 15, Cache: 0.3}},
+	{"claude-sonnet-5-5-high", quota.ModelPrice{Input: 2, Output: 10, Cache: 0.1}},
+	{"gemini-3-flash", quota.ModelPrice{Input: 0.5, Output: 3, Cache: 0.05}},
+	{"gemini-3.1-flash-image", quota.ModelPrice{Input: 0.5, Output: 60, Cache: 0}},
+	{"gemini-3.1-flash-lite", quota.ModelPrice{Input: 0.25, Output: 1.5, Cache: 0.025}},
+	{"gemini-3.5-flash-lite", quota.ModelPrice{Input: 0.3, Output: 2.5, Cache: 0.03}},
+	{"gemini-3.8-flash", quota.ModelPrice{Input: 0.75, Output: 3.75, Cache: 0.07}},
+	{"gemini-3.8-flash-high", quota.ModelPrice{Input: 0.75, Output: 3.75, Cache: 0.075}},
+	{"gemini-4-argon", quota.ModelPrice{Input: 2, Output: 10, Cache: 0.1}},
+	{"gemini-4-argon-high", quota.ModelPrice{Input: 2, Output: 10, Cache: 0.1}},
+	{"gemini-4-carbon", quota.ModelPrice{Input: 2, Output: 10, Cache: 0.1}},
+	{"gemini-omni-1.2-flash", quota.ModelPrice{Input: 1.5, Output: 9, Cache: 0}},
+	{"gpt-5.6-luna", quota.ModelPrice{Input: 0.2, Output: 1.2, Cache: 0.02}},
+	{"gpt-5.6-terra", quota.ModelPrice{Input: 2, Output: 12, Cache: 0.2}},
+	{"gpt-6-chat-thinking", quota.ModelPrice{Input: 0.1, Output: 0.5, Cache: 0.01}},
+	{"gpt-6-luna", quota.ModelPrice{Input: 0.1, Output: 0.5, Cache: 0.01}},
+}
+
+// devUsageModels is the three-model subset the seed endpoints spread usage
+// across, one per provider family.
+var devUsageModels = []string{
+	"gpt-6-luna",
+	"claude-opus-4-6-thinking",
+	"gemini-3.8-flash",
+}
+
 func newDevHost(options devHostOptions) (*devHost, error) {
 	keys, err := loadKeyList(options.KeysPath)
 	if err != nil {
@@ -63,7 +99,27 @@ func newDevHost(options devHostOptions) (*devHost, error) {
 	if err := host.register(); err != nil {
 		return nil, err
 	}
+	if err := host.seedDefaultPrices(); err != nil {
+		return nil, err
+	}
 	return host, nil
+}
+
+// seedDefaultPrices fills an empty simulator state with the demo catalog's
+// prices; an existing pricing setup is left untouched.
+func (h *devHost) seedDefaultPrices() error {
+	settings, err := h.runtime.Settings(context.Background())
+	if err != nil {
+		return err
+	}
+	if len(settings.ModelPrices) > 0 {
+		return nil
+	}
+	prices := make(map[string]quota.ModelPrice, len(devCatalog))
+	for _, entry := range devCatalog {
+		prices[entry.name] = entry.price
+	}
+	return h.runtime.UpdateSettings(context.Background(), management.SettingsUpdate{ModelPrices: &prices})
 }
 
 // register performs the host handshake against the production runtime.
@@ -345,7 +401,7 @@ func (h *devHost) handleSimulateUsage(w http.ResponseWriter, r *http.Request) {
 	}
 	model := query.Get("model")
 	if model == "" {
-		model = "gpt-5.6"
+		model = devUsageModels[0]
 	}
 	count := intQuery(query.Get("count"), 1)
 	if count < 1 || count > 1000 {
@@ -503,7 +559,7 @@ func (h *devHost) handleSeedHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	models := []string{"gpt-5.6", "claude-sonnet", "gemini-3-flash"}
+	models := devUsageModels
 	base := time.Now()
 	records := 0
 	failures := 0
@@ -583,7 +639,10 @@ func (h *devHost) resetState() error {
 		}
 	}
 	h.runtime = pluginruntime.New(pluginruntime.Options{StatePath: h.statePath, PricingURL: h.pricingURL})
-	return h.register()
+	if err := h.register(); err != nil {
+		return err
+	}
+	return h.seedDefaultPrices()
 }
 
 func (h *devHost) handleSimulateIntercept(w http.ResponseWriter, r *http.Request) {
@@ -596,7 +655,7 @@ func (h *devHost) handleSimulateIntercept(w http.ResponseWriter, r *http.Request
 	}
 	model := r.URL.Query().Get("model")
 	if model == "" {
-		model = "gpt-5.6"
+		model = devUsageModels[0]
 	}
 	reqPayload, _ := json.Marshal(map[string]any{
 		"headers": map[string][]string{
@@ -650,7 +709,7 @@ func (h *devHost) handleSeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	models := []string{"gpt-5.6", "claude-sonnet", "gemini-3-flash"}
+	models := devUsageModels
 	for index, key := range seeded {
 		remark := fmt.Sprintf("dev key %d", index+1)
 		if err := h.runtime.SetRemark(r.Context(), key, remark); err != nil {
@@ -804,29 +863,13 @@ func (h *devHost) handleV1Models(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	models := []string{
-		"gpt-5.6",
-		"gpt-5.5",
-		"gpt-4o",
-		"gpt-4o-mini",
-		"o1",
-		"o3-mini",
-		"claude-3-7-sonnet",
-		"claude-3-5-sonnet",
-		"claude-3-5-haiku",
-		"gemini-2.5-pro",
-		"gemini-2.5-flash",
-		"deepseek-r1",
-		"deepseek-chat",
-		"qwen-max",
-	}
 	type modelItem struct {
 		ID     string `json:"id"`
 		Object string `json:"object"`
 	}
-	list := make([]modelItem, 0, len(models))
-	for _, m := range models {
-		list = append(list, modelItem{ID: m, Object: "model"})
+	list := make([]modelItem, 0, len(devCatalog))
+	for _, entry := range devCatalog {
+		list = append(list, modelItem{ID: entry.name, Object: "model"})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"object": "list",

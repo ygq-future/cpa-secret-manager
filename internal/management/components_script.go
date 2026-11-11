@@ -217,6 +217,11 @@ function mountSelect(config) {
       label.textContent = '';
       label.classList.remove('is-placeholder');
     }
+    if (!config.titleKey) {
+      trigger.title = hasValue && (options[index].label !== undefined || options[index].i18n)
+        ? optionLabel(options[index])
+        : '';
+    }
     var showClear = Boolean(clearAction && hasValue);
     container.classList.toggle('has-clear', showClear);
     if (clearAction) {
@@ -260,6 +265,9 @@ function mountSelect(config) {
           node.setAttribute('aria-disabled', 'true');
         }
         node.setAttribute('data-value', option.value);
+        if (option.label !== undefined || option.i18n) {
+          node.title = optionLabel(option);
+        }
         var labelSpan = document.createElement('span');
         labelSpan.className = 'select-option-label';
         if (option.labelParts && option.labelParts.length) {
