@@ -509,6 +509,12 @@ func TestPage_KeyExpiryContract(t *testing.T) {
 	if !strings.Contains(script, "function formatExpiryStamp") {
 		t.Fatal("the expiry badge should render the exact local minute, not a coarse countdown")
 	}
+	if !strings.Contains(script, "padZero(at.getFullYear() % 100)") {
+		t.Fatal("the expiry tag should keep a two-digit year so the stamp stays narrow")
+	}
+	if !strings.Contains(script, "iconMarkup('expiry'") {
+		t.Fatal("the expiry tag should be led by the hourglass glyph, not the clock that marks quota resets")
+	}
 	if !strings.Contains(script, "addEventListener('wheel'") || !strings.Contains(script, "time-unit") {
 		t.Fatal("the time steppers should expose hour/minute units and adjust on mouse wheel")
 	}
@@ -852,7 +858,7 @@ func TestPage_HasNoInlineStyles(t *testing.T) {
 // TestPage_SharesOneGlyphTable keeps every inline SVG resolved from pageIcons,
 // so markup and runtime icons cannot drift apart.
 func TestPage_SharesOneGlyphTable(t *testing.T) {
-	for _, glyph := range []string{"refresh", "search", "calendar", "unit", "plus", "close", "copy", "check", "edit", "trash", "chevron", "prev", "next", "quota", "clock", "warning", "github", "key", "sliders", "help"} {
+	for _, glyph := range []string{"refresh", "search", "calendar", "unit", "plus", "close", "copy", "check", "edit", "trash", "chevron", "prev", "next", "quota", "clock", "expiry", "warning", "github", "key", "sliders", "help"} {
 		if _, ok := pageIcons[glyph]; !ok {
 			t.Fatalf("glyph %s is missing from the shared icon table", glyph)
 		}

@@ -167,7 +167,7 @@ The plugin registers **static Web UI resources** and **dynamic management routes
     - **Keys & Remarks Dashboard**: Masked by default, with one-click copy, real-time key/remark filtering, and multi-unit (K / M / B) token scaling;
     - **Range Dashboard**: One date range drives the stat cards, per-key columns, model breakdown, and failure log, including each key's last-seen time;
     - **Quota Rule Editor**: Configure a token limit, window period, and model allowlist per key; exceeding either boundary blocks the request;
-    - **Expiry Time**: Pick a local-time expiration instant in the date/time picker (including a “Now” shortcut and 1 hour / 1 day / 7 days / 30 days presets); the list shows the exact local minute (e.g. `2026/11/14 10:40`). At expiry requests are rejected and the page removes the key from the host list on its next refresh or poll;
+    - **Expiry Time**: Pick a local-time expiration instant in the date/time picker (including a “Now” shortcut and 1 hour / 1 day / 7 days / 30 days presets); the list shows the exact local minute (e.g. `26/11/14 10:40`). At expiry requests are rejected and the page removes the key from the host list on its next refresh or poll;
     - **Per-Model Breakdown**: Expandable inspection of input, output, reasoning, and cache token distribution across models;
     - **Pure Native Visuals**: Zero external CDNs, dynamically following CPA themes (light, white, dark, and custom themes);
     - **Interaction Tolerance**: Two-phase mousedown/click verification prevents modal backdrop dismissals when dragging text selections across borders.

@@ -930,7 +930,9 @@ function buildQuotaResetBadge(quota) {
 }
 
 // formatExpiryStamp renders the stored instant as the same local minute the
-// picker shows, so the row never hides precision behind a coarse countdown.
+// picker shows, so the row never hides precision behind a coarse countdown. The
+// year keeps two digits: a key lifetime never leaves the current century, and
+// the shortened form keeps the tag narrow.
 function formatExpiryStamp(value) {
   if (!value) {
     return '';
@@ -939,18 +941,19 @@ function formatExpiryStamp(value) {
   if (isNaN(at.getTime())) {
     return '';
   }
-  return at.getFullYear() + '/' + padZero(at.getMonth() + 1) + '/' + padZero(at.getDate()) + ' ' + padZero(at.getHours()) + ':' + padZero(at.getMinutes());
+  return padZero(at.getFullYear() % 100) + '/' + padZero(at.getMonth() + 1) + '/' + padZero(at.getDate()) + ' ' + padZero(at.getHours()) + ':' + padZero(at.getMinutes());
 }
 
-// buildExpiryBadge renders the expiration tag: a clock glyph plus the exact
-// local minute; the tooltip repeats the instant for a hover read. The red state
-// only shows for the frame before the sweep removes the key from the host list.
+// buildExpiryBadge renders the expiration tag: an hourglass glyph (a lifetime
+// draining, unlike the clock that marks quota resets) plus the exact local
+// minute; the tooltip repeats the instant for a hover read. The red state only
+// shows for the frame before the sweep removes the key from the host list.
 function buildExpiryBadge(entry) {
   var stamp = formatExpiryStamp(entry.expires_at);
   var badge = document.createElement('span');
   badge.className = 'badge-expiry' + (entry.expired ? ' is-expired' : '');
   badge.title = tf('keys.expiry_title', { time: stamp });
-  badge.appendChild(iconMarkup('clock', ''));
+  badge.appendChild(iconMarkup('expiry', ''));
   var text = document.createElement('span');
   text.textContent = entry.expired ? t('keys.expiry_expired') : stamp;
   badge.appendChild(text);
