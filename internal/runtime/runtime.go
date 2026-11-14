@@ -301,16 +301,21 @@ func (r *Runtime) Failures(_ context.Context, req management.FailuresRequest) (m
 	start, _ := parseInstant(req.Start)
 	end, _ := parseInstant(req.End)
 
-	if strings.TrimSpace(req.Hash) != "" {
-		return management.FailuresResult{
-			Items: errorsStore.Query(req.Hash, start, end),
-		}, nil
+	if hash := strings.TrimSpace(req.Hash); hash != "" {
+		entries := errorsStore.Query(hash, start, end)
+		items := make([]management.FailureItem, 0, len(entries))
+		for _, entry := range entries {
+			items = append(items, management.FailureItem{Hash: hash, ErrorEntry: entry})
+		}
+		return management.FailuresResult{Items: items}, nil
 	}
 
 	all := errorsStore.QueryAll(start, end)
-	var total []errorslog.ErrorEntry
-	for _, list := range all {
-		total = append(total, list...)
+	var total []management.FailureItem
+	for hash, list := range all {
+		for _, entry := range list {
+			total = append(total, management.FailureItem{Hash: hash, ErrorEntry: entry})
+		}
 	}
 	sort.Slice(total, func(i, j int) bool {
 		return total[i].Time.After(total[j].Time)

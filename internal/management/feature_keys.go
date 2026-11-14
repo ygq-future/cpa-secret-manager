@@ -2493,15 +2493,15 @@ function openFailuresModal(index, initialModel) {
   var filterBar = document.createElement('div');
   filterBar.className = 'failures-filter-bar';
 
+  var keyLabels = {};
   var keyOptions = [];
   for (var k = 0; k < state.keys.length; k++) {
     var kVal = state.keys[k];
     var kEntry = state.entries[k] || {};
     if (kEntry.hash) {
-      keyOptions.push({
-        value: kEntry.hash,
-        label: maskKey(kVal) + (kEntry.remark ? ' (' + kEntry.remark + ')' : '')
-      });
+      var keyLabel = maskKey(kVal) + (kEntry.remark ? ' (' + kEntry.remark + ')' : '');
+      keyLabels[kEntry.hash] = keyLabel;
+      keyOptions.push({ value: kEntry.hash, label: keyLabel });
     }
   }
 
@@ -2519,11 +2519,8 @@ function openFailuresModal(index, initialModel) {
     clearable: true,
     clearTitleKey: 'failures.clear_filter',
     emptyKey: 'failures.no_options',
-    onChange: function (hash) {
-      targetModel = '';
-      authSelect.setValue('');
-      codeSelect.setValue('');
-      loadFailures(hash);
+    onChange: function () {
+      refreshFilterOptions();
     }
   });
 
@@ -2537,7 +2534,7 @@ function openFailuresModal(index, initialModel) {
     clearTitleKey: 'failures.clear_filter',
     emptyKey: 'failures.no_options',
     onChange: function () {
-      renderItems();
+      refreshFilterOptions();
     }
   });
 
@@ -2556,7 +2553,7 @@ function openFailuresModal(index, initialModel) {
     clearTitleKey: 'failures.clear_filter',
     emptyKey: 'failures.no_options',
     onChange: function () {
-      renderItems();
+      refreshFilterOptions();
     }
   });
 
@@ -2570,7 +2567,7 @@ function openFailuresModal(index, initialModel) {
     clearTitleKey: 'failures.clear_filter',
     emptyKey: 'failures.no_options',
     onChange: function () {
-      renderItems();
+      refreshFilterOptions();
     }
   });
 
@@ -2586,21 +2583,41 @@ function openFailuresModal(index, initialModel) {
   container.appendChild(filterBar);
   container.appendChild(listWrap);
 
+  function currentFilters() {
+    return {
+      hash: keySelect.getValue(),
+      auth: authSelect.getValue(),
+      model: modelSelect.getValue(),
+      code: codeSelect.getValue()
+    };
+  }
+
+  // One rule drives both the rendered records and the option lists: the key
+  // selection always applies, and each of the other dropdowns derives its
+  // options from the records matching every filter except its own.
+  function matchesFilters(item, filters, skipField) {
+    if (filters.hash !== '' && (item.hash || '') !== filters.hash) {
+      return false;
+    }
+    if (skipField !== 'auth' && filters.auth !== '' && (item.auth_id || '') !== filters.auth) {
+      return false;
+    }
+    if (skipField !== 'model' && filters.model !== '' && (item.model || '') !== filters.model) {
+      return false;
+    }
+    if (skipField !== 'code' && filters.code !== '' && String(item.status_code || 0) !== filters.code) {
+      return false;
+    }
+    return true;
+  }
+
   function renderItems() {
     listWrap.textContent = '';
-    var selectedAuth = authSelect.getValue();
-    var selectedModel = modelSelect.getValue();
-    var selectedCode = codeSelect.getValue();
+    var filters = currentFilters();
     var filtered = [];
     for (var i = 0; i < currentItems.length; i++) {
       var item = currentItems[i];
-      if (selectedAuth !== '' && (item.auth_id || '') !== selectedAuth) {
-        continue;
-      }
-      if (selectedModel && item.model !== selectedModel) {
-        continue;
-      }
-      if (selectedCode !== '' && String(item.status_code || 0) !== selectedCode) {
+      if (!matchesFilters(item, filters, '')) {
         continue;
       }
       filtered.push(item);
@@ -2686,103 +2703,105 @@ function openFailuresModal(index, initialModel) {
     }
   }
 
-  function loadFailures(hash) {
+  // Rebuilds the three data-derived option lists from the records matching the
+  // other selections, then renders. A selection that stops matching is dropped
+  // together with its option.
+  function refreshFilterOptions() {
+    syncFilterOptions();
+    // Dropping one selection only widens the remaining lists; a second pass
+    // reflects that widening within the same interaction.
+    syncFilterOptions();
+    renderItems();
+  }
+
+  // The key dropdown always lists every managed key; the other three filters
+  // only offer values that occur under the current key and selections.
+  function syncFilterOptions() {
+    var selected = currentFilters();
+    var hashOpts = [];
+    var authOpts = [];
+    var modelOpts = [];
+    var codeOpts = [];
+    var hashSeen = {};
+    var authSeen = {};
+    var modelSeen = {};
+    var codeSeen = {};
+
+    for (var k = 0; k < keyOptions.length; k++) {
+      hashSeen[keyOptions[k].value] = true;
+      hashOpts.push(keyOptions[k]);
+    }
+
+    for (var i = 0; i < currentItems.length; i++) {
+      var item = currentItems[i];
+      var hash = item.hash || '';
+      var auth = item.auth_id || '';
+      var model = item.model || '';
+      var code = String(item.status_code || 0);
+      if (hash && !hashSeen[hash]) {
+        hashSeen[hash] = true;
+        hashOpts.push({ value: hash, label: keyLabels[hash] || maskKey(hash) });
+      }
+      if (auth && !authSeen[auth] && matchesFilters(item, selected, 'auth')) {
+        authSeen[auth] = true;
+        authOpts.push({ value: auth, label: maskCredential(auth), triggerLabel: maskCredential(auth) });
+      }
+      if (model && !modelSeen[model] && matchesFilters(item, selected, 'model')) {
+        modelSeen[model] = true;
+        modelOpts.push({ value: model, label: model });
+      }
+      if (!codeSeen[code] && matchesFilters(item, selected, 'code')) {
+        codeSeen[code] = true;
+        codeOpts.push({ value: code, label: Number(code) > 0 ? code : t('failures.no_status') });
+      }
+    }
+
+    hashOpts.sort(compareOptionLabels);
+    authOpts.sort(compareOptionLabels);
+    modelOpts.sort(compareOptionLabels);
+    codeOpts.sort(function (a, b) { return Number(a.value) - Number(b.value); });
+
+    applyFilterOptions(keySelect, hashOpts);
+    applyFilterOptions(authSelect, authOpts);
+    applyFilterOptions(modelSelect, modelOpts);
+    applyFilterOptions(codeSelect, codeOpts);
+  }
+
+  function compareOptionLabels(a, b) {
+    if (a.label === b.label) return 0;
+    return a.label < b.label ? -1 : 1;
+  }
+
+  function applyFilterOptions(select, options) {
+    select.setOptions(options);
+    var current = select.getValue();
+    if (current === '') return;
+    for (var i = 0; i < options.length; i++) {
+      if (options[i].value === current) return;
+    }
+    select.setValue('');
+  }
+
+  function loadFailures() {
     listWrap.textContent = '';
     var loading = document.createElement('div');
     loading.className = 'placeholder-note is-compact';
     loading.textContent = t('shell.loading');
     listWrap.appendChild(loading);
 
+    // One unfiltered read serves all four filters; each record carries its key
+    // hash so the key dropdown narrows with the others.
     apiFetch(FAILURES_PATH, {
       method: 'POST',
       body: JSON.stringify({
-        hash: hash,
+        hash: '',
         start: startISO,
         end: endISO
       })
     })
     .then(function (res) {
       currentItems = (res && res.items) || [];
-
-      var authSet = {};
-      for (var a = 0; a < currentItems.length; a++) {
-        if (currentItems[a].auth_id) {
-          authSet[currentItems[a].auth_id] = true;
-        }
-      }
-      var newAuthOpts = [];
-      var authIDs = Object.keys(authSet).sort();
-      for (var b = 0; b < authIDs.length; b++) {
-        newAuthOpts.push({
-          value: authIDs[b],
-          label: maskCredential(authIDs[b]),
-          triggerLabel: maskCredential(authIDs[b])
-        });
-      }
-      authSelect.setOptions(newAuthOpts);
-      var currentAuthVal = authSelect.getValue();
-      var authMatched = false;
-      for (var f = 0; f < newAuthOpts.length; f++) {
-        if (newAuthOpts[f].value === currentAuthVal) {
-          authMatched = true;
-          break;
-        }
-      }
-      authSelect.setValue(authMatched ? currentAuthVal : '');
-
-      var modelSet = {};
-      for (var i = 0; i < currentItems.length; i++) {
-        if (currentItems[i].model) {
-          modelSet[currentItems[i].model] = true;
-        }
-      }
-      if (targetModel) {
-        modelSet[targetModel] = true;
-      }
-      var newModelOpts = [];
-      var models = Object.keys(modelSet).sort();
-      for (var m = 0; m < models.length; m++) {
-        newModelOpts.push({ value: models[m], label: models[m] });
-      }
-      modelSelect.setOptions(newModelOpts);
-      var currentModelVal = modelSelect.getValue() || targetModel;
-      var matched = false;
-      for (var n = 0; n < newModelOpts.length; n++) {
-        if (newModelOpts[n].value === currentModelVal) {
-          matched = true;
-          break;
-        }
-      }
-      if (matched && currentModelVal) {
-        modelSelect.setValue(currentModelVal);
-      } else {
-        modelSelect.setValue('');
-      }
-
-      var codeSet = {};
-      for (var c = 0; c < currentItems.length; c++) {
-        codeSet[currentItems[c].status_code || 0] = true;
-      }
-      var newCodeOpts = [];
-      var codes = Object.keys(codeSet).map(Number).sort(function (a, b) { return a - b; });
-      for (var d = 0; d < codes.length; d++) {
-        newCodeOpts.push({
-          value: String(codes[d]),
-          label: codes[d] > 0 ? String(codes[d]) : t('failures.no_status')
-        });
-      }
-      codeSelect.setOptions(newCodeOpts);
-      var currentCodeVal = codeSelect.getValue();
-      var codeMatched = false;
-      for (var e = 0; e < newCodeOpts.length; e++) {
-        if (newCodeOpts[e].value === currentCodeVal) {
-          codeMatched = true;
-          break;
-        }
-      }
-      codeSelect.setValue(codeMatched ? currentCodeVal : '');
-
-      renderItems();
+      refreshFilterOptions();
     })
     .catch(function (err) {
       listWrap.textContent = '';
@@ -2793,7 +2812,7 @@ function openFailuresModal(index, initialModel) {
     });
   }
 
-  loadFailures(keySelect.getValue());
+  loadFailures();
 }
 
 function closeFailuresModal() {

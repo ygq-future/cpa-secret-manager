@@ -184,7 +184,7 @@ plugins:
 | **`GET`** | `/v0/management/plugins/cpa-secret-manager/quota` | 读取指定密钥的配额规则与当前窗口消耗 |
 | **`PUT`** | `/v0/management/plugins/cpa-secret-manager/quota` | 创建或更新密钥的 Token 上限、窗口周期与模型白名单 |
 | **`DELETE`** | `/v0/management/plugins/cpa-secret-manager/quota` | 删除指定密钥的配额规则 |
-| **`POST`** | `/v0/management/plugins/cpa-secret-manager/failures` | 按密钥摘要与时间范围查询失败记录（含 HTTP 状态码与上游凭证标识） |
+| **`POST`** | `/v0/management/plugins/cpa-secret-manager/failures` | 按密钥摘要与时间范围查询失败记录（每条记录带所属密钥摘要，含 HTTP 状态码与上游凭证标识） |
 | **`GET`** | `/v0/management/plugins/cpa-secret-manager/models` | 读取插件已观察到的模型列表 |
 | **`POST`** | `/v0/management/plugins/cpa-secret-manager/pricing` | 读取紧凑缓存中的模型参考价（纯读，不联网） |
 | **`POST`** | `/v0/management/plugins/cpa-secret-manager/pricing/refresh` | 显式同步 models.dev 参考价目录；默认只保留提交模型，`merge: true` 时只替换提交模型并保留其他缓存项 |

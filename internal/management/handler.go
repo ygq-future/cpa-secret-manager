@@ -138,9 +138,16 @@ type FailuresRequest struct {
 	End   string `json:"end"`
 }
 
+// FailureItem is one error log entry paired with the proxy key hash that
+// attributes the failed request to a managed key.
+type FailureItem struct {
+	Hash string `json:"hash,omitempty"`
+	errorslog.ErrorEntry
+}
+
 // FailuresResult returns the matched error log entries.
 type FailuresResult struct {
-	Items []errorslog.ErrorEntry `json:"items"`
+	Items []FailureItem `json:"items"`
 }
 
 // KeyEntry is the per-key payload returned by Resolve. Items are aligned with

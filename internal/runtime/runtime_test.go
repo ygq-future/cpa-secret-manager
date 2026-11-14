@@ -1004,6 +1004,19 @@ func TestRuntime_ErrorLogRecordingAndQuery(t *testing.T) {
 	if res.Items[0].AuthID != "codex-user@example.com.json" {
 		t.Fatalf("unexpected failure auth id: %+v", res.Items[0])
 	}
+	if res.Items[0].Hash != keyHash {
+		t.Fatalf("unexpected failure key hash: %+v", res.Items[0])
+	}
+
+	// An unfiltered query drives the viewer's key filter, so every entry must
+	// carry the hash it belongs to.
+	all, err := rt.Failures(context.Background(), management.FailuresRequest{})
+	if err != nil {
+		t.Fatalf("Failures() aggregate error = %v", err)
+	}
+	if len(all.Items) != 1 || all.Items[0].Hash != keyHash {
+		t.Fatalf("aggregate failures lost key attribution: %+v", all.Items)
+	}
 
 	// Flush and verify errors file exists
 	rt.FlushUsage()

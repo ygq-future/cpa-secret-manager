@@ -18,7 +18,7 @@ type stubBackend struct {
 	remark   *RemarkUpdate
 	key      string
 	forgot   []string
-	failures []errorslog.ErrorEntry
+	failures []FailureItem
 	resolved *ResolveRequest
 
 	pricingResult PricingResult
@@ -271,8 +271,8 @@ func TestHandler_MapsBackendValidationToBadRequest(t *testing.T) {
 
 func TestHandler_FailuresQueriesErrorLogs(t *testing.T) {
 	backend := &stubBackend{
-		failures: []errorslog.ErrorEntry{
-			{Model: "gpt-5.6", StatusCode: 429, Message: "rate limit"},
+		failures: []FailureItem{
+			{Hash: "h1", ErrorEntry: errorslog.ErrorEntry{Model: "gpt-5.6", StatusCode: 429, Message: "rate limit"}},
 		},
 	}
 	handler := NewHandler(backend)
