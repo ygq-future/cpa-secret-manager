@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"cpa-secret-manager/internal/expiry"
 	"cpa-secret-manager/internal/quota"
 	"cpa-secret-manager/internal/remarks"
 )
@@ -52,6 +53,16 @@ func (r *Runtime) handleInterceptBefore(ctx context.Context, raw []byte) []byte 
 	if apiKey != "" {
 		hash := remarks.Index(apiKey)
 		now := r.clock.Now().UTC()
+		if at, ok := r.expiryInstant(hash); ok && expiry.Expired(at, now) {
+			return okEnvelope(RequestInterceptResponse{
+				Terminate:  true,
+				StatusCode: http.StatusUnauthorized,
+				ResponseHeaders: map[string][]string{
+					"Content-Type": {"application/json"},
+				},
+				ResponseBody: buildKeyExpiredBody(at),
+			})
+		}
 		decision := r.quota.Check(ctx, hash, wire.Model, now)
 		if !decision.Allowed {
 			return okEnvelope(RequestInterceptResponse{
@@ -70,6 +81,18 @@ func (r *Runtime) handleInterceptBefore(ctx context.Context, raw []byte) []byte 
 		Headers:   headers,
 		Body:      body,
 	})
+}
+
+// expiryInstant returns the stored expiration instant of one hash index. A
+// runtime without a loaded state never expires anything.
+func (r *Runtime) expiryInstant(hash string) (time.Time, bool) {
+	r.mu.RLock()
+	store := r.store
+	r.mu.RUnlock()
+	if store == nil {
+		return time.Time{}, false
+	}
+	return store.Expiry(hash)
 }
 
 func extractAPIKey(headers map[string][]string) string {
@@ -92,6 +115,21 @@ func extractAPIKey(headers map[string][]string) string {
 		}
 	}
 	return ""
+}
+
+func buildKeyExpiredBody(at time.Time) string {
+	payload, err := json.Marshal(map[string]any{
+		"error": map[string]any{
+			"message": fmt.Sprintf("API key expired at %s.", at.UTC().Format(time.RFC3339)),
+			"type":    "invalid_request_error",
+			"param":   nil,
+			"code":    "key_expired",
+		},
+	})
+	if err != nil {
+		return `{"error":{"message":"API key expired","type":"invalid_request_error","code":"key_expired"}}`
+	}
+	return string(payload)
 }
 
 func buildQuotaExceededBody(d quota.Decision) string {

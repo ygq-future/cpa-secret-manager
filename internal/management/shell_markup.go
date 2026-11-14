@@ -94,6 +94,11 @@ const shellModals = `  </main>
         <textarea id="key-form-remark" maxlength="200" data-i18n-placeholder="key_form.remark_placeholder" autocomplete="off" spellcheck="false" data-bwignore="true" data-lpignore="true" data-1p-ignore></textarea>
         <p class="hint" data-i18n="key_form.remark_hint">Optional; empty clears the remark.</p>
       </div>
+      <div class="field">
+        <span class="field-label" data-i18n="key_form.expires">Expires at</span>
+        <div id="key-form-expires"></div>
+        <p class="hint" data-i18n="key_form.expires_hint">Local time. Empty means the key never expires.</p>
+      </div>
       <div class="quota-card">
         <div class="quota-switch-header">
           <div class="switch-text">

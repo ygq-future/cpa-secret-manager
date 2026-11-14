@@ -199,3 +199,43 @@ func TestQuota_RoundTripAndIsolation(t *testing.T) {
 		t.Fatalf("loaded states mismatch: %+v", loadedStates)
 	}
 }
+
+func TestExpiry_RoundTripAndIsolation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	store, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	at := time.Date(2026, 12, 1, 12, 30, 0, 0, time.UTC)
+	store.SetExpiry("h1", at)
+	if err := store.SaveAtomic(); err != nil {
+		t.Fatalf("SaveAtomic() error = %v", err)
+	}
+
+	reloaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("reloaded Load() error = %v", err)
+	}
+	got, ok := reloaded.Expiry("h1")
+	if !ok || !got.Equal(at) {
+		t.Fatalf("Expiry(h1) = %s, %v; want %s, true", got, ok, at)
+	}
+
+	snapshot := reloaded.Expirations()
+	delete(snapshot, "h1")
+	reloaded.SetExpiry("h2", at.Add(time.Hour))
+	expirations := reloaded.Expirations()
+	if _, ok := expirations["h1"]; !ok {
+		t.Fatal("Expirations() returned a shared map that callers can mutate")
+	}
+	if !reloaded.DeleteExpiry("h1") {
+		t.Fatal("DeleteExpiry(h1) = false, want true")
+	}
+	if reloaded.DeleteExpiry("h1") {
+		t.Fatal("DeleteExpiry(h1) reported a second deletion")
+	}
+	if _, ok := reloaded.Expiry("h1"); ok {
+		t.Fatal("expiry survived DeleteExpiry")
+	}
+}

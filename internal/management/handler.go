@@ -41,6 +41,8 @@ const (
 	PathRemarks = "/remarks"
 	// PathForget drops the plugin-side metadata of the submitted keys.
 	PathForget = "/forget"
+	// PathExpiry sets or clears the expiration instant of one key.
+	PathExpiry = "/expiry"
 	// PathGenerate returns a freshly generated proxy API key.
 	PathGenerate = "/keys/generate"
 	// PathFailures queries failure error logs by key hash and time range.
@@ -59,6 +61,8 @@ const (
 	RouteRemarks = legacyBase + PathRemarks
 	// RouteForget is the metadata removal route path registered with the host.
 	RouteForget = legacyBase + PathForget
+	// RouteExpiry is the key expiration route path registered with the host.
+	RouteExpiry = legacyBase + PathExpiry
 	// RouteGenerate is the key generation route path registered with the host.
 	RouteGenerate = legacyBase + PathGenerate
 	// RouteFailures is the failures route path registered with the host.
@@ -155,6 +159,12 @@ type FailuresResult struct {
 type KeyEntry struct {
 	Hash   string `json:"hash"`
 	Remark string `json:"remark"`
+	// ExpiresAt is the RFC3339 instant after which the key stops working. An
+	// empty value means the key never expires.
+	ExpiresAt string `json:"expires_at,omitempty"`
+	// Expired is evaluated against the runtime clock, so the page never has to
+	// trust the browser clock when it removes the key from the host list.
+	Expired bool `json:"expired,omitempty"`
 	// LastSeen is the exact instant of the key's latest observed request inside
 	// the retention window, independent of the queried range.
 	LastSeen string `json:"last_seen,omitempty"`
@@ -243,6 +253,13 @@ type RemarkUpdate struct {
 	Remark string `json:"remark"`
 }
 
+// ExpiryUpdate sets or clears the expiration instant of one proxy API key. An
+// empty ExpiresAt clears the stored instant.
+type ExpiryUpdate struct {
+	Key       string `json:"key"`
+	ExpiresAt string `json:"expires_at"`
+}
+
 // GenerateResult carries one generated proxy API key.
 type GenerateResult struct {
 	Key string `json:"key"`
@@ -268,6 +285,7 @@ type Backend interface {
 	Resolve(ctx context.Context, req ResolveRequest) (ResolveResult, error)
 	Forget(ctx context.Context, hashes []string) (int, error)
 	SetRemark(ctx context.Context, apiKey string, remark string) error
+	SetExpiry(ctx context.Context, apiKey string, expiresAt string) error
 	GenerateKey(ctx context.Context) (string, error)
 	Failures(ctx context.Context, req FailuresRequest) (FailuresResult, error)
 	Quota(ctx context.Context, hash string) (QuotaSummary, bool, error)
@@ -310,6 +328,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveRemarks(w, r)
 	case PathForget:
 		h.serveForget(w, r)
+	case PathExpiry:
+		h.serveExpiry(w, r)
 	case PathGenerate:
 		h.serveGenerate(w, r)
 	case PathFailures:
@@ -433,6 +453,24 @@ func (h *Handler) serveRemarks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.fail(w, h.backend.SetRemark(r.Context(), update.Key, update.Remark)) {
+		return
+	}
+	writeJSON(w, http.StatusOK, statusBody())
+}
+
+// serveExpiry stores or clears the expiration instant of one proxy API key.
+// The runtime enforces it in the request interceptor; the host key list stays
+// untouched here because keys belong to the host.
+func (h *Handler) serveExpiry(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		methodNotAllowed(w, http.MethodPut)
+		return
+	}
+	var update ExpiryUpdate
+	if !decodeBody(w, r, &update) {
+		return
+	}
+	if h.fail(w, h.backend.SetExpiry(r.Context(), update.Key, update.ExpiresAt)) {
 		return
 	}
 	writeJSON(w, http.StatusOK, statusBody())

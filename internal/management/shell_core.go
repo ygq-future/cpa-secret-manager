@@ -35,6 +35,7 @@ var SETTINGS_PATH = PLUGIN_BASE + '/settings';
 var RESOLVE_PATH = PLUGIN_BASE + '/resolve';
 var FORGET_PATH = PLUGIN_BASE + '/forget';
 var REMARKS_PATH = PLUGIN_BASE + '/remarks';
+var EXPIRY_PATH = PLUGIN_BASE + '/expiry';
 var GENERATE_PATH = PLUGIN_BASE + '/keys/generate';
 var FAILURES_PATH = PLUGIN_BASE + '/failures';
 var QUOTA_PATH = PLUGIN_BASE + '/quota';
@@ -56,6 +57,7 @@ var state = {
   tokenUnit: 3,
   busy: false,
   pendingRefresh: null,
+  expirySweep: false,
   refreshTimer: 0,
   language: 'zh-CN',
   toastTimer: 0,
@@ -65,7 +67,8 @@ var state = {
   dateRange: null,
   sort: null,
   selects: [],
-  openSelect: null
+  openSelect: null,
+  openDateTime: null
 };
 
 function byId(id) {
@@ -638,6 +641,7 @@ function openModal(id) {
 
 function closeModal(id) {
   closeOpenSelect();
+  closeOpenDateTime();
   var node = byId(id);
   if (node) {
     node.classList.remove('open');

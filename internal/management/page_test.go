@@ -373,6 +373,7 @@ func TestPage_UsesHostManagementAPI(t *testing.T) {
 		"KEYS_PATH",
 		"RESOLVE_PATH",
 		"REMARKS_PATH",
+		"EXPIRY_PATH",
 		"GENERATE_PATH",
 		"Authorization",
 		"X-Management-Key",
@@ -481,6 +482,43 @@ if (isModelsExpanded('k2', [{ model: 'm1' }, { model: 'm2' }]) !== false) {
 	cmd := exec.Command(nodePath, testScriptPath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("node test failed: %v\n%s", err, string(out))
+	}
+}
+
+func TestPage_KeyExpiryContract(t *testing.T) {
+	if !strings.Contains(PageHTML, `id="key-form-expires"`) {
+		t.Fatal("key form is missing the expiry field")
+	}
+	if strings.Contains(PageHTML, `id="key-form-expires" type="text"`) {
+		t.Fatal("the expiry field should be the shared datetime picker, not a raw text input")
+	}
+	script := extractPageScript(t)
+	for _, fn := range []string{"mountDateTimePicker", "buildTimeStepper", "renderCalendar", "sweepExpiredKeys", "buildExpiryBadge"} {
+		if !strings.Contains(script, "function "+fn) {
+			t.Fatalf("page script missing function %s", fn)
+		}
+	}
+	if !strings.Contains(script, "expiryPicker = mountDateTimePicker(") {
+		t.Fatal("the key form should mount the shared datetime picker on #key-form-expires")
+	}
+	for _, preset := range []string{"datetime.preset_now", "datetime.preset_hour", "datetime.preset_day", "datetime.preset_week", "datetime.preset_month"} {
+		if !strings.Contains(script, preset) {
+			t.Fatalf("datetime picker missing preset key %s", preset)
+		}
+	}
+	if !strings.Contains(script, "function formatExpiryStamp") {
+		t.Fatal("the expiry badge should render the exact local minute, not a coarse countdown")
+	}
+	if !strings.Contains(script, "addEventListener('wheel'") || !strings.Contains(script, "time-unit") {
+		t.Fatal("the time steppers should expose hour/minute units and adjust on mouse wheel")
+	}
+	if !strings.Contains(script, "entry.expired") || !strings.Contains(script, "persistKeys(next)") {
+		t.Fatal("page script should sweep server-marked expired keys out of the host list")
+	}
+	for _, style := range []string{".badge-expiry", ".datetime-popover", ".time-stepper", ".time-value"} {
+		if !strings.Contains(PageHTML, style) {
+			t.Fatalf("PageHTML is missing the %s style definition", style)
+		}
 	}
 }
 

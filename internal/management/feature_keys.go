@@ -265,6 +265,41 @@ table.detail-table {
 .th-sortable.is-sorted.is-asc .sort-caret-down {
   opacity: 0.12;
 }
+
+/* Expiration tag: matches the shared tag metrics while using the neutral surface
+   so it reads as lifetime metadata, not as a quota state. */
+.badge-expiry {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 18px;
+  padding: 0 6px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-pill);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.badge-expiry .icon {
+  width: 11px;
+  height: 11px;
+  opacity: 0.9;
+}
+
+.badge-expiry > span {
+  transform: translateY(-0.5px);
+}
+
+.badge-expiry.is-expired {
+  background: var(--accent-red-soft);
+  border-color: var(--accent-red-border);
+  color: var(--accent-red-text);
+}
 `,
 	scripts: `
 function isModelsExpanded(key, models) {
@@ -341,6 +376,99 @@ function adoptStaleHashes(stale) {
 
   state.pendingStale = stale.slice();
   return forgetHashes(confirmed);
+}
+
+function sameKeyList(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) {
+    return false;
+  }
+  for (var index = 0; index < a.length; index++) {
+    if (a[index] !== b[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// sweepExpiredKeys removes host keys whose expiry the plugin has already
+// reached. The host owns the key list and only the page holds a management key,
+// so this is the one place that can perform the removal. It is cleanup, not
+// enforcement: the interceptor rejects an expired key on its own, even when no
+// page is open. The server-evaluated expired flag keeps browser clock skew out
+// of the decision.
+function sweepExpiredKeys() {
+  if (state.expirySweep) {
+    return Promise.resolve();
+  }
+  var hasExpired = false;
+  for (var index = 0; index < state.entries.length; index++) {
+    if (state.entries[index] && state.entries[index].expired) {
+      hasExpired = true;
+      break;
+    }
+  }
+  if (!hasExpired) {
+    return Promise.resolve();
+  }
+  state.expirySweep = true;
+  var expiredKeys = [];
+  var expiredHashes = [];
+  // Re-read the host list first: another management tab may have changed it
+  // since the last resolve, and a full-list PUT must never clobber that change.
+  return apiFetch(KEYS_PATH).then(function (payload) {
+    var live = [];
+    if (payload && Array.isArray(payload['api-keys'])) {
+      live = payload['api-keys'].map(function (value) {
+        return String(value);
+      });
+    } else if (payload && Array.isArray(payload.apiKeys)) {
+      live = payload.apiKeys.map(function (value) {
+        return String(value);
+      });
+    }
+    if (!sameKeyList(live, state.keys)) {
+      // The host list moved underneath this sweep; reload before deciding.
+      state.expirySweep = false;
+      return refreshKeys({ silent: true });
+    }
+    for (var position = 0; position < state.keys.length; position++) {
+      var entry = state.entries[position] || {};
+      if (!entry.expired) {
+        continue;
+      }
+      expiredKeys.push(state.keys[position]);
+      if (entry.hash) {
+        expiredHashes.push(entry.hash);
+      }
+    }
+    if (expiredKeys.length === 0) {
+      return null;
+    }
+    var next = state.keys.filter(function (value) {
+      return expiredKeys.indexOf(value) < 0;
+    });
+    return persistKeys(next)
+      .then(function () {
+        state.keys = next;
+        if (expiredKeys.indexOf(state.editingKey) >= 0) {
+          // The open editor points at a key that no longer exists; saving it
+          // would recreate metadata for a gone key.
+          closeKeyForm();
+        }
+        return forgetHashes(expiredHashes);
+      })
+      .then(function () {
+        showToast(tf('keys.expired_removed', { count: formatNumber(expiredKeys.length) }), 'success');
+        return refreshKeys({ silent: true });
+      });
+  }).catch(function (error) {
+    // A failed sweep is retried by the next refresh; enforcement is unaffected.
+    if (!state.authBlocked) {
+      showToast(error.message, 'error');
+    }
+  }).then(function () {
+    state.expirySweep = false;
+  });
 }
 
 function refreshAll(options) {
@@ -514,12 +642,12 @@ function loadEntries(keysChanged) {
   return apiFetch(RESOLVE_PATH, { method: 'POST', body: JSON.stringify(usageWindowPayload()) }).then(function (payload) {
     state.entries = payload && Array.isArray(payload.items) ? payload.items : [];
     var stale = payload && Array.isArray(payload.stale_hashes) ? payload.stale_hashes : [];
-    if (keysChanged) {
-      return adoptStaleHashes(stale.map(function (value) {
-        return String(value);
-      }));
-    }
-    return Promise.resolve(null);
+    var cleanup = keysChanged ? adoptStaleHashes(stale.map(function (value) {
+      return String(value);
+    })) : Promise.resolve(null);
+    return cleanup.then(function () {
+      return sweepExpiredKeys();
+    });
   });
 }
 
@@ -529,6 +657,10 @@ function persistKeys(keys) {
 
 function saveRemark(key, remark) {
   return apiFetch(REMARKS_PATH, { method: 'PUT', body: JSON.stringify({ key: key, remark: remark }) });
+}
+
+function saveExpiry(key, expiresAt) {
+  return apiFetch(EXPIRY_PATH, { method: 'PUT', body: JSON.stringify({ key: key, expires_at: expiresAt }) });
 }
 
 function setKeyFormSaving(saving) {
@@ -797,6 +929,34 @@ function buildQuotaResetBadge(quota) {
   return badge;
 }
 
+// formatExpiryStamp renders the stored instant as the same local minute the
+// picker shows, so the row never hides precision behind a coarse countdown.
+function formatExpiryStamp(value) {
+  if (!value) {
+    return '';
+  }
+  var at = new Date(value);
+  if (isNaN(at.getTime())) {
+    return '';
+  }
+  return at.getFullYear() + '/' + padZero(at.getMonth() + 1) + '/' + padZero(at.getDate()) + ' ' + padZero(at.getHours()) + ':' + padZero(at.getMinutes());
+}
+
+// buildExpiryBadge renders the expiration tag: a clock glyph plus the exact
+// local minute; the tooltip repeats the instant for a hover read. The red state
+// only shows for the frame before the sweep removes the key from the host list.
+function buildExpiryBadge(entry) {
+  var stamp = formatExpiryStamp(entry.expires_at);
+  var badge = document.createElement('span');
+  badge.className = 'badge-expiry' + (entry.expired ? ' is-expired' : '');
+  badge.title = tf('keys.expiry_title', { time: stamp });
+  badge.appendChild(iconMarkup('clock', ''));
+  var text = document.createElement('span');
+  text.textContent = entry.expired ? t('keys.expiry_expired') : stamp;
+  badge.appendChild(text);
+  return badge;
+}
+
 function buildKeyRow(index, value, remark, usage) {
   var row = document.createElement('tr');
   var item = state.entries[index] || {};
@@ -842,6 +1002,9 @@ function buildKeyRow(index, value, remark, usage) {
     emptyRemark.className = 'muted';
     emptyRemark.textContent = '—';
     tagRow.appendChild(emptyRemark);
+  }
+  if (item.expires_at) {
+    tagRow.appendChild(buildExpiryBadge(item));
   }
   var entryQuota = item.quota;
   if (entryQuota && entryQuota.enabled) {
@@ -1792,6 +1955,9 @@ function openAddKeyForm() {
   if (remark) {
     remark.value = '';
   }
+  if (expiryPicker) {
+    expiryPicker.setValue('');
+  }
   resetQuotaForm();
   var generate = byId('key-form-generate');
   if (generate) {
@@ -1815,6 +1981,9 @@ function openEditKeyForm(index) {
   if (remark) {
     remark.value = typeof entry.remark === 'string' ? entry.remark : '';
   }
+  if (expiryPicker) {
+    expiryPicker.setValue(typeof entry.expires_at === 'string' ? entry.expires_at : '');
+  }
   applyQuotaForm(entry.quota);
   openModal('key-form-modal');
   if (remark) {
@@ -1823,6 +1992,9 @@ function openEditKeyForm(index) {
 }
 function closeKeyForm() {
   state.editingKey = '';
+  if (expiryPicker) {
+    expiryPicker.close();
+  }
   closeModal('key-form-modal');
 }
 
@@ -1867,6 +2039,11 @@ function saveKeyForm() {
   }
   var remarkInput = byId('key-form-remark');
   var remark = remarkInput ? remarkInput.value.trim() : '';
+  var expiryValue = expiryPicker ? expiryPicker.getValue() : '';
+  if (expiryValue && new Date(expiryValue).getTime() <= Date.now()) {
+    showToast(t('error.expiry_past'), 'error');
+    return;
+  }
 
   if (state.editingKey) {
     var targetKey = state.editingKey;
@@ -1874,6 +2051,9 @@ function saveKeyForm() {
     closeKeyForm();
     setKeysLoading(true);
     saveRemark(targetKey, remark)
+      .then(function () {
+        return saveExpiry(targetKey, expiryValue);
+      })
       .then(function () {
         return saveQuotaForm(targetKey);
       })
@@ -1918,6 +2098,9 @@ function saveKeyForm() {
   persistKeys(next)
     .then(function () {
       return saveRemark(value, remark);
+    })
+    .then(function () {
+      return saveExpiry(value, expiryValue);
     })
     .then(function () {
       return saveQuotaForm(value);
@@ -1971,6 +2154,7 @@ var calendarBaseMonth = null;
 var draftStart = null;
 var draftEnd = null;
 var draftMode = 'today';
+var expiryPicker = null;
 
 function padZero(n) {
   return n < 10 ? '0' + n : '' + n;
@@ -2824,6 +3008,10 @@ function closeFailuresModal() {
 // date range picker and the failure viewer). The shell only calls it.
 function bindKeysEvents() {
   initQuotaForm();
+  expiryPicker = mountDateTimePicker({
+    container: byId('key-form-expires'),
+    placeholderKey: 'datetime.placeholder'
+  });
 
   bindClick('keys-add', openAddKeyForm);
   bindClick('keys-unit', cycleTokenUnit);

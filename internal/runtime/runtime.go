@@ -15,6 +15,7 @@ import (
 
 	"cpa-secret-manager/internal/config"
 	"cpa-secret-manager/internal/errorslog"
+	"cpa-secret-manager/internal/expiry"
 	"cpa-secret-manager/internal/keys"
 	"cpa-secret-manager/internal/management"
 	"cpa-secret-manager/internal/pricing"
@@ -343,6 +344,7 @@ func (r *Runtime) Resolve(_ context.Context, req management.ResolveRequest) (man
 	}
 	lastSeen := r.aggregator.LastSeen()
 
+	now := r.clock.Now().UTC()
 	items := make([]management.KeyEntry, 0, len(req.Keys))
 	live := make(map[string]struct{}, len(req.Keys))
 	for _, apiKey := range req.Keys {
@@ -351,6 +353,10 @@ func (r *Runtime) Resolve(_ context.Context, req management.ResolveRequest) (man
 		entry, _ := store.Remark(hash)
 
 		item := management.KeyEntry{Hash: hash, Remark: entry.Remark, LastSeen: formatTimestamp(lastSeen[hash])}
+		if at, ok := store.Expiry(hash); ok {
+			item.ExpiresAt = formatTimestamp(at)
+			item.Expired = expiry.Expired(at, now)
+		}
 		if usageEntry, ok := aggregate[hash]; ok && !usageEntry.IsZero() {
 			item.Usage = buildUsageSummary(usageEntry)
 		}
@@ -407,6 +413,11 @@ func (r *Runtime) staleHashes(store *state.Store, live map[string]struct{}) []st
 			stale = append(stale, hash)
 		}
 	}
+	for hash := range store.Expirations() {
+		if _, ok := live[hash]; !ok {
+			stale = append(stale, hash)
+		}
+	}
 	for hash := range r.aggregator.Hashes() {
 		if _, ok := live[hash]; !ok {
 			stale = append(stale, hash)
@@ -455,10 +466,11 @@ func (r *Runtime) Forget(_ context.Context, hashes []string) (int, error) {
 	pending := make([]string, 0, len(hashes))
 	for _, hash := range hashes {
 		_, hasRemark := store.Remark(hash)
+		_, hasExpiry := store.Expiry(hash)
 		_, hasUsage := aggregate[hash]
 		_, hasRule := r.quota.GetRule(hash)
 		_, hasState := r.quota.GetState(hash)
-		if hasRemark || hasUsage || hasRule || hasState {
+		if hasRemark || hasExpiry || hasUsage || hasRule || hasState {
 			pending = append(pending, hash)
 		}
 	}
@@ -482,6 +494,7 @@ func (r *Runtime) Forget(_ context.Context, hashes []string) (int, error) {
 	}
 	for _, hash := range pending {
 		store.DeleteRemark(hash)
+		store.DeleteExpiry(hash)
 		r.aggregator.Remove(hash)
 		if r.errorsStore != nil {
 			r.errorsStore.Forget(hash)
@@ -522,6 +535,43 @@ func (r *Runtime) SetRemark(_ context.Context, apiKey string, remark string) err
 	} else {
 		store.SetRemark(hash, remarks.Entry{Remark: normalized, UpdatedAt: r.clock.Now().UTC()})
 	}
+	return store.SaveAtomic()
+}
+
+// SetExpiry implements management.Backend: it stores the instant after which a
+// proxy API key is rejected. An empty value clears the stored instant. The key
+// itself stays in the host list until the page removes it, because keys are
+// host-owned; enforcement never waits for that removal.
+func (r *Runtime) SetExpiry(_ context.Context, apiKey string, expiresAt string) error {
+	if err := remarks.ValidateKey(apiKey); err != nil {
+		return management.NewInvalidRequest(err.Error())
+	}
+
+	r.runMu.Lock()
+	defer r.runMu.Unlock()
+
+	r.mu.RLock()
+	store := r.store
+	closed := r.closed
+	r.mu.RUnlock()
+	if closed || store == nil {
+		return ErrShutdown
+	}
+
+	hash := remarks.Index(apiKey)
+	trimmed := strings.TrimSpace(expiresAt)
+	if trimmed == "" {
+		store.DeleteExpiry(hash)
+		return store.SaveAtomic()
+	}
+	at, err := expiry.Parse(trimmed)
+	if err != nil {
+		return management.NewInvalidRequest(err.Error())
+	}
+	if err := expiry.Validate(at, r.clock.Now().UTC()); err != nil {
+		return management.NewInvalidRequest(err.Error())
+	}
+	store.SetExpiry(hash, at)
 	return store.SaveAtomic()
 }
 

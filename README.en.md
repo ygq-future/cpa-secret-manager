@@ -32,6 +32,7 @@ It provides **per-key remarks**, **per-key token usage attribution**, and **quot
 - **1:1 Official Key Generation Algorithm**: Generated keys use an `sk-` prefix plus 48 alphanumeric characters `[A-Za-z0-9]`, with modulo bias removed through rejection sampling (threshold 248), matching the official management console algorithm.
 - **Full-Dimensional Token Attribution**: Intercepts requests through the host `usage_plugin` capability, aggregating request counts, failure counts, and Input/Output tokens, as well as Reasoning, Cached, and CacheRead token breakdowns grouped by model.
 - **Per-Key Quotas, Independent Model Restrictions & Cost Budgets**: Set token limits, monetary cost budgets (Quota Cost Limit), or independent model allowlists (restricting models without requiring token/cost limits) per key with automatic rejection on violation and one-click quota resets; configure custom token pricing per model with automatic expenditure estimation.
+- **Key Expiry with Automatic Cleanup**: Set an expiration instant per key from local wall-clock input and store it in UTC. Once reached, the plugin returns `401 key_expired` before the request reaches an upstream, whether or not the page is open; the management page removes the expired key from the host key list on its next refresh or poll and drops its remark, expiry, and usage counters.
 - **Model Reference Price Suggestions**: “Sync & save prices” in Settings pulls reference prices from models.dev and merges them automatically: it adds missing models, updates changed prices, and keeps saved models absent from the reference. A saved price that still matches any listed offer is kept even when the applied offer disappeared; otherwise the nearest remaining offer is applied, and a model with no offer keeps its saved price. Model names match by progressive prefix stages (`gemini` → `gemini-3.5` → `gemini-3.5-flash`) and fall back to the deepest stage that matched, so channel suffixes such as `-high` still resolve to the base model. The reference row lists every matched offer in a dropdown with input/output/cache amounts, marks the best match in green, and shows the full offer on hover. A full sync — including a 304 response for an unchanged catalog — drops cached entries for models no longer in the host list. “Sync only” and the refresh button at the end of the reference row update the cache without writing saved prices; a single-model refresh preserves every other cached model. Network access happens only on click, and the streamed catalog keeps only matches for the current model list, never the full catalog.
 - **Range Dashboard and Failure Triage**: A single date range drives the stat cards, per-key columns, and model breakdown, including each key's last-seen time. Failure records are grouped into a timeline with upstream-credential and HTTP status filtering and the upstream credential that served the request (keeping the provider prefix and account domain while masking the account body), for locating abnormal keys and upstream errors.
 - **Automatic Orphan Metadata Pruning**: Implements the `/forget` protocol; when keys are deleted from the host, the plugin detects and safely purges corresponding orphaned metadata and usage counters.
@@ -49,6 +50,7 @@ Client Request to CPA
 CLIProxyAPI Host Routing
   │
   ├─► [request.intercept_before Quota Gate]
+  │     ├─ Key already expired ──► return 401 before upstream
   │     └─ Read the client key's token quota and model allowlist
   │     └─ Exceeded or disallowed model ──► return 403 before upstream
   │
@@ -165,6 +167,7 @@ The plugin registers **static Web UI resources** and **dynamic management routes
     - **Keys & Remarks Dashboard**: Masked by default, with one-click copy, real-time key/remark filtering, and multi-unit (K / M / B) token scaling;
     - **Range Dashboard**: One date range drives the stat cards, per-key columns, model breakdown, and failure log, including each key's last-seen time;
     - **Quota Rule Editor**: Configure a token limit, window period, and model allowlist per key; exceeding either boundary blocks the request;
+    - **Expiry Time**: Pick a local-time expiration instant in the date/time picker (including a “Now” shortcut and 1 hour / 1 day / 7 days / 30 days presets); the list shows the exact local minute (e.g. `2026/11/14 10:40`). At expiry requests are rejected and the page removes the key from the host list on its next refresh or poll;
     - **Per-Model Breakdown**: Expandable inspection of input, output, reasoning, and cache token distribution across models;
     - **Pure Native Visuals**: Zero external CDNs, dynamically following CPA themes (light, white, dark, and custom themes);
     - **Interaction Tolerance**: Two-phase mousedown/click verification prevents modal backdrop dismissals when dragging text selections across borders.
@@ -180,6 +183,7 @@ All management endpoints require `Authorization: Bearer <management_key>` or `X-
 | **`POST`** | `/v0/management/plugins/cpa-secret-manager/keys/generate` | Generates a cryptographically secure proxy API key (`sk-` + 48 characters) |
 | **`POST`** | `/v0/management/plugins/cpa-secret-manager/resolve` | Submits a key list and window; returns remarks, in-window usage, lifetime `last_seen`, and stale hashes |
 | **`PUT`** | `/v0/management/plugins/cpa-secret-manager/remarks` | Sets or clears a remark for a specific key (empty string clears) |
+| **`PUT`** | `/v0/management/plugins/cpa-secret-manager/expiry` | Sets or clears a key's expiration instant (RFC3339; empty clears). At expiry requests are rejected and the page removes the key from the host list |
 | **`POST`** | `/v0/management/plugins/cpa-secret-manager/forget` | Instructs the plugin to permanently purge metadata for stale key hashes |
 | **`GET`** | `/v0/management/plugins/cpa-secret-manager/quota` | Reads a key's quota rule and current window consumption |
 | **`PUT`** | `/v0/management/plugins/cpa-secret-manager/quota` | Creates or updates a key's token limit, window period, and model allowlist |

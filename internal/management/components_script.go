@@ -1044,6 +1044,548 @@ function mountMultiSelect(config) {
   return component;
 }
 
+// ---------------------------------------------------------------------------
+// DateTime picker: a themed date + time popover. Native datetime controls
+// cannot follow the host theme, so the calendar grid, the time columns and the
+// presets are all rendered with the shared tokens. The committed value is an
+// ISO instant; an empty string means "no expiry".
+// ---------------------------------------------------------------------------
+function mountDateTimePicker(config) {
+  var container = config && config.container;
+  if (!container) {
+    return null;
+  }
+  var onChange = config.onChange;
+  var placeholderKey = config.placeholderKey || 'datetime.placeholder';
+  var value = typeof config.value === 'string' ? config.value : '';
+  var draft = null;
+  var baseMonth = null;
+  var open = false;
+  var presetSpecs = [
+    { key: 'datetime.preset_now', minutes: 1, now: true },
+    { key: 'datetime.preset_hour', minutes: 60 },
+    { key: 'datetime.preset_day', minutes: 1440 },
+    { key: 'datetime.preset_week', minutes: 10080 },
+    { key: 'datetime.preset_month', minutes: 43200 }
+  ];
+
+  container.className = 'datetime-field';
+  container.textContent = '';
+
+  var control = document.createElement('div');
+  control.className = 'datetime-control';
+  var trigger = document.createElement('button');
+  trigger.type = 'button';
+  trigger.className = 'datetime-trigger';
+  trigger.setAttribute('aria-haspopup', 'dialog');
+  trigger.setAttribute('aria-expanded', 'false');
+  var glyph = iconMarkup('calendar', 'datetime-icon');
+  if (glyph) {
+    trigger.appendChild(glyph);
+  }
+  var label = document.createElement('span');
+  label.className = 'datetime-label';
+  trigger.appendChild(label);
+  control.appendChild(trigger);
+
+  var clearBtn = document.createElement('button');
+  clearBtn.type = 'button';
+  clearBtn.className = 'datetime-clear';
+  clearBtn.hidden = true;
+  var clearGlyph = iconMarkup('close', '');
+  if (clearGlyph) {
+    clearBtn.appendChild(clearGlyph);
+  }
+  control.appendChild(clearBtn);
+  container.appendChild(control);
+
+  var popover = document.createElement('div');
+  popover.className = 'datetime-popover';
+  popover.hidden = true;
+  popover.tabIndex = -1;
+  popover.setAttribute('role', 'dialog');
+  document.body.appendChild(popover);
+
+  var presetsRow = document.createElement('div');
+  presetsRow.className = 'datetime-presets';
+  popover.appendChild(presetsRow);
+
+  var presetButtons = [];
+  for (var presetIndex = 0; presetIndex < presetSpecs.length; presetIndex++) {
+    presetButtons.push(buildPresetButton(presetSpecs[presetIndex]));
+  }
+  function buildPresetButton(spec) {
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'pill';
+    button.textContent = t(spec.key);
+    if (spec.now) {
+      button.title = t('datetime.preset_now_title');
+      button.setAttribute('aria-label', t('datetime.preset_now_title'));
+    }
+    button.addEventListener('click', function () {
+      // A preset is a quick draft edit, not a commit: keep the popover open so
+      // the operator can still tweak the day, hour, or minute before confirming.
+      var at = new Date(Date.now() + spec.minutes * 60000);
+      at.setSeconds(0, 0);
+      draft = at;
+      baseMonth = new Date(draft.getFullYear(), draft.getMonth(), 1);
+      renderCalendar();
+      syncTime();
+    });
+    presetsRow.appendChild(button);
+    return button;
+  }
+
+  var calendarWrap = document.createElement('div');
+  calendarWrap.className = 'datetime-calendar';
+  popover.appendChild(calendarWrap);
+
+  var timeRow = document.createElement('div');
+  timeRow.className = 'datetime-time';
+  var timeHeading = document.createElement('span');
+  timeHeading.className = 'datetime-time-label';
+  timeHeading.setAttribute('data-time-label', 'datetime.time');
+  timeHeading.textContent = t('datetime.time');
+  timeRow.appendChild(timeHeading);
+  var timeFields = document.createElement('div');
+  timeFields.className = 'time-fields';
+  timeRow.appendChild(timeFields);
+  var hourInput = buildTimeStepper('datetime.hour', 'datetime.hour_unit', 23, setHour);
+  var timeSeparator = document.createElement('span');
+  timeSeparator.className = 'time-separator';
+  timeSeparator.textContent = ':';
+  timeFields.appendChild(timeSeparator);
+  var minuteInput = buildTimeStepper('datetime.minute', 'datetime.minute_unit', 59, setMinute);
+  popover.appendChild(timeRow);
+
+  var hint = document.createElement('p');
+  hint.className = 'datetime-hint';
+  hint.hidden = true;
+  popover.appendChild(hint);
+
+  var footer = document.createElement('div');
+  footer.className = 'datetime-footer';
+  var footerClear = document.createElement('button');
+  footerClear.type = 'button';
+  footerClear.className = 'btn btn-secondary';
+  footerClear.addEventListener('click', function () {
+    commit('');
+  });
+  var footerConfirm = document.createElement('button');
+  footerConfirm.type = 'button';
+  footerConfirm.className = 'btn btn-primary';
+  footerConfirm.addEventListener('click', function () {
+    if (!draft || draft.getTime() <= Date.now()) {
+      return;
+    }
+    commit(draft.toISOString());
+  });
+  footer.appendChild(footerClear);
+  footer.appendChild(footerConfirm);
+  popover.appendChild(footer);
+
+  function buildTimeStepper(labelKey, unitKey, max, onPick) {
+    var wrap = document.createElement('div');
+    wrap.className = 'time-stepper';
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'time-value';
+    input.setAttribute('inputmode', 'numeric');
+    input.setAttribute('maxlength', '2');
+    input.setAttribute('data-time-input', labelKey);
+    input.setAttribute('aria-label', t(labelKey));
+    var unit = document.createElement('span');
+    unit.className = 'time-unit';
+    unit.setAttribute('data-time-unit', unitKey);
+    unit.textContent = t(unitKey);
+    var buttons = document.createElement('div');
+    buttons.className = 'time-buttons';
+    buttons.appendChild(buildTimeStepButton('is-up', 'datetime.increment'));
+    buttons.appendChild(buildTimeStepButton('is-down', 'datetime.decrement'));
+    wrap.appendChild(input);
+    wrap.appendChild(unit);
+    wrap.appendChild(buttons);
+    timeFields.appendChild(wrap);
+
+    function current() {
+      var parsed = parseInt(input.value, 10);
+      return isNaN(parsed) ? 0 : parsed;
+    }
+
+    function apply(next) {
+      var normalized = Math.min(max, Math.max(0, next));
+      input.value = pad2(normalized);
+      onPick(normalized);
+    }
+
+    function step(delta) {
+      var next = current() + delta;
+      if (next > max) {
+        next = 0;
+      } else if (next < 0) {
+        next = max;
+      }
+      apply(next);
+    }
+
+    input.addEventListener('input', function () {
+      input.value = input.value.replace(/[^0-9]/g, '').slice(0, 2);
+    });
+    input.addEventListener('change', function () {
+      apply(current());
+    });
+    input.addEventListener('blur', function () {
+      apply(current());
+    });
+    input.addEventListener('keydown', function (event) {
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        step(1);
+      } else if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        step(-1);
+      }
+    });
+    wrap.addEventListener('wheel', function (event) {
+      if (!event.deltaY) {
+        return;
+      }
+      event.preventDefault();
+      step(event.deltaY < 0 ? 1 : -1);
+    }, { passive: false });
+
+    var buttonsList = buttons.querySelectorAll('.time-step');
+    buttonsList[0].addEventListener('click', function () {
+      step(1);
+    });
+    buttonsList[1].addEventListener('click', function () {
+      step(-1);
+    });
+    return input;
+  }
+
+  function buildTimeStepButton(className, labelKey) {
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'time-step ' + className;
+    button.setAttribute('data-step-label', labelKey);
+    button.setAttribute('aria-label', t(labelKey));
+    button.appendChild(iconMarkup('chevron', ''));
+    return button;
+  }
+
+  function pad2(number) {
+    return number < 10 ? '0' + number : '' + number;
+  }
+
+  function formatLabel(at) {
+    return at.getFullYear() + '/' + pad2(at.getMonth() + 1) + '/' + pad2(at.getDate()) + ' ' + pad2(at.getHours()) + ':' + pad2(at.getMinutes());
+  }
+
+  function parsedValue() {
+    if (!value) {
+      return null;
+    }
+    var at = new Date(value);
+    return isNaN(at.getTime()) ? null : at;
+  }
+
+  function updateLabel() {
+    var at = parsedValue();
+    label.textContent = at ? formatLabel(at) : t(placeholderKey);
+    label.classList.toggle('is-placeholder', !at);
+    control.classList.toggle('has-value', Boolean(at));
+    clearBtn.hidden = !at;
+    clearBtn.title = t('datetime.clear');
+    clearBtn.setAttribute('aria-label', t('datetime.clear'));
+  }
+
+  function setValue(next) {
+    value = typeof next === 'string' ? next : '';
+    updateLabel();
+  }
+
+  function defaultDraft() {
+    var at = parsedValue();
+    if (at) {
+      return at;
+    }
+    var later = new Date(Date.now() + 86400000);
+    later.setSeconds(0, 0);
+    return later;
+  }
+
+  function syncTime() {
+    hourInput.value = pad2(draft.getHours());
+    minuteInput.value = pad2(draft.getMinutes());
+    var valid = draft.getTime() > Date.now();
+    footerConfirm.disabled = !valid;
+    hint.hidden = valid;
+    hint.textContent = valid ? '' : t('datetime.past');
+    if (open) {
+      positionPopover();
+    }
+  }
+
+  function setHour(hour) {
+    draft.setHours(hour, draft.getMinutes(), 0, 0);
+    syncTime();
+  }
+
+  function setMinute(minute) {
+    draft.setMinutes(minute, 0, 0);
+    syncTime();
+  }
+
+  function monthTitle(monthDate) {
+    if (state.language === 'en-US') {
+      try {
+        return new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(monthDate);
+      } catch (error) {}
+    }
+    return monthDate.getFullYear() + '年' + (monthDate.getMonth() + 1) + '月';
+  }
+
+  function renderCalendar() {
+    calendarWrap.textContent = '';
+
+    var head = document.createElement('div');
+    head.className = 'calendar-head';
+    var prev = document.createElement('button');
+    prev.type = 'button';
+    prev.className = 'btn-icon';
+    prev.title = t('range.previous_month');
+    prev.setAttribute('aria-label', t('range.previous_month'));
+    prev.appendChild(iconMarkup('prev', ''));
+    prev.addEventListener('click', function () {
+      baseMonth = new Date(baseMonth.getFullYear(), baseMonth.getMonth() - 1, 1);
+      renderCalendar();
+    });
+    var title = document.createElement('span');
+    title.textContent = monthTitle(baseMonth);
+    var next = document.createElement('button');
+    next.type = 'button';
+    next.className = 'btn-icon';
+    next.title = t('range.next_month');
+    next.setAttribute('aria-label', t('range.next_month'));
+    next.appendChild(iconMarkup('next', ''));
+    next.addEventListener('click', function () {
+      baseMonth = new Date(baseMonth.getFullYear(), baseMonth.getMonth() + 1, 1);
+      renderCalendar();
+    });
+    head.appendChild(prev);
+    head.appendChild(title);
+    head.appendChild(next);
+    calendarWrap.appendChild(head);
+
+    var grid = document.createElement('div');
+    grid.className = 'calendar-grid';
+    var weekKeys = ['range.week_sun', 'range.week_mon', 'range.week_tue', 'range.week_wed', 'range.week_thu', 'range.week_fri', 'range.week_sat'];
+    for (var weekIndex = 0; weekIndex < weekKeys.length; weekIndex++) {
+      var week = document.createElement('div');
+      week.className = 'calendar-week';
+      week.textContent = t(weekKeys[weekIndex]);
+      grid.appendChild(week);
+    }
+
+    var today = new Date();
+    var todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+    var firstDay = new Date(baseMonth.getFullYear(), baseMonth.getMonth(), 1).getDay();
+    var totalDays = new Date(baseMonth.getFullYear(), baseMonth.getMonth() + 1, 0).getDate();
+    for (var blank = 0; blank < firstDay; blank++) {
+      var empty = document.createElement('div');
+      empty.className = 'calendar-day empty';
+      grid.appendChild(empty);
+    }
+    for (var day = 1; day <= totalDays; day++) {
+      var cell = document.createElement('button');
+      cell.type = 'button';
+      cell.className = 'calendar-day datetime-day';
+      cell.textContent = '' + day;
+      var dateMidnight = new Date(baseMonth.getFullYear(), baseMonth.getMonth(), day).getTime();
+      if (dateMidnight < todayMidnight) {
+        cell.classList.add('is-disabled');
+        cell.disabled = true;
+      } else {
+        if (dateMidnight === new Date(draft.getFullYear(), draft.getMonth(), draft.getDate()).getTime()) {
+          cell.classList.add('is-selected');
+        }
+        cell.addEventListener('click', (function (selectedDay) {
+          return function () {
+            draft.setFullYear(baseMonth.getFullYear(), baseMonth.getMonth(), selectedDay);
+            draft.setSeconds(0, 0);
+            renderCalendar();
+            syncTime();
+          };
+        })(day));
+      }
+      grid.appendChild(cell);
+    }
+    calendarWrap.appendChild(grid);
+  }
+
+  function close() {
+    if (!open) {
+      return;
+    }
+    open = false;
+    popover.hidden = true;
+    container.classList.remove('is-open');
+    trigger.setAttribute('aria-expanded', 'false');
+    if (state.openDateTime === api) {
+      state.openDateTime = null;
+    }
+  }
+
+  function positionPopover() {
+    if (!open) {
+      return;
+    }
+    var rect = trigger.getBoundingClientRect();
+    var popRect = popover.getBoundingClientRect();
+    var left = rect.left;
+    if (left + popRect.width > window.innerWidth - 8) {
+      left = window.innerWidth - popRect.width - 8;
+    }
+    if (left < 8) {
+      left = 8;
+    }
+    var gap = 6;
+    var spaceBelow = window.innerHeight - rect.bottom - gap;
+    var spaceAbove = rect.top - gap;
+    var top;
+    if (popRect.height <= spaceBelow) {
+      top = rect.bottom + gap;
+    } else if (popRect.height <= spaceAbove) {
+      top = rect.top - popRect.height - gap;
+    } else if (spaceBelow >= spaceAbove) {
+      top = Math.max(8, window.innerHeight - popRect.height - 8);
+    } else {
+      top = 8;
+    }
+    popover.style.setProperty('left', left + 'px');
+    popover.style.setProperty('top', top + 'px');
+  }
+
+  function openPicker() {
+    if (open) {
+      return;
+    }
+    if (state.openDateTime && state.openDateTime !== api) {
+      state.openDateTime.close();
+    }
+    draft = defaultDraft();
+    baseMonth = new Date(draft.getFullYear(), draft.getMonth(), 1);
+    renderCalendar();
+    popover.hidden = false;
+    open = true;
+    container.classList.add('is-open');
+    trigger.setAttribute('aria-expanded', 'true');
+    syncTime();
+    popover.focus();
+    state.openDateTime = api;
+  }
+
+  function commit(next) {
+    var changed = (next || '') !== value;
+    setValue(next || '');
+    close();
+    if (changed && onChange) {
+      onChange(value);
+    }
+  }
+
+  trigger.addEventListener('click', function (event) {
+    event.stopPropagation();
+    if (open) {
+      close();
+    } else {
+      openPicker();
+    }
+  });
+
+  clearBtn.addEventListener('click', function (event) {
+    event.stopPropagation();
+    commit('');
+  });
+
+  // Calendar cells re-render on click, so the original target can be detached
+  // from the DOM before the document outside-click listener runs. Keeping the
+  // click inside the popover prevents that listener from closing a live picker.
+  popover.addEventListener('click', function (event) {
+    event.stopPropagation();
+  });
+
+  popover.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && open) {
+      event.stopPropagation();
+      close();
+    }
+  });
+
+  document.addEventListener('click', function (event) {
+    if (open && !container.contains(event.target) && !popover.contains(event.target)) {
+      close();
+    }
+  });
+  window.addEventListener('resize', positionPopover);
+  window.addEventListener('scroll', positionPopover, true);
+
+  var api = {
+    getValue: function () {
+      return value;
+    },
+    setValue: setValue,
+    open: openPicker,
+    close: close,
+    refresh: function () {
+      updateLabel();
+      for (var index = 0; index < presetButtons.length; index++) {
+        presetButtons[index].textContent = t(presetSpecs[index].key);
+        if (presetSpecs[index].now) {
+          presetButtons[index].title = t('datetime.preset_now_title');
+          presetButtons[index].setAttribute('aria-label', t('datetime.preset_now_title'));
+        }
+      }
+      footerClear.textContent = t('datetime.clear_action');
+      footerConfirm.textContent = t('datetime.confirm');
+      var headings = popover.querySelectorAll('[data-time-label]');
+      for (var headingIndex = 0; headingIndex < headings.length; headingIndex++) {
+        headings[headingIndex].textContent = t(headings[headingIndex].getAttribute('data-time-label'));
+      }
+      var timeInputs = popover.querySelectorAll('[data-time-input]');
+      for (var inputIndex = 0; inputIndex < timeInputs.length; inputIndex++) {
+        timeInputs[inputIndex].setAttribute('aria-label', t(timeInputs[inputIndex].getAttribute('data-time-input')));
+      }
+      var units = popover.querySelectorAll('[data-time-unit]');
+      for (var unitIndex = 0; unitIndex < units.length; unitIndex++) {
+        units[unitIndex].textContent = t(units[unitIndex].getAttribute('data-time-unit'));
+      }
+      var stepButtons = popover.querySelectorAll('[data-step-label]');
+      for (var stepIndex = 0; stepIndex < stepButtons.length; stepIndex++) {
+        stepButtons[stepIndex].setAttribute('aria-label', t(stepButtons[stepIndex].getAttribute('data-step-label')));
+      }
+      if (open) {
+        renderCalendar();
+        syncTime();
+      }
+    }
+  };
+
+  updateLabel();
+  footerClear.textContent = t('datetime.clear_action');
+  footerConfirm.textContent = t('datetime.confirm');
+  state.selects.push(api);
+  return api;
+}
+
+function closeOpenDateTime() {
+  if (state.openDateTime) {
+    state.openDateTime.close();
+  }
+}
+
 // refreshComponentLabels re-resolves the labels of every mounted component after
 // a language switch.
 function refreshComponentLabels() {

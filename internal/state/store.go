@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"cpa-secret-manager/internal/quota"
 	"cpa-secret-manager/internal/remarks"
@@ -91,6 +92,7 @@ func DefaultAppConfig() AppConfig {
 type Document struct {
 	SchemaVersion int                          `json:"schema_version"`
 	Remarks       map[string]remarks.Entry     `json:"remarks,omitempty"`
+	Expirations   map[string]time.Time         `json:"expirations,omitempty"`
 	QuotaRules    map[string]quota.Rule        `json:"quota_rules,omitempty"`
 	QuotaStates   map[string]quota.WindowState `json:"quota_states,omitempty"`
 	AppConfig     AppConfig                    `json:"app_config"`
@@ -239,6 +241,60 @@ func (s *Store) DeleteRemark(hash string) bool {
 		return false
 	}
 	delete(s.doc.Remarks, hash)
+	return true
+}
+
+// Expirations returns a copy of the expiration index.
+func (s *Store) Expirations() map[string]time.Time {
+	if s == nil {
+		return map[string]time.Time{}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	out := make(map[string]time.Time, len(s.doc.Expirations))
+	for hash, at := range s.doc.Expirations {
+		out[hash] = at
+	}
+	return out
+}
+
+// Expiry returns the expiration instant stored for one hash index.
+func (s *Store) Expiry(hash string) (time.Time, bool) {
+	if s == nil {
+		return time.Time{}, false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	at, ok := s.doc.Expirations[hash]
+	return at, ok
+}
+
+// SetExpiry stores or replaces one expiration instant.
+func (s *Store) SetExpiry(hash string, at time.Time) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.doc.Expirations == nil {
+		s.doc.Expirations = make(map[string]time.Time)
+	}
+	s.doc.Expirations[hash] = at.UTC()
+}
+
+// DeleteExpiry removes one expiration instant, reporting whether it existed.
+func (s *Store) DeleteExpiry(hash string) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.doc.Expirations[hash]; !ok {
+		return false
+	}
+	delete(s.doc.Expirations, hash)
 	return true
 }
 
@@ -396,6 +452,13 @@ func (doc Document) clone() Document {
 			remarksCopy[hash] = entry
 		}
 		doc.Remarks = remarksCopy
+	}
+	if len(doc.Expirations) > 0 {
+		expiryCopy := make(map[string]time.Time, len(doc.Expirations))
+		for hash, at := range doc.Expirations {
+			expiryCopy[hash] = at
+		}
+		doc.Expirations = expiryCopy
 	}
 	if len(doc.QuotaRules) > 0 {
 		rulesCopy := make(map[string]quota.Rule, len(doc.QuotaRules))

@@ -31,14 +31,18 @@ _Avoid_: name、label、alias、note、description。
 _Avoid_: fingerprint、id、uuid。
 
 **Plugin State File**:
-插件数据目录 `data/cpa-secret-manager/`，状态文档 `state.json` 包含 `remarks`、`quota_rules`、`quota_states`、`app_config`；用量小时桶、失败记录与参考价缓存分别位于同目录的 `buckets.json`、`errors.json`、`prices.json`。写入必须原子替换。
+插件数据目录 `data/cpa-secret-manager/`，状态文档 `state.json` 包含 `remarks`、`expirations`、`quota_rules`、`quota_states`、`app_config`；用量小时桶、失败记录与参考价缓存分别位于同目录的 `buckets.json`、`errors.json`、`prices.json`。写入必须原子替换。
 _Avoid_: cache file、database、store（不加限定时歧义）。
+
+**Expiry**:
+附加在 Proxy API Key 上的过期时刻（RFC3339，统一存 UTC），以 Hash Index 索引保存在状态文档的 `expirations`。到期后 `request.intercept_before` 在请求进入上游前直接终止它（401，`key_expired`），不依赖页面是否打开；宿主密钥列表的移除由持有管理密钥的管理页在刷新/轮询时完成：插件 Go 运行时只在宿主转发管理请求时短暂看到该密钥，不持久化，也没有宿主管理接口的地址，因此无法在后台独立改写宿主列表。页面显示的时间戳只是提示，过期判定一律使用服务端时钟。
+_Avoid_: TTL、有效期（易与配额窗口混淆）、自动封禁。
 
 **App Config**:
 插件状态文件内的 `app_config` 节点，承载 `usage_enabled` 等业务开关，由插件设置页管理，**不写入宿主 `config.yaml`**。
 
 **State Projection**:
-插件状态只投影宿主 `api-keys` 里**当前存在**的密钥。读接口（`resolve`）永不删除任何东西；删除只发生在显式的 `forget` 调用：页面在本页删除密钥时调用它，或在确认某把密钥连续两轮都不在宿主列表里之后调用它。因此不存在"已删除但仍留在插件里"的中间态——在官方管理端删除与在本插件页删除，最终状态完全一致。
+插件状态只投影宿主 `api-keys` 里**当前存在**的密钥。读接口（`resolve`）永不删除任何东西；删除只发生在显式的 `forget` 调用：页面在本页删除密钥时调用它，在自动清理已过期密钥后调用它，或在确认某把密钥连续两轮都不在宿主列表里之后调用它。因此不存在"已删除但仍留在插件里"的中间态——在官方管理端删除与在本插件页删除，最终状态完全一致。
 _Avoid_: orphan、孤儿、无主、残留（都不应作为产品概念出现）。
 
 ### Usage Attribution

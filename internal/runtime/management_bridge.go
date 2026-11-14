@@ -64,6 +64,7 @@ func managementRoutes() []managementRoute {
 		{Method: http.MethodPost, Path: management.RouteResolve},
 		{Method: http.MethodPut, Path: management.RouteRemarks},
 		{Method: http.MethodPost, Path: management.RouteForget},
+		{Method: http.MethodPut, Path: management.RouteExpiry},
 		{Method: http.MethodPost, Path: management.RouteGenerate},
 		{Method: http.MethodPost, Path: management.RouteFailures},
 		{Method: http.MethodGet, Path: management.RouteQuota},

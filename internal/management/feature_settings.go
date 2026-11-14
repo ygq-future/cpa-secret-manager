@@ -1610,6 +1610,7 @@ var helpFeature = pageFeature{
             <ul class="help-list">
               <li data-i18n="help.keys_body"></li>
               <li data-i18n="help.generate_body"></li>
+              <li data-i18n="help.expiry_body"></li>
             </ul>
           </div>
         </div>

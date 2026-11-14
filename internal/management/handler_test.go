@@ -16,6 +16,7 @@ type stubBackend struct {
 	settings Settings
 	updated  *SettingsUpdate
 	remark   *RemarkUpdate
+	expiry   *ExpiryUpdate
 	key      string
 	forgot   []string
 	failures []FailureItem
@@ -53,6 +54,11 @@ func (s *stubBackend) Forget(_ context.Context, hashes []string) (int, error) {
 
 func (s *stubBackend) SetRemark(_ context.Context, key string, remark string) error {
 	s.remark = &RemarkUpdate{Key: key, Remark: remark}
+	return nil
+}
+
+func (s *stubBackend) SetExpiry(_ context.Context, key string, expiresAt string) error {
+	s.expiry = &ExpiryUpdate{Key: key, ExpiresAt: expiresAt}
 	return nil
 }
 
@@ -224,6 +230,27 @@ func TestHandler_ForgetDropsSubmittedKeys(t *testing.T) {
 
 	recorder = httptest.NewRecorder()
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, RouteForget, nil))
+	if recorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET status = %d, want 405", recorder.Code)
+	}
+}
+
+func TestHandler_ExpiryForwardsTheInstant(t *testing.T) {
+	backend := &stubBackend{}
+	handler := NewHandler(backend)
+
+	recorder := httptest.NewRecorder()
+	body := `{"key":"sk-a","expires_at":"2026-12-01T12:30:00Z"}`
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPut, RouteExpiry, strings.NewReader(body)))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	if backend.expiry == nil || backend.expiry.Key != "sk-a" || backend.expiry.ExpiresAt != "2026-12-01T12:30:00Z" {
+		t.Fatalf("expiry = %+v, want the submitted key and instant", backend.expiry)
+	}
+
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, RouteExpiry, nil))
 	if recorder.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("GET status = %d, want 405", recorder.Code)
 	}
