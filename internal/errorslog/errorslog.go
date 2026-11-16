@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -21,6 +22,12 @@ type ErrorEntry struct {
 	StatusCode int       `json:"status_code"`
 	Message    string    `json:"message"`
 }
+
+// documentSchemaVersion is the persisted layout version. Version 2 stores
+// failure messages as plain text; version 1 documents kept the HTML-escaped
+// upstream body the host reports (&#34; in place of a quote) and are decoded once
+// when they are loaded.
+const documentSchemaVersion = 2
 
 // Document is the persisted format of the errors log.
 type Document struct {
@@ -63,7 +70,22 @@ func Load(path string) (*Store, error) {
 	if doc.Failures != nil {
 		store.entries = doc.Failures
 	}
+	if doc.SchemaVersion < documentSchemaVersion {
+		store.decodeMessages()
+	}
 	return store, nil
+}
+
+// decodeMessages repairs documents written before the schema stored plain text:
+// each message is HTML-unescaped exactly once, and the store is marked dirty so
+// the next save persists the readable text under the current schema version.
+func (s *Store) decodeMessages() {
+	for _, list := range s.entries {
+		for i := range list {
+			list[i].Message = html.UnescapeString(list[i].Message)
+		}
+	}
+	s.dirty = true
 }
 
 // Path returns the storage path.
@@ -226,7 +248,7 @@ func (s *Store) Save() error {
 	}
 
 	doc := Document{
-		SchemaVersion: 1,
+		SchemaVersion: documentSchemaVersion,
 		Failures:      s.entries,
 	}
 

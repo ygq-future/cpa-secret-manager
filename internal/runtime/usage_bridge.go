@@ -3,6 +3,7 @@ package runtime
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"strings"
 	"time"
 
@@ -124,8 +125,11 @@ func pickTime(fields map[string]json.RawMessage, names ...string) time.Time {
 
 const maxFailureMessageLength = 512
 
+// cleanFailureMessage normalizes the upstream error body before it is stored.
+// The host reports the body HTML-escaped (a quote arrives as &#34;), so one
+// decode turns it back into the JSON text the page shows and copies.
 func cleanFailureMessage(msg string) string {
-	msg = strings.TrimSpace(msg)
+	msg = html.UnescapeString(strings.TrimSpace(msg))
 	if len(msg) == 0 {
 		return ""
 	}

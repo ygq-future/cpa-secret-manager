@@ -975,7 +975,8 @@ func TestRuntime_ErrorLogRecordingAndQuery(t *testing.T) {
 	statePath := filepath.Join(t.TempDir(), "state.json")
 	rt := registerRuntime(t, statePath)
 
-	// Push a failure usage record
+	// Push a failure usage record. The host reports the upstream body
+	// HTML-escaped, so the stored message must be the readable text.
 	failureRecord := []byte(`{
 		"APIKey": "sk-testkey",
 		"AuthID": "codex-user@example.com.json",
@@ -984,7 +985,7 @@ func TestRuntime_ErrorLogRecordingAndQuery(t *testing.T) {
 		"RequestedAt": "2026-10-19T10:00:00Z",
 		"Failure": {
 			"StatusCode": 429,
-			"Body": "rate limit exceeded"
+			"Body": "{&#34;error&#34;:{&#34;code&#34;:429,&#34;status&#34;:&#34;RESOURCE_EXHAUSTED&#34;}}"
 		}
 	}`)
 	rt.Handle(context.Background(), MethodUsageHandle, failureRecord)
@@ -998,7 +999,8 @@ func TestRuntime_ErrorLogRecordingAndQuery(t *testing.T) {
 	if len(res.Items) != 1 {
 		t.Fatalf("expected 1 failure item, got %d", len(res.Items))
 	}
-	if res.Items[0].StatusCode != 429 || res.Items[0].Message != "rate limit exceeded" {
+	wantMessage := `{"error":{"code":429,"status":"RESOURCE_EXHAUSTED"}}`
+	if res.Items[0].StatusCode != 429 || res.Items[0].Message != wantMessage {
 		t.Fatalf("unexpected failure entry: %+v", res.Items[0])
 	}
 	if res.Items[0].AuthID != "codex-user@example.com.json" {
@@ -1018,11 +1020,16 @@ func TestRuntime_ErrorLogRecordingAndQuery(t *testing.T) {
 		t.Fatalf("aggregate failures lost key attribution: %+v", all.Items)
 	}
 
-	// Flush and verify errors file exists
+	// Flush and verify the errors file holds the decoded text, so a later start
+	// never has to decode it again.
 	rt.FlushUsage()
 	errorsPath := ErrorsPath(statePath)
-	if _, err := os.Stat(errorsPath); err != nil {
+	rawErrors, err := os.ReadFile(errorsPath)
+	if err != nil {
 		t.Fatalf("expected errors file at %s: %v", errorsPath, err)
+	}
+	if strings.Contains(string(rawErrors), "&#34;") {
+		t.Fatalf("stored failure message kept the HTML escape: %s", rawErrors)
 	}
 
 	// Forget the key

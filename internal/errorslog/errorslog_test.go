@@ -1,7 +1,9 @@
 package errorslog_test
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -97,5 +99,54 @@ func TestErrorsLogRecordAndQuery(t *testing.T) {
 	}
 	if len(loaded.Query("hash1", time.Time{}, time.Time{})) != 0 {
 		t.Fatal("expected hash1 to be empty after Forget")
+	}
+}
+
+// TestErrorsLogDecodesLegacyEscapedMessages pins the schema bump: documents
+// written before plain-text storage keep the HTML-escaped host body, and loading
+// decodes each message exactly once. The nested entity proves the reload does
+// not decode a second time.
+func TestErrorsLogDecodesLegacyEscapedMessages(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "errors.json")
+	legacy := `{"schema_version":1,"failures":{"hash1":[{"time":"2026-11-16T08:00:00Z","model":"gemini-3.5-flash-lite","status_code":429,"message":"body &amp;#34;quoted&amp;#34;"}]}}`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatalf("write legacy document: %v", err)
+	}
+
+	store, err := errorslog.Load(path)
+	if err != nil {
+		t.Fatalf("load legacy document: %v", err)
+	}
+	entries := store.Query("hash1", time.Time{}, time.Time{})
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 legacy entry, got %d", len(entries))
+	}
+	if got, want := entries[0].Message, `body &#34;quoted&#34;`; got != want {
+		t.Fatalf("legacy message decoded to %q, want %q", got, want)
+	}
+	if !store.Dirty() {
+		t.Fatal("a migrated document must be dirty so the decoded text is persisted")
+	}
+	if err := store.Save(); err != nil {
+		t.Fatalf("save migrated document: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read migrated document: %v", err)
+	}
+	if !strings.Contains(string(raw), `"schema_version":2`) {
+		t.Fatalf("migrated document should carry schema version 2: %s", raw)
+	}
+
+	reloaded, err := errorslog.Load(path)
+	if err != nil {
+		t.Fatalf("reload migrated document: %v", err)
+	}
+	again := reloaded.Query("hash1", time.Time{}, time.Time{})
+	if len(again) != 1 || again[0].Message != `body &#34;quoted&#34;` {
+		t.Fatalf("reload decoded the message twice: %+v", again)
+	}
+	if reloaded.Dirty() {
+		t.Fatal("a current document must not be rewritten on load")
 	}
 }
