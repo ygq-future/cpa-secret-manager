@@ -2036,6 +2036,21 @@ table.data-table {
   margin-top: 4px;
 }
 
+#confirm-modal { z-index: 55; }
+
+.modal-actions-between {
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.modal-actions-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-left: auto;
+}
+
 .modal-header-row {
   align-items: baseline;
   margin-bottom: 12px;

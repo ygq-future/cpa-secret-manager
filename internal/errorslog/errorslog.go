@@ -209,6 +209,93 @@ func (s *Store) Prune(cutoff time.Time) int {
 	return removed
 }
 
+// ClearFilter constrains which error entries are removed by ClearBefore.
+// Before is required; Hash, AuthID, Model, and StatusCode are optional filters.
+type ClearFilter struct {
+	Before     time.Time
+	Hash       string
+	AuthID     string
+	Model      string
+	StatusCode *int
+}
+// ClearedEntry identifies a removed error log entry for downstream counter sync.
+type ClearedEntry struct {
+	Hash  string
+	Time  time.Time
+	Model string
+}
+
+// ClearBefore removes error entries recorded before filter.Before that match all
+// supplied filter fields, returning the number of removed entries.
+func (s *Store) ClearBefore(filter ClearFilter) int {
+	return len(s.ClearBeforeEntries(filter))
+}
+
+// ClearBeforeEntries removes error entries recorded before filter.Before that
+// match all supplied filter fields and returns the removed entries.
+func (s *Store) ClearBeforeEntries(filter ClearFilter) []ClearedEntry {
+	if s == nil || filter.Before.IsZero() {
+		return nil
+	}
+	before := filter.Before.UTC()
+	targetHash := strings.TrimSpace(filter.Hash)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var removed []ClearedEntry
+	clearHash := func(hash string, list []ErrorEntry) {
+		var kept []ErrorEntry
+		for _, item := range list {
+			if matchesClearFilter(item, before, filter.AuthID, filter.Model, filter.StatusCode) {
+				removed = append(removed, ClearedEntry{
+					Hash:  hash,
+					Time:  item.Time,
+					Model: item.Model,
+				})
+			} else {
+				kept = append(kept, item)
+			}
+		}
+		if len(kept) == 0 {
+			delete(s.entries, hash)
+		} else if len(kept) < len(list) {
+			s.entries[hash] = kept
+		}
+	}
+
+	if targetHash != "" {
+		if list, ok := s.entries[targetHash]; ok {
+			clearHash(targetHash, list)
+		}
+	} else {
+		for hash, list := range s.entries {
+			clearHash(hash, list)
+		}
+	}
+
+	if len(removed) > 0 {
+		s.dirty = true
+	}
+	return removed
+}
+
+func matchesClearFilter(item ErrorEntry, before time.Time, authID, model string, statusCode *int) bool {
+	if !item.Time.Before(before) {
+		return false
+	}
+	if authID != "" && item.AuthID != authID {
+		return false
+	}
+	if model != "" && item.Model != model {
+		return false
+	}
+	if statusCode != nil && item.StatusCode != *statusCode {
+		return false
+	}
+	return true
+}
+
 // Forget removes all error entries for the given key hash.
 func (s *Store) Forget(hash string) bool {
 	if s == nil || strings.TrimSpace(hash) == "" {

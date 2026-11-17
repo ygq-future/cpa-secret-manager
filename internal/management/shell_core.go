@@ -38,6 +38,7 @@ var REMARKS_PATH = PLUGIN_BASE + '/remarks';
 var EXPIRY_PATH = PLUGIN_BASE + '/expiry';
 var GENERATE_PATH = PLUGIN_BASE + '/keys/generate';
 var FAILURES_PATH = PLUGIN_BASE + '/failures';
+var FAILURES_CLEAR_PATH = PLUGIN_BASE + '/failures/clear';
 var QUOTA_PATH = PLUGIN_BASE + '/quota';
 var V1_MODELS_PATH = '/v1/models';
 var state = {
@@ -659,9 +660,15 @@ function handleEscape(event) {
   if (event.key !== 'Escape') {
     return;
   }
+  var confirmNode = byId('confirm-modal');
+  if (confirmNode && confirmNode.classList.contains('open')) {
+    closeConfirm();
+    return;
+  }
   closeModal('key-modal');
   closeKeyForm();
-  closeConfirm();
+  closeFailuresModal();
+  closeDateRangeModal();
 }
 
 function setGlobalLoading(loading, message) {

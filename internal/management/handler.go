@@ -47,8 +47,9 @@ const (
 	PathGenerate = "/keys/generate"
 	// PathFailures queries failure error logs by key hash and time range.
 	PathFailures = "/failures"
-	PathQuota    = "/quota"
-	// PathModels returns known model names.
+	// PathFailuresClear deletes failure error logs recorded at or after a cutoff instant.
+	PathFailuresClear = "/failures/clear"
+	PathQuota         = "/quota"
 	PathModels = "/models"
 	// PathPricing returns the cached reference prices for a model list.
 	PathPricing = "/pricing"
@@ -67,8 +68,9 @@ const (
 	RouteGenerate = legacyBase + PathGenerate
 	// RouteFailures is the failures route path registered with the host.
 	RouteFailures = legacyBase + PathFailures
-	RouteQuota    = legacyBase + PathQuota
-	// RouteModels is the models route registered with the host.
+	// RouteFailuresClear is the failure log clearing route registered with the host.
+	RouteFailuresClear = legacyBase + PathFailuresClear
+	RouteQuota         = legacyBase + PathQuota
 	RouteModels = legacyBase + PathModels
 	// RoutePricing is the cached reference-price route.
 	RoutePricing = legacyBase + PathPricing
@@ -152,6 +154,22 @@ type FailureItem struct {
 // FailuresResult returns the matched error log entries.
 type FailuresResult struct {
 	Items []FailureItem `json:"items"`
+}
+
+// ClearFailuresRequest specifies the cutoff instant and optional filters for
+// removing error log entries recorded before Before.
+type ClearFailuresRequest struct {
+	Before     string `json:"before"`
+	Hash       string `json:"hash,omitempty"`
+	AuthID     string `json:"auth_id,omitempty"`
+	Model      string `json:"model,omitempty"`
+	StatusCode *int   `json:"status_code,omitempty"`
+}
+
+// ClearFailuresResult reports how many error log entries were removed.
+type ClearFailuresResult struct {
+	Status  string `json:"status"`
+	Removed int    `json:"removed"`
 }
 
 // KeyEntry is the per-key payload returned by Resolve. Items are aligned with
@@ -288,6 +306,7 @@ type Backend interface {
 	SetExpiry(ctx context.Context, apiKey string, expiresAt string) error
 	GenerateKey(ctx context.Context) (string, error)
 	Failures(ctx context.Context, req FailuresRequest) (FailuresResult, error)
+	ClearFailures(ctx context.Context, req ClearFailuresRequest) (ClearFailuresResult, error)
 	Quota(ctx context.Context, hash string) (QuotaSummary, bool, error)
 	SetQuota(ctx context.Context, update QuotaUpdate) error
 	DeleteQuota(ctx context.Context, hash string) error
@@ -334,6 +353,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveGenerate(w, r)
 	case PathFailures:
 		h.serveFailures(w, r)
+	case PathFailuresClear:
+		h.serveFailuresClear(w, r)
 	case PathQuota:
 		h.serveQuota(w, r)
 	case PathModels:
@@ -414,6 +435,26 @@ func (h *Handler) serveFailures(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := h.backend.Failures(r.Context(), request)
+	if h.fail(w, err) {
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) serveFailuresClear(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, http.MethodPost)
+		return
+	}
+	var request ClearFailuresRequest
+	if !decodeBody(w, r, &request) {
+		return
+	}
+	if strings.TrimSpace(request.Before) == "" {
+		writeJSON(w, http.StatusBadRequest, errorBody("invalid_request", "before is required"))
+		return
+	}
+	result, err := h.backend.ClearFailures(r.Context(), request)
 	if h.fail(w, err) {
 		return
 	}

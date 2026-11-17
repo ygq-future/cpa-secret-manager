@@ -2155,3 +2155,110 @@ func TestPage_ShellModalsTagBalance(t *testing.T) {
 		t.Fatal("key-form-modal must contain save and cancel buttons")
 	}
 }
+
+func TestPage_ClearFailuresContract(t *testing.T) {
+	for _, fragment := range []string{
+		`id="failures-clear-toggle"`,
+		`id="failures-clear-panel"`,
+		`id="failures-clear-scope"`,
+		`id="failures-clear-picker"`,
+		`id="failures-clear-cancel"`,
+		`id="failures-clear-exec"`,
+		"FAILURES_CLEAR_PATH",
+		"mode: 'past'",
+	} {
+		if !strings.Contains(PageHTML, fragment) {
+			t.Fatalf("PageHTML is missing clear failures contract fragment %q", fragment)
+		}
+	}
+
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed; skipping runtime JS evaluation test")
+	}
+
+	script := extractPageScript(t)
+	mountFn := extractJSFunction(script, "mountDateTimePicker")
+	if mountFn == "" {
+		t.Fatal("could not extract mountDateTimePicker")
+	}
+
+	testRunner := `
+var state = { language: 'zh-CN', selects: [], openDateTime: null };
+function t(k) { return k; }
+function iconMarkup() { return null; }
+function makeEl(tag) {
+  var el = {
+    tagName: tag,
+    children: [],
+    attributes: {},
+    className: '',
+    textContent: '',
+    hidden: false,
+    disabled: false,
+    value: '',
+    style: { setProperty: function () {} },
+    classList: {
+      _set: {},
+      add: function (c) { this._set[c] = true; },
+      remove: function (c) { delete this._set[c]; },
+      toggle: function (c, f) { if (f === undefined) { if (this._set[c]) delete this._set[c]; else this._set[c] = true; } else if (f) this._set[c] = true; else delete this._set[c]; },
+      contains: function (c) { return !!this._set[c]; }
+    },
+    setAttribute: function (k, v) { this.attributes[k] = String(v); },
+    getAttribute: function (k) { return this.attributes[k] || ''; },
+    appendChild: function (c) { this.children.push(c); return c; },
+    addEventListener: function (ev, fn) { this['_ev_' + ev] = fn; },
+    contains: function () { return false; },
+    focus: function () {},
+    getBoundingClientRect: function () { return { left: 0, top: 0, bottom: 10, width: 100, height: 100 }; },
+    querySelectorAll: function (sel) {
+      if (sel === '.time-step') {
+        return [makeEl('button'), makeEl('button')];
+      }
+      return [];
+    }
+  };
+  return el;
+}
+var document = {
+  body: makeEl('body'),
+  createElement: makeEl,
+  addEventListener: function () {}
+};
+var window = { innerWidth: 1200, innerHeight: 800, addEventListener: function () {} };
+` + mountFn + `
+var container = makeEl('div');
+var picker = mountDateTimePicker({ container: container, mode: 'past', placeholderKey: 'failures.clear_placeholder' });
+picker.open();
+// Extract calendar cells appended to document.body popover
+var popover = document.body.children[0];
+var calendarWrap = popover.children[1];
+var grid = calendarWrap.children[1];
+var today = new Date();
+var enabledPast = 0;
+var disabledFuture = 0;
+for (var i = 0; i < grid.children.length; i++) {
+  var cell = grid.children[i];
+  if (!cell.textContent) continue;
+  var dayNum = Number(cell.textContent);
+  if (dayNum <= today.getDate() && !cell.disabled) enabledPast++;
+  if (dayNum > today.getDate() && cell.disabled) disabledFuture++;
+}
+if (enabledPast === 0) {
+  throw new Error('expected past/today days to be enabled in past mode');
+}
+if (today.getDate() < 28 && disabledFuture === 0) {
+  throw new Error('expected future days in current month to be disabled in past mode');
+}
+var pastISO = new Date(Date.now() - 3600000).toISOString();
+picker.setValue(pastISO);
+if (picker.getValue() !== pastISO) {
+  throw new Error('expected setValue to persist ISO cutoff');
+}
+`
+	cmd := exec.Command(nodePath, "-e", testRunner)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("node execution failed: %v\noutput: %s", err, string(out))
+	}
+}

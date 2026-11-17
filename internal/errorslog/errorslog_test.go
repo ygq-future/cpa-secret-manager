@@ -150,3 +150,52 @@ func TestErrorsLogDecodesLegacyEscapedMessages(t *testing.T) {
 		t.Fatal("a current document must not be rewritten on load")
 	}
 }
+
+func TestErrorsLogClearBefore(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "errors.json")
+	store, err := errorslog.Load(path)
+	if err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+
+	t0 := time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC)
+	t1 := t0.Add(1 * time.Hour)
+	t2 := t0.Add(2 * time.Hour)
+
+	store.Record("hash1", errorslog.ErrorEntry{Time: t0, Model: "gpt-5.6", AuthID: "auth-a", StatusCode: 0, Message: "old zero"})
+	store.Record("hash1", errorslog.ErrorEntry{Time: t0, Model: "gpt-5.6", AuthID: "auth-a", StatusCode: 429, Message: "old 429"})
+	store.Record("hash1", errorslog.ErrorEntry{Time: t1, Model: "gpt-5.6", AuthID: "auth-a", StatusCode: 500, Message: "exact cutoff"})
+	store.Record("hash2", errorslog.ErrorEntry{Time: t0, Model: "gpt-5.6", AuthID: "auth-a", StatusCode: 503, Message: "other key"})
+	store.Record("hash2", errorslog.ErrorEntry{Time: t2, Model: "claude-3-7-sonnet", AuthID: "auth-b", StatusCode: 500, Message: "newer"})
+	if err := store.Save(); err != nil {
+		t.Fatalf("initial save failed: %v", err)
+	}
+
+	// Zero Before must be a no-op.
+	if got := store.ClearBefore(errorslog.ClearFilter{}); got != 0 || store.Dirty() {
+		t.Fatalf("zero Before removed %d (dirty=%v), want 0 and clean", got, store.Dirty())
+	}
+
+	// Filtered clear for status_code == 0 before t1 removes only the zero-status entry.
+	zero := 0
+	if got := store.ClearBefore(errorslog.ClearFilter{Before: t1, Hash: "hash1", StatusCode: &zero}); got != 1 {
+		t.Fatalf("status_code=0 clear removed %d, want 1", got)
+	}
+	if !store.Dirty() {
+		t.Fatal("expected store dirty after ClearBefore")
+	}
+
+	// Filtered clear by model across all hashes before t1 removes hash1@429 and hash2@503, keeping hash1@t1 and hash2@t2.
+	if got := store.ClearBefore(errorslog.ClearFilter{Before: t1, Model: "gpt-5.6"}); got != 2 {
+		t.Fatalf("model clear removed %d, want 2", got)
+	}
+
+	leftHash1 := store.Query("hash1", time.Time{}, time.Time{})
+	if len(leftHash1) != 1 || !leftHash1[0].Time.Equal(t1) {
+		t.Fatalf("hash1 entries = %+v, want only t1 entry", leftHash1)
+	}
+	leftHash2 := store.Query("hash2", time.Time{}, time.Time{})
+	if len(leftHash2) != 1 || !leftHash2[0].Time.Equal(t2) {
+		t.Fatalf("hash2 entries = %+v, want only t2 entry", leftHash2)
+	}
+}

@@ -946,17 +946,18 @@ func TestHandle_ManagementRegister_DeclaresAllRoutes(t *testing.T) {
 	}
 
 	wanted := map[string]string{
-		"GET " + management.RouteSettings:  "settings read",
-		"PUT " + management.RouteSettings:  "settings write",
-		"POST " + management.RouteResolve:  "resolve",
-		"PUT " + management.RouteRemarks:   "remarks",
-		"POST " + management.RouteForget:   "forget",
-		"POST " + management.RouteGenerate: "generate",
-		"POST " + management.RouteFailures: "failures",
-		"GET " + management.RouteQuota:     "quota read",
-		"PUT " + management.RouteQuota:     "quota write",
-		"DELETE " + management.RouteQuota:  "quota delete",
-		"GET " + management.RouteModels:    "models read",
+		"GET " + management.RouteSettings:       "settings read",
+		"PUT " + management.RouteSettings:       "settings write",
+		"POST " + management.RouteResolve:       "resolve",
+		"PUT " + management.RouteRemarks:        "remarks",
+		"POST " + management.RouteForget:        "forget",
+		"POST " + management.RouteGenerate:      "generate",
+		"POST " + management.RouteFailures:      "failures",
+		"POST " + management.RouteFailuresClear: "failures clear",
+		"GET " + management.RouteQuota:          "quota read",
+		"PUT " + management.RouteQuota:          "quota write",
+		"DELETE " + management.RouteQuota:       "quota delete",
+		"GET " + management.RouteModels:         "models read",
 	}
 
 	declared := make(map[string]bool)
@@ -1042,6 +1043,71 @@ func TestRuntime_ErrorLogRecordingAndQuery(t *testing.T) {
 	}
 	if len(resAfter.Items) != 0 {
 		t.Fatalf("expected 0 failure items after forget, got %d", len(resAfter.Items))
+	}
+}
+
+func TestRuntime_ClearFailures(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	rt := registerRuntime(t, statePath)
+
+	pushFailure := func(key, authID, model, at string, code int) {
+		t.Helper()
+		payload, _ := json.Marshal(map[string]any{
+			"APIKey":      key,
+			"AuthID":      authID,
+			"Model":       model,
+			"Failed":      true,
+			"RequestedAt": at,
+			"Failure": map[string]any{
+				"StatusCode": code,
+				"Body":       "err",
+			},
+		})
+		rt.Handle(context.Background(), MethodUsageHandle, payload)
+	}
+
+	pushFailure("sk-key-a", "auth-1", "gpt-5.6", "2026-11-17T08:00:00Z", 429)
+	pushFailure("sk-key-a", "auth-1", "gpt-5.6", "2026-11-17T10:00:00Z", 500)
+	pushFailure("sk-key-a", "auth-2", "claude-3-7-sonnet", "2026-11-17T11:00:00Z", 503)
+	pushFailure("sk-key-b", "auth-1", "gpt-5.6", "2026-11-17T11:30:00Z", 429)
+
+	if _, err := rt.ClearFailures(context.Background(), management.ClearFailuresRequest{Before: "not-a-time"}); err == nil {
+		t.Fatal("expected error for invalid before timestamp")
+	}
+	neg := -1
+	if _, err := rt.ClearFailures(context.Background(), management.ClearFailuresRequest{Before: "2026-11-17T09:00:00Z", StatusCode: &neg}); err == nil {
+		t.Fatal("expected error for negative status_code")
+	}
+
+	hashA := remarks.Index("sk-key-a")
+	res, err := rt.ClearFailures(context.Background(), management.ClearFailuresRequest{
+		Before: "2026-11-17T10:00:00Z",
+		Hash:   hashA,
+		Model:  "gpt-5.6",
+	})
+	if err != nil {
+		t.Fatalf("ClearFailures() error = %v", err)
+	}
+	if res.Removed != 1 {
+		t.Fatalf("Removed = %d, want 1", res.Removed)
+	}
+
+	// Verify persistence on disk by reloading a fresh runtime against the same statePath.
+	if err := rt.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+	rt2 := registerRuntime(t, statePath)
+	remaining, err := rt2.Failures(context.Background(), management.FailuresRequest{})
+	if err != nil {
+		t.Fatalf("Failures() after reload error = %v", err)
+	}
+	if len(remaining.Items) != 3 {
+		t.Fatalf("remaining count = %d, want 3: %+v", len(remaining.Items), remaining.Items)
+	}
+	for _, item := range remaining.Items {
+		if item.Hash == hashA && item.Model == "gpt-5.6" && item.Time.Before(time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC)) {
+			t.Fatalf("cleared entry survived reload: %+v", item)
+		}
 	}
 }
 

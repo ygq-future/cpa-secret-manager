@@ -196,9 +196,31 @@ const shellModals = `  </main>
       <span id="failures-range-tag" class="failures-range-tag"></span>
     </div>
     <div id="failures-content"></div>
-    <div class="modal-actions">
-      <button id="failures-close" class="btn btn-secondary" type="button" data-i18n="shell.cancel">Close</button>
-      <button id="failures-open-logs" class="btn btn-primary" type="button" data-i18n="failures.open_logs">Open Host Logs</button>
+    <div id="failures-clear-panel" class="failures-clear-panel" hidden>
+      <div class="failures-clear-head">
+        <span class="failures-clear-title" data-i18n="failures.clear_panel_title">Clear error logs recorded before cutoff</span>
+        <span id="failures-clear-scope" class="failures-clear-scope"></span>
+      </div>
+      <div class="failures-clear-controls">
+        <div class="failures-clear-presets">
+          <button class="pill" type="button" data-clear-minutes="10080" data-i18n="datetime.past_week">7d ago</button>
+          <button class="pill" type="button" data-clear-minutes="1440" data-i18n="datetime.past_day">24h ago</button>
+          <button class="pill" type="button" data-clear-minutes="360" data-i18n="datetime.past_6hours">6h ago</button>
+          <button class="pill" type="button" data-clear-minutes="60" data-i18n="datetime.past_hour">1h ago</button>
+        </div>
+        <div class="failures-clear-actions">
+          <div id="failures-clear-picker"></div>
+          <button id="failures-clear-cancel" class="btn btn-secondary" type="button" data-i18n="shell.cancel">Cancel</button>
+          <button id="failures-clear-exec" class="btn btn-danger" type="button" data-i18n="failures.clear_exec" disabled>Clear</button>
+        </div>
+      </div>
+    </div>
+    <div class="modal-actions modal-actions-between">
+      <button id="failures-clear-toggle" class="btn btn-danger" type="button" data-i18n="failures.clear_action">Clear logs</button>
+      <div class="modal-actions-group">
+        <button id="failures-close" class="btn btn-secondary" type="button" data-i18n="shell.cancel">Close</button>
+        <button id="failures-open-logs" class="btn btn-primary" type="button" data-i18n="failures.open_logs">Open Host Logs</button>
+      </div>
     </div>
   </div>
 </div>

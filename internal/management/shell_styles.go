@@ -425,6 +425,18 @@ const templateStyleOverlays = `
   padding-right: 4px;
 }
 
+.failures-loading {
+  flex: 1 1 auto;
+  min-height: 180px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-tertiary);
+  font-size: 12.5px;
+}
+
 .failure-item {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
@@ -510,13 +522,67 @@ const templateStyleOverlays = `
 
 .failure-body {
   font-size: 12px;
-  line-height: 1.35;
+  line-height: 1.4;
   color: var(--text-primary);
-  word-break: break-all;
+  word-break: break-word;
   white-space: pre-wrap;
   font-family: var(--font-mono);
-  max-height: 80px;
+  max-height: 160px;
   overflow-y: auto;
+}
+
+.failures-clear-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+}
+
+.failures-clear-panel[hidden] { display: none; }
+
+.failures-clear-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.failures-clear-title {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.failures-clear-scope {
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+}
+
+.failures-clear-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.failures-clear-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.failures-clear-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.failures-clear-actions .datetime-field {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 `
 

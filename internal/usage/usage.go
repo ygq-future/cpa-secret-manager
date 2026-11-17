@@ -204,6 +204,50 @@ func (a *Aggregator) Observe(record Record) {
 	a.dirty = true
 }
 
+// FailureRef identifies one failed request in an hourly bucket.
+type FailureRef struct {
+	Hash  string
+	At    time.Time
+	Model string
+}
+
+// DeductFailures decrements Failed counters in the matching hourly buckets
+// when error logs are cleared, clamping at zero.
+func (a *Aggregator) DeductFailures(entries []FailureRef) {
+	if a == nil || len(entries) == 0 {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	for _, entry := range entries {
+		if entry.Hash == "" || entry.At.IsZero() {
+			continue
+		}
+		byPeriod, ok := a.buckets[entry.Hash]
+		if !ok {
+			continue
+		}
+		bucket, ok := byPeriod[PeriodKey(entry.At)]
+		if !ok {
+			continue
+		}
+		if bucket.Failed > 0 {
+			bucket.Failed--
+			a.dirty = true
+		}
+		model := entry.Model
+		if model == "" {
+			model = UnknownModel
+		}
+		if mc, ok := bucket.Models[model]; ok && mc.Failed > 0 {
+			mc.Failed--
+			bucket.Models[model] = mc
+			a.dirty = true
+		}
+	}
+}
+
 // Range merges every bucket that overlaps [start, end) into per-key usage. A
 // zero bound means "unbounded". Buckets are hourly, so a window that starts or
 // ends mid-hour includes that whole hour.

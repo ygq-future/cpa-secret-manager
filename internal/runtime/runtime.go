@@ -324,6 +324,58 @@ func (r *Runtime) Failures(_ context.Context, req management.FailuresRequest) (m
 	return management.FailuresResult{Items: total}, nil
 }
 
+// ClearFailures implements management.Backend: it removes error log entries
+// recorded before req.Before that match the optional filters.
+func (r *Runtime) ClearFailures(_ context.Context, req management.ClearFailuresRequest) (management.ClearFailuresResult, error) {
+	before, ok := parseInstant(req.Before)
+	if !ok {
+		return management.ClearFailuresResult{}, management.NewInvalidRequest("before must be a valid RFC3339 timestamp")
+	}
+	if req.StatusCode != nil && *req.StatusCode < 0 {
+		return management.ClearFailuresResult{}, management.NewInvalidRequest("status_code cannot be negative")
+	}
+
+	r.runMu.Lock()
+	defer r.runMu.Unlock()
+
+	r.mu.RLock()
+	store := r.store
+	errorsStore := r.errorsStore
+	closed := r.closed
+	r.mu.RUnlock()
+	if closed || store == nil {
+		return management.ClearFailuresResult{}, ErrShutdown
+	}
+	if errorsStore == nil {
+		return management.ClearFailuresResult{Status: "ok", Removed: 0}, nil
+	}
+
+	cleared := errorsStore.ClearBeforeEntries(errorslog.ClearFilter{
+		Before:     before,
+		Hash:       req.Hash,
+		AuthID:     req.AuthID,
+		Model:      req.Model,
+		StatusCode: req.StatusCode,
+	})
+	if len(cleared) > 0 {
+		if r.aggregator != nil {
+			refs := make([]usage.FailureRef, 0, len(cleared))
+			for _, item := range cleared {
+				refs = append(refs, usage.FailureRef{
+					Hash:  item.Hash,
+					At:    item.Time,
+					Model: item.Model,
+				})
+			}
+			r.aggregator.DeductFailures(refs)
+		}
+		if err := r.persistStateLocked(store); err != nil {
+			return management.ClearFailuresResult{}, err
+		}
+	}
+	return management.ClearFailuresResult{Status: "ok", Removed: len(cleared)}, nil
+}
+
 // Resolve implements management.Backend: it maps the submitted proxy key list
 // onto stored metadata and usage, preserving list order. It is a pure read -
 // deleting plugin state is a separate, explicit call (Forget), so a mistimed or

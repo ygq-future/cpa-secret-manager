@@ -20,6 +20,8 @@ type stubBackend struct {
 	key      string
 	forgot   []string
 	failures []FailureItem
+	clearReq *ClearFailuresRequest
+	cleared  int
 	resolved *ResolveRequest
 
 	pricingResult PricingResult
@@ -68,6 +70,12 @@ func (s *stubBackend) GenerateKey(context.Context) (string, error) {
 
 func (s *stubBackend) Failures(context.Context, FailuresRequest) (FailuresResult, error) {
 	return FailuresResult{Items: s.failures}, nil
+}
+
+func (s *stubBackend) ClearFailures(_ context.Context, req ClearFailuresRequest) (ClearFailuresResult, error) {
+	copyReq := req
+	s.clearReq = &copyReq
+	return ClearFailuresResult{Status: "ok", Removed: s.cleared}, nil
 }
 func (s *stubBackend) Quota(context.Context, string) (QuotaSummary, bool, error) {
 	return QuotaSummary{Enabled: true, LimitValue: 1000}, true, nil
@@ -450,5 +458,39 @@ func TestRecorder_DefaultsToOKAndKeepsHeaders(t *testing.T) {
 	}
 	if string(body) != "body" {
 		t.Fatalf("body = %q, want body", string(body))
+	}
+}
+
+func TestHandler_FailuresClear(t *testing.T) {
+	backend := &stubBackend{cleared: 3}
+	handler := NewHandler(backend)
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, PathFailuresClear, nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET status = %d, want 405", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, PathFailuresClear, strings.NewReader(`{"hash":"abc"}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing after status = %d, want 400", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	body := `{"before":"2026-11-17T10:00:00Z","hash":"abc","auth_id":"auth-1","model":"gpt-5.6","status_code":0}`
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v0/management/plugins/"+PluginID+PathFailuresClear, strings.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if backend.clearReq == nil || backend.clearReq.Before != "2026-11-17T10:00:00Z" || backend.clearReq.Hash != "abc" || backend.clearReq.AuthID != "auth-1" || backend.clearReq.Model != "gpt-5.6" || backend.clearReq.StatusCode == nil || *backend.clearReq.StatusCode != 0 {
+	}
+
+	var res ClearFailuresResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if res.Status != "ok" || res.Removed != 3 {
+		t.Fatalf("result = %+v, want status=ok removed=3", res)
 	}
 }

@@ -2657,12 +2657,17 @@ function maskCredentialAccount(local) {
   return masked;
 }
 
+var failuresClearPicker = null;
+var failuresModalState = null;
+var failuresClearActivePreset = null;
+
 // The failure viewer is rebuilt on every open. Its four filters are shared
 // listboxes, its records are plain components.
 function openFailuresModal(index, initialModel) {
   var container = byId('failures-content');
   if (!container) return;
   container.textContent = '';
+  closeFailuresClearPanel();
 
   openModal('failures-modal');
   initDateRange();
@@ -2882,7 +2887,7 @@ function openFailuresModal(index, initialModel) {
       if (item.message) {
         var bodyEl = document.createElement('div');
         bodyEl.className = 'failure-body';
-        bodyEl.textContent = item.message;
+        bodyEl.textContent = formatFailureMessage(item.message);
         card.appendChild(bodyEl);
       }
 
@@ -2899,6 +2904,7 @@ function openFailuresModal(index, initialModel) {
     // reflects that widening within the same interaction.
     syncFilterOptions();
     renderItems();
+    syncFailuresClearUI();
   }
 
   // The key dropdown always lists every managed key; the other three filters
@@ -2972,10 +2978,15 @@ function openFailuresModal(index, initialModel) {
   function loadFailures() {
     listWrap.textContent = '';
     var loading = document.createElement('div');
-    loading.className = 'placeholder-note is-compact';
-    loading.textContent = t('shell.loading');
+    loading.className = 'failures-loading';
+    var spinner = document.createElement('span');
+    spinner.className = 'spinner';
+    spinner.setAttribute('aria-hidden', 'true');
+    var label = document.createElement('span');
+    label.textContent = t('shell.loading');
+    loading.appendChild(spinner);
+    loading.appendChild(label);
     listWrap.appendChild(loading);
-
     // One unfiltered read serves all four filters; each record carries its key
     // hash so the key dropdown narrows with the others.
     apiFetch(FAILURES_PATH, {
@@ -2989,6 +3000,7 @@ function openFailuresModal(index, initialModel) {
     .then(function (res) {
       currentItems = (res && res.items) || [];
       refreshFilterOptions();
+      syncFailuresClearUI();
     })
     .catch(function (err) {
       listWrap.textContent = '';
@@ -2999,11 +3011,151 @@ function openFailuresModal(index, initialModel) {
     });
   }
 
+  failuresModalState = {
+    currentFilters: currentFilters,
+    keyLabels: keyLabels,
+    reload: loadFailures
+  };
+
   loadFailures();
 }
 
+function formatFailureMessage(raw) {
+  if (typeof raw !== 'string') return '';
+  var trimmed = raw.trim();
+  if (!trimmed || (trimmed.charAt(0) !== '{' && trimmed.charAt(0) !== '[')) {
+    return raw;
+  }
+  try {
+    return JSON.stringify(JSON.parse(trimmed), null, 2);
+  } catch (_) {
+    return raw;
+  }
+}
+
 function closeFailuresModal() {
+  closeFailuresClearPanel();
+  failuresModalState = null;
   closeModal('failures-modal');
+}
+
+function closeFailuresClearPanel() {
+  var panel = byId('failures-clear-panel');
+  if (panel) {
+    panel.hidden = true;
+  }
+  failuresClearActivePreset = null;
+  if (failuresClearPicker) {
+    failuresClearPicker.setValue('');
+  }
+  syncFailuresClearUI();
+}
+
+function formatFailuresClearScope() {
+  if (!failuresModalState) {
+    return t('failures.clear_scope_all');
+  }
+  var filters = failuresModalState.currentFilters();
+  var parts = [];
+  if (filters.hash) {
+    parts.push(failuresModalState.keyLabels[filters.hash] || maskKey(filters.hash));
+  }
+  if (filters.auth) {
+    parts.push(maskCredential(filters.auth));
+  }
+  if (filters.model) {
+    parts.push(filters.model);
+  }
+  if (filters.code !== '') {
+    parts.push(Number(filters.code) > 0 ? filters.code : t('failures.no_status'));
+  }
+  if (parts.length === 0) {
+    return t('failures.clear_scope_all');
+  }
+  return tf('failures.clear_scope_filtered', { filters: parts.join(' · ') });
+}
+
+function syncFailuresClearUI() {
+  var scopeEl = byId('failures-clear-scope');
+  if (scopeEl) {
+    scopeEl.textContent = formatFailuresClearScope();
+  }
+  var presetButtons = document.querySelectorAll('.failures-clear-presets .pill[data-clear-minutes]');
+  for (var i = 0; i < presetButtons.length; i++) {
+    var minutes = Number(presetButtons[i].getAttribute('data-clear-minutes'));
+    presetButtons[i].classList.toggle('is-active', failuresClearActivePreset === minutes);
+  }
+  var execBtn = byId('failures-clear-exec');
+  if (execBtn) {
+    var cutoffISO = failuresClearPicker ? failuresClearPicker.getValue() : '';
+    var parsed = cutoffISO ? new Date(cutoffISO) : null;
+    execBtn.disabled = !parsed || isNaN(parsed.getTime()) || parsed.getTime() > Date.now();
+  }
+}
+
+function toggleFailuresClearPanel() {
+  var panel = byId('failures-clear-panel');
+  if (!panel) return;
+  if (!panel.hidden) {
+    closeFailuresClearPanel();
+    return;
+  }
+  panel.hidden = false;
+  syncFailuresClearUI();
+}
+
+function executeFailuresClear() {
+  if (!failuresClearPicker || !failuresModalState) return;
+  var cutoffISO = failuresClearPicker.getValue();
+  if (!cutoffISO) return;
+  var parsed = new Date(cutoffISO);
+  if (isNaN(parsed.getTime()) || parsed.getTime() > Date.now()) return;
+
+  var filters = failuresModalState.currentFilters();
+  var scopeText = formatFailuresClearScope();
+  var timeText = parsed.toLocaleString();
+  openConfirm(tf('failures.clear_confirm', { time: timeText, scope: scopeText }), function () {
+    var execBtn = byId('failures-clear-exec');
+    if (execBtn) {
+      execBtn.disabled = true;
+    }
+    var payload = { before: cutoffISO };
+    if (filters.hash) {
+      payload.hash = filters.hash;
+    }
+    if (filters.auth) {
+      payload.auth_id = filters.auth;
+    }
+    if (filters.model) {
+      payload.model = filters.model;
+    }
+    if (filters.code !== '') {
+      payload.status_code = Number(filters.code);
+    }
+    apiFetch(FAILURES_CLEAR_PATH, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    })
+    .then(function (res) {
+      var removed = (res && typeof res.removed === 'number') ? res.removed : 0;
+      if (removed > 0) {
+        showToast(tf('failures.cleared_count', { count: removed }), 'success');
+      } else {
+        showToast(t('failures.cleared_none'), 'info');
+      }
+      closeFailuresClearPanel();
+      if (failuresModalState && failuresModalState.reload) {
+        failuresModalState.reload();
+      }
+      if (removed > 0) {
+        loadKeys();
+      }
+    })
+    .catch(function (err) {
+      showToast(err.message || t('failures.clear_failed'), 'error');
+      syncFailuresClearUI();
+    });
+  });
 }
 
 
@@ -3014,6 +3166,16 @@ function bindKeysEvents() {
   expiryPicker = mountDateTimePicker({
     container: byId('key-form-expires'),
     placeholderKey: 'datetime.placeholder'
+  });
+  failuresClearPicker = mountDateTimePicker({
+    container: byId('failures-clear-picker'),
+    mode: 'past',
+    placeholderKey: 'failures.clear_placeholder',
+    clearTitleKey: 'failures.clear_picker_clear',
+    onChange: function () {
+      failuresClearActivePreset = null;
+      syncFailuresClearUI();
+    }
   });
 
   bindClick('keys-add', openAddKeyForm);
@@ -3144,6 +3306,24 @@ function bindKeysEvents() {
   bindClick('failures-close', closeFailuresModal);
   bindClick('failures-open-logs', openHostLogs);
   bindBackdrop('failures-modal');
+  bindClick('failures-clear-toggle', toggleFailuresClearPanel);
+  bindClick('failures-clear-cancel', closeFailuresClearPanel);
+  bindClick('failures-clear-exec', executeFailuresClear);
+  var clearPresetButtons = document.querySelectorAll('.failures-clear-presets .pill[data-clear-minutes]');
+  for (var clearIdx = 0; clearIdx < clearPresetButtons.length; clearIdx++) {
+    (function (btn) {
+      btn.addEventListener('click', function () {
+        if (!failuresClearPicker) return;
+        var minutes = Number(btn.getAttribute('data-clear-minutes'));
+        if (!isFinite(minutes) || minutes <= 0) return;
+        var at = new Date(Date.now() - minutes * 60000);
+        at.setSeconds(0, 0);
+        failuresClearActivePreset = minutes;
+        failuresClearPicker.setValue(at.toISOString());
+        syncFailuresClearUI();
+      });
+    })(clearPresetButtons[clearIdx]);
+  }
 
   bindClick('date-range-btn', openDateRangeModal);
   bindClick('date-range-cancel', closeDateRangeModal);

@@ -1056,19 +1056,28 @@ function mountDateTimePicker(config) {
     return null;
   }
   var onChange = config.onChange;
+  var mode = config.mode === 'past' ? 'past' : 'future';
   var placeholderKey = config.placeholderKey || 'datetime.placeholder';
+  var clearTitleKey = config.clearTitleKey || 'datetime.clear';
   var value = typeof config.value === 'string' ? config.value : '';
   var draft = null;
   var baseMonth = null;
   var open = false;
-  var presetSpecs = [
-    { key: 'datetime.preset_now', minutes: 1, now: true },
-    { key: 'datetime.preset_hour', minutes: 60 },
-    { key: 'datetime.preset_day', minutes: 1440 },
-    { key: 'datetime.preset_week', minutes: 10080 },
-    { key: 'datetime.preset_month', minutes: 43200 }
-  ];
-
+  var presetSpecs = mode === 'past'
+    ? [
+        { key: 'datetime.past_month', minutes: 43200 },
+        { key: 'datetime.past_week', minutes: 10080 },
+        { key: 'datetime.past_day', minutes: 1440 },
+        { key: 'datetime.past_6hours', minutes: 360 },
+        { key: 'datetime.past_hour', minutes: 60 }
+      ]
+    : [
+        { key: 'datetime.preset_now', minutes: 1, now: true },
+        { key: 'datetime.preset_hour', minutes: 60 },
+        { key: 'datetime.preset_day', minutes: 1440 },
+        { key: 'datetime.preset_week', minutes: 10080 },
+        { key: 'datetime.preset_month', minutes: 43200 }
+      ];
   container.className = 'datetime-field';
   container.textContent = '';
 
@@ -1126,7 +1135,8 @@ function mountDateTimePicker(config) {
     button.addEventListener('click', function () {
       // A preset is a quick draft edit, not a commit: keep the popover open so
       // the operator can still tweak the day, hour, or minute before confirming.
-      var at = new Date(Date.now() + spec.minutes * 60000);
+      var delta = spec.minutes * 60000;
+      var at = new Date(mode === 'past' ? Date.now() - delta : Date.now() + delta);
       at.setSeconds(0, 0);
       draft = at;
       baseMonth = new Date(draft.getFullYear(), draft.getMonth(), 1);
@@ -1176,7 +1186,7 @@ function mountDateTimePicker(config) {
   footerConfirm.type = 'button';
   footerConfirm.className = 'btn btn-primary';
   footerConfirm.addEventListener('click', function () {
-    if (!draft || draft.getTime() <= Date.now()) {
+    if (!draft || (mode === 'past' ? draft.getTime() > Date.now() : draft.getTime() <= Date.now())) {
       return;
     }
     commit(draft.toISOString());
@@ -1297,8 +1307,8 @@ function mountDateTimePicker(config) {
     label.classList.toggle('is-placeholder', !at);
     control.classList.toggle('has-value', Boolean(at));
     clearBtn.hidden = !at;
-    clearBtn.title = t('datetime.clear');
-    clearBtn.setAttribute('aria-label', t('datetime.clear'));
+    clearBtn.title = t(clearTitleKey);
+    clearBtn.setAttribute('aria-label', t(clearTitleKey));
   }
 
   function setValue(next) {
@@ -1311,18 +1321,19 @@ function mountDateTimePicker(config) {
     if (at) {
       return at;
     }
-    var later = new Date(Date.now() + 86400000);
-    later.setSeconds(0, 0);
-    return later;
+    var offset = mode === 'past' ? -3600000 : 86400000;
+    var initial = new Date(Date.now() + offset);
+    initial.setSeconds(0, 0);
+    return initial;
   }
 
   function syncTime() {
     hourInput.value = pad2(draft.getHours());
     minuteInput.value = pad2(draft.getMinutes());
-    var valid = draft.getTime() > Date.now();
+    var valid = mode === 'past' ? draft.getTime() <= Date.now() : draft.getTime() > Date.now();
     footerConfirm.disabled = !valid;
     hint.hidden = valid;
-    hint.textContent = valid ? '' : t('datetime.past');
+    hint.textContent = valid ? '' : t(mode === 'past' ? 'datetime.future' : 'datetime.past');
     if (open) {
       positionPopover();
     }
@@ -1404,7 +1415,8 @@ function mountDateTimePicker(config) {
       cell.className = 'calendar-day datetime-day';
       cell.textContent = '' + day;
       var dateMidnight = new Date(baseMonth.getFullYear(), baseMonth.getMonth(), day).getTime();
-      if (dateMidnight < todayMidnight) {
+      var disabledDay = mode === 'past' ? dateMidnight > todayMidnight : dateMidnight < todayMidnight;
+      if (disabledDay) {
         cell.classList.add('is-disabled');
         cell.disabled = true;
       } else {
