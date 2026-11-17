@@ -600,11 +600,45 @@ func hasBoundaryPrefix(value, prefix string) bool {
 	if len(value) == len(prefix) {
 		return true
 	}
-	switch value[len(prefix)] {
+	return isSegmentBoundary(value[len(prefix)])
+}
+
+func isSegmentBoundary(b byte) bool {
+	switch b {
 	case '-', '_', ' ', '@', ':':
 		return true
 	}
 	return false
+}
+
+func isSegmentDelimiter(b byte) bool {
+	return b == '-' || b == '_' || b == ' '
+}
+
+// matchCompactPrefix reports whether candidate starts with wantedCompact when
+// segment delimiters ('-', '_', ' ') are ignored, while still requiring the
+// match to end on a segment boundary in candidate.
+func matchCompactPrefix(candidate, wantedCompact string) bool {
+	if wantedCompact == "" {
+		return false
+	}
+	ci := 0
+	wi := 0
+	for ci < len(candidate) && wi < len(wantedCompact) {
+		if isSegmentDelimiter(candidate[ci]) {
+			ci++
+			continue
+		}
+		if candidate[ci] != wantedCompact[wi] {
+			return false
+		}
+		ci++
+		wi++
+	}
+	if wi < len(wantedCompact) {
+		return false
+	}
+	return ci == len(candidate) || isSegmentBoundary(candidate[ci])
 }
 
 // isStrictPrefix reports whether candidate is a shorter form of wanted, for
@@ -617,24 +651,39 @@ func isStrictPrefix(wanted, candidate string) bool {
 // at a segment boundary, or zero when even the first segment differs.
 func prefixDepth(candidate string, wantedSegments []string) int {
 	for depth := len(wantedSegments); depth >= 1; depth-- {
-		if hasBoundaryPrefix(candidate, strings.Join(wantedSegments[:depth], "-")) {
+		if hasBoundaryPrefix(candidate, strings.Join(wantedSegments[:depth], "-")) ||
+			matchCompactPrefix(candidate, strings.Join(wantedSegments[:depth], "")) {
 			return depth
 		}
 	}
 	return 0
 }
 
-// wantedIndex maps the requested models by their first segment. Matching then
-// walks only the family that can possibly share a prefix instead of the whole
-// request list for every catalog entry.
+func compactHead(value string) string {
+	var head [2]byte
+	n := 0
+	for i := 0; i < len(value) && n < 2; i++ {
+		if isSegmentDelimiter(value[i]) {
+			continue
+		}
+		head[n] = value[i]
+		n++
+	}
+	return string(head[:n])
+}
+
+// wantedIndex maps the requested models by their first segment and compact
+// two-byte head. Indexing every suffix allows skipping vendor prefixes (e.g.
+// "wb-gemini-flash" -> "gemini-flash") from the first matching prefix onward.
 type wantedIndex struct {
-	byFirst map[string][]wantedEntry
+	byHead map[string][]wantedEntry
 }
 
 type wantedEntry struct {
 	name     string
 	base     string
 	segments []string
+	skip     int
 }
 
 type wantedMatch struct {
@@ -644,34 +693,47 @@ type wantedMatch struct {
 }
 
 func newWantedIndex(wanted []string) wantedIndex {
-	index := wantedIndex{byFirst: make(map[string][]wantedEntry, len(wanted))}
+	index := wantedIndex{byHead: make(map[string][]wantedEntry, len(wanted)*2)}
 	for _, name := range wanted {
 		base := modelBase(name)
 		segments := splitSegments(base)
-		if len(segments) == 0 {
-			continue
+		for skip := range len(segments) {
+			subSegments := segments[skip:]
+			subBase := strings.Join(subSegments, "-")
+			head := compactHead(subBase)
+			if head == "" {
+				continue
+			}
+			index.byHead[head] = append(index.byHead[head], wantedEntry{
+				name:     name,
+				base:     subBase,
+				segments: subSegments,
+				skip:     skip,
+			})
 		}
-		first := segments[0]
-		index.byFirst[first] = append(index.byFirst[first], wantedEntry{
-			name:     name,
-			base:     base,
-			segments: segments,
-		})
 	}
 	return index
 }
 
 func (index wantedIndex) match(modelID string) []wantedMatch {
 	base := modelBase(modelID)
-	segments := splitSegments(base)
-	if len(segments) == 0 {
+	head := compactHead(base)
+	if head == "" {
 		return nil
 	}
 	var matches []wantedMatch
-	for _, entry := range index.byFirst[segments[0]] {
-		if depth := prefixDepth(base, entry.segments); depth > 0 {
-			matches = append(matches, wantedMatch{name: entry.name, base: entry.base, depth: depth})
+	seen := make(map[string]struct{})
+	for _, entry := range index.byHead[head] {
+		depth := prefixDepth(base, entry.segments)
+		if depth == 0 {
+			continue
 		}
+		if _, exists := seen[entry.name]; exists {
+			// Prefer the earliest matching prefix (smallest skip).
+			continue
+		}
+		seen[entry.name] = struct{}{}
+		matches = append(matches, wantedMatch{name: entry.name, base: entry.base, depth: depth})
 	}
 	return matches
 }
@@ -681,15 +743,17 @@ func (index wantedIndex) matchesName(name string, modelID string) bool {
 		return false
 	}
 	base := modelBase(modelID)
-	segments := splitSegments(base)
-	if len(segments) == 0 {
+	head := compactHead(base)
+	if head == "" {
 		return false
 	}
-	for _, entry := range index.byFirst[segments[0]] {
+	for _, entry := range index.byHead[head] {
 		if entry.name != name {
 			continue
 		}
-		return prefixDepth(base, entry.segments) > 0
+		if prefixDepth(base, entry.segments) > 0 {
+			return true
+		}
 	}
 	return false
 }

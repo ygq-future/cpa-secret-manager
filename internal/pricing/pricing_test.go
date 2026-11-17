@@ -311,3 +311,58 @@ func (r *errorReader) Read([]byte) (int, error) {
 	r.reads++
 	return 0, nil
 }
+
+func TestDecodeMatchesPrefixSkipAndCompact(t *testing.T) {
+	catalog := `{
+	  "google": {
+	    "models": {
+	      "gemini-3.5-flash": {"id": "gemini-3.5-flash", "cost": {"input": 0.3, "output": 2.5}},
+	      "gemini-3.5-flashlight": {"id": "gemini-3.5-flashlight", "cost": {"input": 0.9, "output": 3.0}}
+	    }
+	  },
+	  "tencent": {
+	    "models": {
+	      "tencent/hy4-flash": {"id": "tencent/hy4-flash", "cost": {"input": 0.14, "output": 0.28}}
+	    }
+	  }
+	}`
+
+	suggestions, err := Decode(strings.NewReader(catalog), []string{
+		"wb-gemini-3.5-flash",
+		"custom/wb-gemini-3.5-flash",
+		"hy4flash",
+		"wb-hy4flash",
+	})
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+
+	for _, name := range []string{"wb-gemini-3.5-flash", "custom/wb-gemini-3.5-flash"} {
+		got, ok := suggestions[name]
+		if !ok || got.Provider != "google" || got.Model != "gemini-3.5-flash" {
+			t.Fatalf("%s suggestion = %+v (ok=%v), want google/gemini-3.5-flash", name, got, ok)
+		}
+	}
+
+	for _, name := range []string{"hy4flash", "wb-hy4flash"} {
+		got, ok := suggestions[name]
+		if !ok || got.Provider != "tencent" || got.Input != 0.14 {
+			t.Fatalf("%s suggestion = %+v (ok=%v), want tencent/hy4-flash (input=0.14)", name, got, ok)
+		}
+	}
+
+	compactCatalog := `{
+	  "custom": {
+	    "models": {
+	      "hy4flash": {"id": "hy4flash", "cost": {"input": 0.2, "output": 0.4}}
+	    }
+	  }
+	}`
+	compactSuggestions, err := Decode(strings.NewReader(compactCatalog), []string{"hy4-flash"})
+	if err != nil {
+		t.Fatalf("Decode(compactCatalog) error = %v", err)
+	}
+	if got, ok := compactSuggestions["hy4-flash"]; !ok || got.Provider != "custom" || got.Input != 0.2 {
+		t.Fatalf("hy4-flash suggestion = %+v (ok=%v), want custom/hy4flash (input=0.2)", got, ok)
+	}
+}
