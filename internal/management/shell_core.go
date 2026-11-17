@@ -880,9 +880,32 @@ function bindBackdrop(id) {
 }
 
 function bindGlobalEvents() {
+  var selectPointerStartedInside = false;
   document.addEventListener('keydown', handleEscape);
-  document.addEventListener('click', closeOpenSelect);
-
+  document.addEventListener('mousedown', function (event) {
+    selectPointerStartedInside = !!(
+      state.openSelect &&
+      state.openSelect.element &&
+      state.openSelect.element.contains(event.target)
+    );
+  }, true);
+  document.addEventListener('mouseup', function () {
+    if (selectPointerStartedInside) {
+      setTimeout(function () {
+        selectPointerStartedInside = false;
+      }, 0);
+    }
+  }, true);
+  window.addEventListener('blur', function () {
+    selectPointerStartedInside = false;
+  });
+  document.addEventListener('click', function () {
+    if (selectPointerStartedInside) {
+      selectPointerStartedInside = false;
+      return;
+    }
+    closeOpenSelect();
+  });
   bindClick('lang-toggle', toggleLanguage);
   bindClick('key-button', openKeyModal);
   bindClick('refresh-button', function () {

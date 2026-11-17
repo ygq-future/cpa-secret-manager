@@ -813,6 +813,15 @@ function mountMultiSelect(config) {
     });
   }
 
+  function itemMatchesQuery(item, query) {
+    if (!query) {
+      return true;
+    }
+    var valStr = String(item.value).toLowerCase();
+    var labelStr = item.label === undefined ? valStr : String(item.label).toLowerCase();
+    return valStr.indexOf(query) >= 0 || labelStr.indexOf(query) >= 0;
+  }
+
   function renderOptions() {
     optionsList.textContent = '';
     var visibleCount = 0;
@@ -820,13 +829,11 @@ function mountMultiSelect(config) {
 
     for (var k = 0; k < items.length; k++) {
       var item = items[k];
-      var valStr = String(item.value);
-      var labelStr = item.label === undefined ? valStr : String(item.label);
-      var matches = !query || valStr.toLowerCase().indexOf(query) >= 0 || labelStr.toLowerCase().indexOf(query) >= 0;
-
-      if (!matches) {
+      if (!itemMatchesQuery(item, query)) {
         continue;
       }
+      var valStr = String(item.value);
+      var labelStr = item.label === undefined ? valStr : String(item.label);
       visibleCount++;
 
       var opt = document.createElement('div');
@@ -978,8 +985,11 @@ function mountMultiSelect(config) {
 
   selectAllBtn.addEventListener('click', function (e) {
     e.stopPropagation();
+    var query = filterText.toLowerCase().trim();
     for (var a = 0; a < items.length; a++) {
-      selected[String(items[a].value).toLowerCase()] = true;
+      if (itemMatchesQuery(items[a], query)) {
+        selected[String(items[a].value).toLowerCase()] = true;
+      }
     }
     renderOptions();
     if (onChange) {

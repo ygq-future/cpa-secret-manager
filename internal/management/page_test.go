@@ -2262,3 +2262,175 @@ if (picker.getValue() !== pastISO) {
 		t.Fatalf("node execution failed: %v\noutput: %s", err, string(out))
 	}
 }
+
+func TestPage_MultiSelectFilteredSelectAllAndDragOutsideGuard(t *testing.T) {
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed; skipping runtime JS evaluation test")
+	}
+
+	script := extractPageScript(t)
+	mountFn := extractJSFunction(script, "mountMultiSelect")
+	if mountFn == "" {
+		t.Fatal("could not extract mountMultiSelect")
+	}
+	closeFn := extractJSFunction(script, "closeOpenSelect")
+	if closeFn == "" {
+		t.Fatal("could not extract closeOpenSelect")
+	}
+	bindFn := extractJSFunction(script, "bindGlobalEvents")
+	if bindFn == "" {
+		t.Fatal("could not extract bindGlobalEvents")
+	}
+
+	testRunner := `
+var state = { language: 'en-US', selects: [], openSelect: null };
+function t(k) { return k; }
+function tf(k) { return k; }
+function iconMarkup() { return null; }
+function byId() { return null; }
+function bindClick() {}
+function bindBackdrop() {}
+function handleEscape() {}
+function bindSubmit() {}
+function toggleLanguage() {}
+function openKeyModal() {}
+function refreshAll() {}
+function activateTab() {}
+function closeKeyModal() {}
+function saveManagementKey() {}
+function saveKeyForm() {}
+function generateKeyIntoForm() {}
+function closeKeyForm() {}
+function closeConfirm() {}
+function acceptConfirm() {}
+function bindKeysEvents() {}
+function bindSettingsEvents() {}
+function makeEl(tag) {
+  var el = {
+    tagName: tag,
+    children: [],
+    attributes: {},
+    className: '',
+    textContent: '',
+    value: '',
+    hidden: false,
+    listeners: {},
+    classList: {
+      _set: {},
+      add: function (c) { this._set[c] = true; },
+      remove: function (c) { delete this._set[c]; },
+      contains: function (c) { return !!this._set[c]; }
+    },
+    setAttribute: function (k, v) { this.attributes[k] = String(v); },
+    getAttribute: function (k) { return this.attributes[k] || ''; },
+    appendChild: function (c) { this.children.push(c); return c; },
+    addEventListener: function (ev, fn) { this.listeners[ev] = fn; },
+    dispatch: function (ev, payload) {
+      if (this.listeners[ev]) {
+        this.listeners[ev](payload || { stopPropagation: function () {}, preventDefault: function () {} });
+      }
+    },
+    contains: function (target) {
+      if (target === this) return true;
+      for (var i = 0; i < this.children.length; i++) {
+        if (this.children[i].contains && this.children[i].contains(target)) return true;
+      }
+      return false;
+    },
+    focus: function () {},
+    getBoundingClientRect: function () { return { left: 0, top: 0, bottom: 10, width: 100, height: 100 }; }
+  };
+  return el;
+}
+var docListeners = {};
+var winListeners = {};
+var document = {
+  body: makeEl('body'),
+  createElement: makeEl,
+  addEventListener: function (ev, fn) {
+    docListeners[ev] = docListeners[ev] || [];
+    docListeners[ev].push(fn);
+  }
+};
+var window = {
+  innerWidth: 1200,
+  innerHeight: 800,
+  addEventListener: function (ev, fn) {
+    winListeners[ev] = winListeners[ev] || [];
+    winListeners[ev].push(fn);
+  }
+};
+` + mountFn + "\n" + closeFn + "\n" + bindFn + `
+// 1. Verify filtered select-all only selects matching items.
+var container = makeEl('div');
+var ms = mountMultiSelect({
+  container: container,
+  items: [
+    { value: 'claude-3-5-sonnet' },
+    { value: 'gpt-4o' },
+    { value: 'claude-3-opus' }
+  ],
+  selected: []
+});
+var menu = container.children[1];
+var searchWrap = menu.children[0];
+var searchInput = searchWrap.children[0];
+var bar = menu.children[1];
+var barActions = bar.children[1];
+var selectAllBtn = barActions.children[0];
+
+searchInput.value = 'claude';
+searchInput.dispatch('input');
+selectAllBtn.dispatch('click');
+var selectedAfterClaude = ms.getSelected();
+if (JSON.stringify(selectedAfterClaude) !== JSON.stringify(['claude-3-5-sonnet', 'claude-3-opus'])) {
+  throw new Error('expected only filtered claude models selected, got: ' + JSON.stringify(selectedAfterClaude));
+}
+
+searchInput.value = 'gpt';
+searchInput.dispatch('input');
+selectAllBtn.dispatch('click');
+var selectedAfterGpt = ms.getSelected();
+if (JSON.stringify(selectedAfterGpt) !== JSON.stringify(['claude-3-5-sonnet', 'gpt-4o', 'claude-3-opus'])) {
+  throw new Error('expected previous selection preserved plus filtered gpt model, got: ' + JSON.stringify(selectedAfterGpt));
+}
+
+// 2. Verify drag starting inside openSelect and releasing outside does not close the menu.
+bindGlobalEvents();
+var closedCount = 0;
+var openContainer = makeEl('div');
+var insideNode = makeEl('input');
+var outsideNode = makeEl('div');
+openContainer.appendChild(insideNode);
+state.openSelect = {
+  element: openContainer,
+  close: function () { closedCount++; }
+};
+function emitDoc(ev, target) {
+  var list = docListeners[ev] || [];
+  for (var i = 0; i < list.length; i++) {
+    list[i]({ target: target });
+  }
+}
+emitDoc('mousedown', insideNode);
+emitDoc('mouseup', outsideNode);
+emitDoc('click', outsideNode);
+if (closedCount !== 0) {
+  throw new Error('expected drag from inside to outside not to close openSelect, closedCount=' + closedCount);
+}
+
+setTimeout(function () {
+  emitDoc('mousedown', outsideNode);
+  emitDoc('mouseup', outsideNode);
+  emitDoc('click', outsideNode);
+  if (closedCount !== 1) {
+    throw new Error('expected click outside openSelect to close it, closedCount=' + closedCount);
+  }
+}, 10);
+`
+	cmd := exec.Command(nodePath, "-e", testRunner)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("node execution failed: %v\noutput: %s", err, string(out))
+	}
+}
