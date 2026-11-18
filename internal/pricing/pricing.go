@@ -167,6 +167,10 @@ type candidate struct {
 	canonicalMatch bool
 	prefixOfWanted bool
 	depth          int
+	// wantedSegments is the segment count of the indexed wanted name that
+	// produced this offer; depth == wantedSegments means the whole suffix
+	// matched rather than a leading family token.
+	wantedSegments int
 	extra          int
 }
 
@@ -255,6 +259,7 @@ func decodeModels(decoder *json.Decoder, provider string, index wantedIndex, out
 				canonicalMatch: index.matchesName(match.name, entry.CanonicalModelID),
 				prefixOfWanted: isStrictPrefix(match.base, base),
 				depth:          match.depth,
+				wantedSegments: len(splitSegments(match.base)),
 				extra:          len(segments) - match.depth,
 			})
 		}
@@ -297,27 +302,30 @@ func resolve(candidates map[string][]candidate) map[string]Suggestion {
 		if len(offers) == 0 {
 			continue
 		}
-		// Keep only the deepest prefix stage that produced matches. A model name
-		// such as "gemini-3.5-flash-high" falls back to "gemini-3.5-flash" when
-		// no catalog listing carries the trailing "high" marker.
+		// A lone family token is too weak: it would map "claude-3-5-haiku" onto
+		// every Claude listing. An offer is confident when it matched at least
+		// two segments or the whole indexed suffix — the latter keeps names with
+		// a skipped vendor prefix (e.g. "wb-hy4flash") working, because their
+		// remaining suffix is matched in full.
+		accepted := make([]candidate, 0, len(offers))
 		maxDepth := 0
 		for _, offer := range offers {
+			if offer.depth < 2 && offer.depth < offer.wantedSegments {
+				continue
+			}
+			accepted = append(accepted, offer)
 			if offer.depth > maxDepth {
 				maxDepth = offer.depth
 			}
 		}
-		// A single family token is too weak for a multi-token name: it would map
-		// "claude-3-5-haiku" onto every Claude listing. Require at least two
-		// matched segments unless the requested name is itself one segment.
-		requiredDepth := 1
-		if len(splitSegments(modelBase(wanted))) > 1 {
-			requiredDepth = 2
-		}
-		if maxDepth < requiredDepth {
+		if len(accepted) == 0 {
 			continue
 		}
-		matched := make([]candidate, 0, len(offers))
-		for _, offer := range offers {
+		// Keep only the deepest prefix stage that produced matches. A model name
+		// such as "gemini-3.5-flash-high" falls back to "gemini-3.5-flash" when
+		// no catalog listing carries the trailing "high" marker.
+		matched := make([]candidate, 0, len(accepted))
+		for _, offer := range accepted {
 			if offer.depth == maxDepth {
 				matched = append(matched, offer)
 			}
@@ -683,7 +691,6 @@ type wantedEntry struct {
 	name     string
 	base     string
 	segments []string
-	skip     int
 }
 
 type wantedMatch struct {
@@ -708,7 +715,6 @@ func newWantedIndex(wanted []string) wantedIndex {
 				name:     name,
 				base:     subBase,
 				segments: subSegments,
-				skip:     skip,
 			})
 		}
 	}
