@@ -627,4 +627,41 @@ const templateStyleResponsive = `
   }
   .spinner { animation: none; }
 }
+.badge-models-warning {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  background: var(--accent-amber-soft);
+  color: var(--accent-amber-text);
+  border: 1px solid var(--accent-amber-border);
+}
+.model-tooltip-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 1200;
+  width: max-content;
+  max-width: 340px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-lg);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  user-select: text;
+  white-space: normal;
+  word-break: break-word;
+  cursor: text;
+}
+.badge-models, .badge-models-warning {
+  position: relative;
+  cursor: pointer;
+}
 `

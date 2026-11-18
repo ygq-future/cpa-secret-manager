@@ -167,6 +167,10 @@ const shellModals = `  </main>
               {{ICON:warning}}
               <span data-i18n="key_form.quota_no_priced_models">No models have configured prices yet. Please add model pricing in Settings first.</span>
             </div>
+            <div id="key-form-quota-missing-models-alert" class="alert is-warning" hidden>
+              {{ICON:warning}}
+              <span id="key-form-quota-missing-models-text"></span>
+            </div>
           </div>
         </div>
       </div>

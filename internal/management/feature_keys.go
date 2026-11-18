@@ -1025,14 +1025,84 @@ function buildKeyRow(index, value, remark, usage) {
     if (entryQuota.reset_at && ((entryQuota.strategy === 'token' && entryQuota.limit_value > 0) || (entryQuota.strategy === 'cost' && entryQuota.limit_cost > 0) || (entryQuota.strategy === 'dual' && (entryQuota.limit_value > 0 || entryQuota.limit_cost > 0)))) {
       tagRow.appendChild(buildQuotaResetBadge(entryQuota));
     }
+var activeModelTooltip = null;
+var modelTooltipHideTimer = null;
+
+function hideModelTooltip() {
+  if (modelTooltipHideTimer) {
+    clearTimeout(modelTooltipHideTimer);
+    modelTooltipHideTimer = null;
+  }
+  if (activeModelTooltip && activeModelTooltip.parentNode) {
+    activeModelTooltip.parentNode.removeChild(activeModelTooltip);
+  }
+  activeModelTooltip = null;
+}
+
+function scheduleHideModelTooltip() {
+  if (modelTooltipHideTimer) {
+    clearTimeout(modelTooltipHideTimer);
+  }
+  modelTooltipHideTimer = setTimeout(hideModelTooltip, 180);
+}
+
+function showModelTooltip(anchor, text) {
+  if (modelTooltipHideTimer) {
+    clearTimeout(modelTooltipHideTimer);
+    modelTooltipHideTimer = null;
+  }
+  hideModelTooltip();
+  var pop = document.createElement('div');
+  pop.className = 'model-tooltip-popover';
+  pop.textContent = text;
+  pop.addEventListener('mouseenter', function () {
+    if (modelTooltipHideTimer) {
+      clearTimeout(modelTooltipHideTimer);
+      modelTooltipHideTimer = null;
+    }
+  });
+  pop.addEventListener('mouseleave', scheduleHideModelTooltip);
+  anchor.appendChild(pop);
+  activeModelTooltip = pop;
+}
+
+function bindCopyableTooltip(el, text) {
+  el.addEventListener('mouseenter', function () {
+    showModelTooltip(el, text);
+  });
+  el.addEventListener('mouseleave', scheduleHideModelTooltip);
+}
+
     if (Array.isArray(entryQuota.allowed_models) && entryQuota.allowed_models.length > 0) {
       var mBadge = document.createElement('span');
       mBadge.className = 'badge-models';
-      mBadge.title = entryQuota.allowed_models.join(', ');
+      bindCopyableTooltip(mBadge, entryQuota.allowed_models.join(', '));
       var mText = document.createElement('span');
       mText.textContent = tf('keys.quota_models_badge', { count: entryQuota.allowed_models.length });
       mBadge.appendChild(mText);
       tagRow.appendChild(mBadge);
+
+      var missingModels = [];
+      if (state.availableModelsLoaded && Array.isArray(state.availableModels)) {
+        var hostSet = {};
+        for (var hm = 0; hm < state.availableModels.length; hm++) {
+          hostSet[state.availableModels[hm]] = true;
+        }
+        for (var am = 0; am < entryQuota.allowed_models.length; am++) {
+          if (!hostSet[entryQuota.allowed_models[am]]) {
+            missingModels.push(entryQuota.allowed_models[am]);
+          }
+        }
+      }
+      if (missingModels.length > 0) {
+        var wBadge = document.createElement('span');
+        wBadge.className = 'badge-models-warning';
+        bindCopyableTooltip(wBadge, tf('keys.quota_models_missing_title', { models: missingModels.join(', ') }));
+        var wText = document.createElement('span');
+        wText.textContent = tf('keys.quota_models_missing_badge', { count: entryQuota.allowed_models.length, missing: missingModels.length });
+        wBadge.appendChild(wText);
+        tagRow.appendChild(wBadge);
+      }
     }
   }
   remarkCell.appendChild(tagRow);
@@ -1437,8 +1507,59 @@ function fetchHostModels() {
   });
 }
 
+function collectLimitedModels() {
+  var limited = {};
+  var entries = state.entries || [];
+  for (var i = 0; i < entries.length; i++) {
+    var q = entries[i] && entries[i].quota;
+    if (q && Array.isArray(q.allowed_models)) {
+      for (var j = 0; j < q.allowed_models.length; j++) {
+        if (q.allowed_models[j]) {
+          limited[q.allowed_models[j]] = true;
+        }
+      }
+    }
+  }
+  return limited;
+}
+
+function syncDeletedModelPrices(hostModels) {
+  if (!state.availableModelsLoaded || !state.settings || !state.settings.model_prices) {
+    return;
+  }
+  if (typeof saveModelPrices !== 'function') {
+    return;
+  }
+  var hostSet = {};
+  for (var i = 0; i < (hostModels || []).length; i++) {
+    if (hostModels[i]) hostSet[hostModels[i]] = true;
+  }
+  var limited = collectLimitedModels();
+  var current = state.settings.model_prices;
+  var next = {};
+  var changed = false;
+  for (var model in current) {
+    if (!Object.prototype.hasOwnProperty.call(current, model)) continue;
+    if (!hostSet[model] && !limited[model]) {
+      changed = true;
+      continue;
+    }
+    next[model] = current[model];
+  }
+  if (changed) {
+    saveModelPrices(next).catch(function () {});
+  }
+}
+
+function isModelMissingFromHost(model) {
+  if (!state.availableModelsLoaded || !Array.isArray(state.availableModels)) {
+    return false;
+  }
+  return state.availableModels.indexOf(model) === -1;
+}
+
 function loadAvailableModels(force) {
-  if (!force && state.availableModels && state.availableModels.length > 0) {
+  if (!force && state.availableModelsLoaded && state.availableModels) {
     return Promise.resolve(state.availableModels);
   }
   if (!force && state.availableModelsPending) {
@@ -1446,27 +1567,27 @@ function loadAvailableModels(force) {
   }
   var generation = state.modelsGeneration;
   var pending = fetchHostModels()
-    .catch(function () {
-      return [];
-    })
     .then(function (models) {
       var set = {};
       for (var i = 0; i < models.length; i++) {
         if (models[i]) set[models[i]] = true;
       }
-      for (var j = 0; j < state.entries.length; j++) {
-        var u = state.entries[j] && state.entries[j].usage;
-        if (u && Array.isArray(u.models)) {
-          for (var k = 0; k < u.models.length; k++) {
-            if (u.models[k] && u.models[k].model) set[u.models[k].model] = true;
-          }
-        }
-      }
       var res = Object.keys(set).sort();
       if (generation === state.modelsGeneration) {
         state.availableModels = res;
+        state.availableModelsLoaded = true;
+        syncDeletedModelPrices(res);
+        if (state.entries && state.entries.length > 0 && typeof renderKeys === 'function') {
+          renderKeys();
+        }
       }
       return res;
+    })
+    .catch(function () {
+      if (generation === state.modelsGeneration) {
+        state.availableModelsLoaded = false;
+      }
+      return state.availableModels || [];
     });
   var clearPending = function () {
     if (state.availableModelsPending === pending) {
@@ -1538,27 +1659,51 @@ function syncQuotaModeUI(overrideAllowed) {
 // modelOptionItems decorates whitelist entries with their saved unit price so
 // the option row answers "what does this model cost" without leaving the form.
 function modelOptionItems(names) {
-  if (!state.settings) {
-    return names.map(function (name) {
-      return { value: name, label: name };
-    });
-  }
-  var prices = state.settings.model_prices || {};
+  var prices = (state.settings && state.settings.model_prices) || {};
   return names.map(function (name) {
-    var price = prices[name];
-    if (!price) {
-      return { value: name, label: name, tags: [{ text: t('key_form.model_price_unset'), tone: 'unset' }] };
+    var tags = [];
+    if (isModelMissingFromHost(name)) {
+      tags.push({ text: t('key_form.model_missing_tag'), tone: 'warning' });
     }
-    return {
-      value: name,
-      label: name,
-      tags: [
-        { text: t('settings.tag_input') + ' ' + formatCostValue(price.input) },
-        { text: t('settings.tag_output') + ' ' + formatCostValue(price.output), tone: 'out' },
-        { text: t('settings.tag_cache') + ' ' + formatCostValue(price.cache), tone: 'cache' }
-      ]
-    };
+    if (state.settings) {
+      var price = prices[name];
+      if (!price) {
+        tags.push({ text: t('key_form.model_price_unset'), tone: 'unset' });
+      } else {
+        tags.push({ text: t('settings.tag_input') + ' ' + formatCostValue(price.input) });
+        tags.push({ text: t('settings.tag_output') + ' ' + formatCostValue(price.output), tone: 'out' });
+        tags.push({ text: t('settings.tag_cache') + ' ' + formatCostValue(price.cache), tone: 'cache' });
+      }
+    }
+    var item = { value: name, label: name };
+    if (tags.length > 0) {
+      item.tags = tags;
+    }
+    return item;
   });
+}
+
+function updateMissingModelsAlert(selectedModels) {
+  var missingAlert = byId('key-form-quota-missing-models-alert');
+  var missingText = byId('key-form-quota-missing-models-text');
+  if (!missingAlert || !missingText) {
+    return;
+  }
+  var missing = [];
+  if (state.availableModelsLoaded) {
+    for (var i = 0; i < (selectedModels || []).length; i++) {
+      if (isModelMissingFromHost(selectedModels[i])) {
+        missing.push(selectedModels[i]);
+      }
+    }
+  }
+  if (missing.length > 0) {
+    missingText.textContent = tf('key_form.quota_missing_models_alert', { models: missing.join(', ') });
+    missingAlert.hidden = false;
+  } else {
+    missingText.textContent = '';
+    missingAlert.hidden = true;
+  }
 }
 
 function renderModelsSelection(allowedModels) {
@@ -1583,20 +1728,28 @@ function renderModelsSelection(allowedModels) {
 
   if (isCostModeActive()) {
     var prices = (state.settings && state.settings.model_prices) || {};
-    var pricedModels = Object.keys(prices).sort();
+    var allowedSet = {};
+    for (var a = 0; a < allowed.length; a++) {
+      allowedSet[allowed[a]] = true;
+    }
+    var pricedModels = Object.keys(prices).filter(function (m) {
+      return !state.availableModelsLoaded || !isModelMissingFromHost(m) || allowedSet[m];
+    }).sort();
     if (pricedModels.length === 0) {
       container.innerHTML = '';
       if (alertBox) alertBox.hidden = false;
+      updateMissingModelsAlert([]);
       modelMultiSelect = null;
       return;
     }
     if (alertBox) alertBox.hidden = true;
     var filteredAllowed = [];
-    for (var a = 0; a < allowed.length; a++) {
-      if (prices[allowed[a]] !== undefined) {
-        filteredAllowed.push(allowed[a]);
+    for (var f = 0; f < allowed.length; f++) {
+      if (prices[allowed[f]] !== undefined) {
+        filteredAllowed.push(allowed[f]);
       }
     }
+    updateMissingModelsAlert(filteredAllowed);
     modelMultiSelect = mountMultiSelect({
       container: container,
       items: modelOptionItems(pricedModels),
@@ -1616,6 +1769,7 @@ function renderModelsSelection(allowedModels) {
         if (allowed[j]) set[allowed[j]] = true;
       }
       var allNames = Object.keys(set).sort();
+      updateMissingModelsAlert(allowed);
       modelMultiSelect = mountMultiSelect({
         container: container,
         items: modelOptionItems(allNames),

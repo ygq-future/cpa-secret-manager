@@ -69,10 +69,7 @@ var devCatalog = []struct {
 	{"gemini-omni-1.2-flash", quota.ModelPrice{Input: 1.5, Output: 9, Cache: 0}},
 	{"gpt-5.6-luna", quota.ModelPrice{Input: 0.2, Output: 1.2, Cache: 0.02}},
 	{"gpt-5.6-terra", quota.ModelPrice{Input: 2, Output: 12, Cache: 0.2}},
-	{"gpt-6-chat-thinking", quota.ModelPrice{Input: 0.1, Output: 0.5, Cache: 0.01}},
-	{"gpt-6-luna", quota.ModelPrice{Input: 0.1, Output: 0.5, Cache: 0.01}},
 	{"hy4flash", quota.ModelPrice{Input: 0.14, Output: 0.28, Cache: 0.01}},
-	{"wb/deepseek-v4-flash-sg", quota.ModelPrice{Input: 0.14, Output: 0.28, Cache: 0.01}},
 }
 
 // devUsageModels is the three-model subset the seed endpoints spread usage
