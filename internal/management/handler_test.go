@@ -483,7 +483,15 @@ func TestHandler_FailuresClear(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("POST status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
-	if backend.clearReq == nil || backend.clearReq.Before != "2026-11-17T10:00:00Z" || backend.clearReq.Hash != "abc" || backend.clearReq.AuthID != "auth-1" || backend.clearReq.Model != "gpt-5.6" || backend.clearReq.StatusCode == nil || *backend.clearReq.StatusCode != 0 {
+	got := backend.clearReq
+	if got == nil {
+		t.Fatal("clear request was not forwarded to the backend")
+	}
+	if got.Before != "2026-11-17T10:00:00Z" || got.Hash != "abc" || got.AuthID != "auth-1" || got.Model != "gpt-5.6" {
+		t.Fatalf("clear request = %+v, want before/hash/auth/model preserved", *got)
+	}
+	if got.StatusCode == nil || *got.StatusCode != 0 {
+		t.Fatalf("status_code = %v, want a pointer to 0", got.StatusCode)
 	}
 
 	var res ClearFailuresResult
