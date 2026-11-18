@@ -17,6 +17,7 @@ const (
 	MethodManagementHandle       = "management.handle"
 	MethodUsageHandle            = "usage.handle"
 	MethodRequestInterceptBefore = "request.intercept_before"
+	MethodRequestInterceptAfter  = "request.intercept_after"
 )
 
 // SchemaVersion is the plugin contract version declared to the host. Keep it

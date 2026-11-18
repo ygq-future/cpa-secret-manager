@@ -13,24 +13,31 @@ import (
 	"cpa-secret-manager/internal/remarks"
 )
 
-// RequestInterceptWire represents the incoming wire format from CPA for request.intercept_before.
+// RequestInterceptWire represents the incoming wire format from CPA for
+// request.intercept_before. Only the client API key and the requested model
+// drive the gate, so the request body is not decoded.
 type RequestInterceptWire struct {
-	Headers      map[string][]string `json:"headers"`
-	HeadersUpper map[string][]string `json:"Headers"`
-	Body         json.RawMessage     `json:"body"`
-	BodyUpper    json.RawMessage     `json:"Body"`
-	Model        string              `json:"model"`
-	RequestID    string              `json:"request_id"`
+	Headers map[string][]string `json:"Headers"`
+	Model   string              `json:"Model"`
 }
 
-// RequestInterceptResponse is the envelope payload returned to CPA.
+// RequestInterceptResponse is the envelope payload returned to CPA. It mirrors
+// the host's sdk/pluginapi.RequestInterceptResponse field names: byte slices
+// travel as base64 JSON strings, and omitted fields leave the request
+// untouched.
 type RequestInterceptResponse struct {
-	Terminate       bool                `json:"terminate"`
-	StatusCode      int                 `json:"status_code,omitempty"`
-	ResponseHeaders map[string][]string `json:"response_headers,omitempty"`
-	ResponseBody    string              `json:"response_body,omitempty"`
-	Headers         map[string][]string `json:"headers,omitempty"`
-	Body            json.RawMessage     `json:"body,omitempty"`
+	Terminate       bool                `json:"Terminate,omitempty"`
+	StatusCode      int                 `json:"StatusCode,omitempty"`
+	ResponseHeaders map[string][]string `json:"ResponseHeaders,omitempty"`
+	ResponseBody    []byte              `json:"ResponseBody,omitempty"`
+}
+
+// handleInterceptAfter is a pass-through. The host invokes both stages for
+// every plugin that declares request_interceptor, and this plugin's gate runs
+// before credential selection, where the client key and requested model are
+// already known.
+func (r *Runtime) handleInterceptAfter() []byte {
+	return okEnvelope(RequestInterceptResponse{})
 }
 
 func (r *Runtime) handleInterceptBefore(ctx context.Context, raw []byte) []byte {
@@ -39,17 +46,7 @@ func (r *Runtime) handleInterceptBefore(ctx context.Context, raw []byte) []byte 
 		return failureEnvelope("invalid_request", fmt.Sprintf("decode intercept request: %v", err))
 	}
 
-	headers := wire.Headers
-	if len(headers) == 0 && len(wire.HeadersUpper) > 0 {
-		headers = wire.HeadersUpper
-	}
-
-	body := wire.Body
-	if len(body) == 0 && len(wire.BodyUpper) > 0 {
-		body = wire.BodyUpper
-	}
-
-	apiKey := extractAPIKey(headers)
+	apiKey := extractAPIKey(wire.Headers)
 	if apiKey != "" {
 		hash := remarks.Index(apiKey)
 		now := r.clock.Now().UTC()
@@ -60,7 +57,7 @@ func (r *Runtime) handleInterceptBefore(ctx context.Context, raw []byte) []byte 
 				ResponseHeaders: map[string][]string{
 					"Content-Type": {"application/json"},
 				},
-				ResponseBody: buildKeyExpiredBody(at),
+				ResponseBody: []byte(buildKeyExpiredBody(at)),
 			})
 		}
 		decision := r.quota.Check(ctx, hash, wire.Model, now)
@@ -71,16 +68,12 @@ func (r *Runtime) handleInterceptBefore(ctx context.Context, raw []byte) []byte 
 				ResponseHeaders: map[string][]string{
 					"Content-Type": {"application/json"},
 				},
-				ResponseBody: buildQuotaExceededBody(decision),
+				ResponseBody: []byte(buildQuotaExceededBody(decision)),
 			})
 		}
 	}
 
-	return okEnvelope(RequestInterceptResponse{
-		Terminate: false,
-		Headers:   headers,
-		Body:      body,
-	})
+	return okEnvelope(RequestInterceptResponse{})
 }
 
 // expiryInstant returns the stored expiration instant of one hash index. A

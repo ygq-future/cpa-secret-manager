@@ -128,6 +128,8 @@ func (r *Runtime) Handle(ctx context.Context, method string, raw []byte) []byte 
 		return r.handleUsage(raw)
 	case MethodRequestInterceptBefore:
 		return r.handleInterceptBefore(ctx, raw)
+	case MethodRequestInterceptAfter:
+		return r.handleInterceptAfter()
 	default:
 		return failureEnvelope("unknown_method", "unknown method: "+method)
 	}

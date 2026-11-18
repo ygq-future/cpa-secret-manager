@@ -505,9 +505,9 @@ func TestDevHost_QuotaEnforcementAndInterception(t *testing.T) {
 		t.Fatalf("simulate-intercept status = %d: %s", status, body)
 	}
 	rejected := decode[struct {
-		Terminate    bool   `json:"terminate"`
-		StatusCode   int    `json:"status_code"`
-		ResponseBody string `json:"response_body"`
+		Terminate    bool   `json:"Terminate"`
+		StatusCode   int    `json:"StatusCode"`
+		ResponseBody []byte `json:"ResponseBody"`
 	}](t, body)
 	if !rejected.Terminate {
 		t.Fatal("expected terminate = true when quota exceeded")
@@ -515,7 +515,7 @@ func TestDevHost_QuotaEnforcementAndInterception(t *testing.T) {
 	if rejected.StatusCode != http.StatusForbidden {
 		t.Fatalf("status code = %d, want 403 Forbidden (must NOT be 429)", rejected.StatusCode)
 	}
-	if !strings.Contains(rejected.ResponseBody, "quota_exceeded") || !strings.Contains(rejected.ResponseBody, "insufficient_quota") {
+	if !strings.Contains(string(rejected.ResponseBody), "quota_exceeded") || !strings.Contains(string(rejected.ResponseBody), "insufficient_quota") {
 		t.Fatalf("response body = %q, want quota_exceeded / insufficient_quota", rejected.ResponseBody)
 	}
 
@@ -611,8 +611,8 @@ func TestDevHost_V1ModelsAndModelRestrictions(t *testing.T) {
 		t.Fatalf("status = %d: %s", status, body)
 	}
 	rejected := decode[struct {
-		Terminate  bool `json:"terminate"`
-		StatusCode int  `json:"status_code"`
+		Terminate  bool `json:"Terminate"`
+		StatusCode int  `json:"StatusCode"`
 	}](t, body)
 	if !rejected.Terminate || rejected.StatusCode != http.StatusForbidden {
 		t.Fatalf("rejected = %+v, want Terminate=true, StatusCode=403", rejected)

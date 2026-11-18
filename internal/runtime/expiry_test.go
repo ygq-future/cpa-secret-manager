@@ -85,7 +85,7 @@ func TestExpiry_EnforcedAtInterceptAndReportedByResolve(t *testing.T) {
 	if !response.Terminate || response.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("expired key response = %+v, want 401 termination", response)
 	}
-	if !json.Valid([]byte(response.ResponseBody)) || !strings.Contains(response.ResponseBody, "key_expired") {
+	if !json.Valid(response.ResponseBody) || !strings.Contains(string(response.ResponseBody), "key_expired") {
 		t.Fatalf("expired key body = %s, want a key_expired error", response.ResponseBody)
 	}
 	if response := interceptCall(t, rt, permanent); response.Terminate {
@@ -146,4 +146,50 @@ func TestManagementRegistration_DeclaresExpiryRoute(t *testing.T) {
 		}
 	}
 	t.Fatalf("routes = %+v, want PUT %s", registration.Routes, management.RouteExpiry)
+}
+
+func TestExpiry_ResponseUsesHostWireNames(t *testing.T) {
+	now := time.Date(2026, 11, 14, 8, 0, 0, 0, time.UTC)
+	clock := &fixedClock{at: now}
+	rt := registerRuntimeWith(t, Options{StatePath: filepath.Join(t.TempDir(), "state.json"), Clock: clock})
+
+	apiKey := "sk-wire-contract"
+	expiresAt := now.Add(time.Minute)
+	if status, body := setExpiryCall(t, rt, apiKey, expiresAt.Format(time.RFC3339)); status != http.StatusOK {
+		t.Fatalf("PUT expiry status = %d, body = %s", status, body)
+	}
+	clock.at = expiresAt
+
+	raw, err := json.Marshal(map[string]any{
+		"Headers": map[string][]string{"Authorization": {"Bearer " + apiKey}},
+		"Model":   "gpt-5.6",
+	})
+	if err != nil {
+		t.Fatalf("encode intercept request: %v", err)
+	}
+	env := decodeEnvelope(t, rt.Handle(context.Background(), MethodRequestInterceptBefore, raw))
+	if !env.OK {
+		t.Fatalf("intercept_before failed: %+v", env.Error)
+	}
+
+	// Mirrors the host's sdk/pluginapi.RequestInterceptResponse: untagged Go
+	// field names and a base64-encoded []byte body.
+	var response struct {
+		Terminate       bool
+		StatusCode      int
+		ResponseHeaders map[string][]string
+		ResponseBody    []byte
+	}
+	if err := json.Unmarshal(env.Result, &response); err != nil {
+		t.Fatalf("decode intercept result as host wire: %v", err)
+	}
+	if !response.Terminate || response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("host-decoded response = %+v, want 401 termination", response)
+	}
+	if !strings.Contains(string(response.ResponseBody), "key_expired") {
+		t.Fatalf("host-decoded body = %s, want key_expired", response.ResponseBody)
+	}
+	if response.ResponseHeaders["Content-Type"][0] != "application/json" {
+		t.Fatalf("host-decoded headers = %+v, want application/json", response.ResponseHeaders)
+	}
 }

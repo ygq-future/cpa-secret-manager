@@ -1185,7 +1185,7 @@ func TestHandle_RequestInterceptBefore_QuotaEnforcement(t *testing.T) {
 	if rejectedResp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status code = %d, want 403 Forbidden (must NOT be 429)", rejectedResp.StatusCode)
 	}
-	if !strings.Contains(rejectedResp.ResponseBody, "quota_exceeded") || !strings.Contains(rejectedResp.ResponseBody, "insufficient_quota") {
+	if !strings.Contains(string(rejectedResp.ResponseBody), "quota_exceeded") || !strings.Contains(string(rejectedResp.ResponseBody), "insufficient_quota") {
 		t.Fatalf("response body missing quota error: %s", rejectedResp.ResponseBody)
 	}
 
@@ -1257,7 +1257,7 @@ func TestHandle_RequestInterceptBefore_AllowedModels(t *testing.T) {
 	if respDenied.StatusCode != http.StatusForbidden {
 		t.Fatalf("status code = %d, want 403 Forbidden", respDenied.StatusCode)
 	}
-	if !strings.Contains(respDenied.ResponseBody, "not permitted") {
+	if !strings.Contains(string(respDenied.ResponseBody), "not permitted") {
 		t.Fatalf("response body = %s, want not permitted error", respDenied.ResponseBody)
 	}
 }
@@ -1292,7 +1292,7 @@ func TestHandle_RequestInterceptBefore_DualAndCostQuota(t *testing.T) {
 	if !respUnpriced.Terminate || respUnpriced.StatusCode != http.StatusForbidden {
 		t.Fatalf("expected unpriced model blocked with 403, got %+v", respUnpriced)
 	}
-	if !strings.Contains(respUnpriced.ResponseBody, "no configured price") {
+	if !strings.Contains(string(respUnpriced.ResponseBody), "no configured price") {
 		t.Fatalf("expected no configured price error, got: %s", respUnpriced.ResponseBody)
 	}
 
@@ -1318,7 +1318,7 @@ func TestHandle_RequestInterceptBefore_DualAndCostQuota(t *testing.T) {
 	if !respExceeded.Terminate || respExceeded.StatusCode != http.StatusForbidden {
 		t.Fatalf("expected cost exceeded request blocked with 403, got %+v", respExceeded)
 	}
-	if !strings.Contains(respExceeded.ResponseBody, "cost limit exceeded") {
+	if !strings.Contains(string(respExceeded.ResponseBody), "cost limit exceeded") {
 		t.Fatalf("expected cost limit exceeded message, got: %s", respExceeded.ResponseBody)
 	}
 
@@ -1393,11 +1393,28 @@ func TestHandle_ModelOnlyAndTokenOnlyQuotaRules(t *testing.T) {
 	if !respDisallowed.Terminate || respDisallowed.StatusCode != http.StatusForbidden {
 		t.Fatalf("expected disallowed model blocked with 403, got %+v", respDisallowed)
 	}
-	if !strings.Contains(respDisallowed.ResponseBody, `model \"gemini-2.5-pro\" is not permitted`) {
+	if !strings.Contains(string(respDisallowed.ResponseBody), `model \"gemini-2.5-pro\" is not permitted`) {
 		t.Fatalf("unexpected response body: %s", respDisallowed.ResponseBody)
 	}
-	if strings.Contains(respDisallowed.ResponseBody, "Quota will reset at") {
+	if strings.Contains(string(respDisallowed.ResponseBody), "Quota will reset at") {
 		t.Fatalf("model-only restriction should not contain reset message: %s", respDisallowed.ResponseBody)
+	}
+}
+
+func TestHandle_RequestInterceptAfter_IsPassThrough(t *testing.T) {
+	rt := registerRuntime(t, filepath.Join(t.TempDir(), "state.json"))
+
+	raw := []byte(`{"Headers":{"Authorization":["Bearer sk-any-key"]},"Model":"gpt-5.6"}`)
+	env := decodeEnvelope(t, rt.Handle(context.Background(), MethodRequestInterceptAfter, raw))
+	if !env.OK {
+		t.Fatalf("intercept_after failed: %+v", env.Error)
+	}
+	var response RequestInterceptResponse
+	if err := json.Unmarshal(env.Result, &response); err != nil {
+		t.Fatalf("decode intercept_after response: %v", err)
+	}
+	if response.Terminate {
+		t.Fatalf("intercept_after = %+v, want a pass-through", response)
 	}
 }
 
