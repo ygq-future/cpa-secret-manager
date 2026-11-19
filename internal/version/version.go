@@ -4,4 +4,4 @@
 package version
 
 // PluginVersion is the plugin release version.
-const PluginVersion = "1.3.4"
+const PluginVersion = "1.3.5"
