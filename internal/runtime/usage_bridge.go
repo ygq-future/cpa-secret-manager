@@ -123,13 +123,16 @@ func pickTime(fields map[string]json.RawMessage, names ...string) time.Time {
 	return value
 }
 
-const maxFailureMessageLength = 512
+const (
+	maxFailureMessageLength = 512
+	maxHTMLUnescapePasses   = 3
+)
 
 // cleanFailureMessage normalizes the upstream error body before it is stored.
-// The host reports the body HTML-escaped (a quote arrives as &#34;), so one
-// decode turns it back into the JSON text the page shows and copies.
+// The host may report the body HTML-escaped once or multiple times (e.g. &#34;
+// or &amp;#34;), so bounded unescaping turns it back into readable text.
 func cleanFailureMessage(msg string) string {
-	msg = html.UnescapeString(strings.TrimSpace(msg))
+	msg = unescapeHTML(strings.TrimSpace(msg))
 	if len(msg) == 0 {
 		return ""
 	}
@@ -138,4 +141,15 @@ func cleanFailureMessage(msg string) string {
 		return string(runes[:maxFailureMessageLength]) + "…"
 	}
 	return msg
+}
+
+func unescapeHTML(raw string) string {
+	for range maxHTMLUnescapePasses {
+		next := html.UnescapeString(raw)
+		if next == raw {
+			return raw
+		}
+		raw = next
+	}
+	return raw
 }

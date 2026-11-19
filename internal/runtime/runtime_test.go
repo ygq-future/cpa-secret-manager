@@ -1046,6 +1046,34 @@ func TestRuntime_ErrorLogRecordingAndQuery(t *testing.T) {
 	}
 }
 
+func TestRuntime_ErrorLogDecodesDoubleEscapedBody(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	rt := registerRuntime(t, statePath)
+
+	failureRecord := []byte(`{
+		"APIKey": "sk-double-escaped",
+		"AuthID": "antigravity-user@example.com.json",
+		"Model": "gemini-3.5-flash-lite",
+		"Failed": true,
+		"RequestedAt": "2026-11-19T06:05:56Z",
+		"Failure": {
+			"StatusCode": 429,
+			"Body": "{&amp;#34;error&amp;#34;:{&amp;#34;code&amp;#34;:429,&amp;#34;message&amp;#34;:&amp;#34;Resource has been exhausted.&amp;#34;}}"
+		}
+	}`)
+	rt.Handle(context.Background(), MethodUsageHandle, failureRecord)
+
+	keyHash := remarks.Index("sk-double-escaped")
+	res, err := rt.Failures(context.Background(), management.FailuresRequest{Hash: keyHash})
+	if err != nil {
+		t.Fatalf("Failures() error = %v", err)
+	}
+	want := `{"error":{"code":429,"message":"Resource has been exhausted."}}`
+	if len(res.Items) != 1 || res.Items[0].Message != want {
+		t.Fatalf("failure items = %+v, want message %q", res.Items, want)
+	}
+}
+
 func TestRuntime_ClearFailures(t *testing.T) {
 	statePath := filepath.Join(t.TempDir(), "state.json")
 	rt := registerRuntime(t, statePath)

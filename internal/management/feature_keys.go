@@ -3027,21 +3027,22 @@ function openFailuresModal(index, initialModel) {
 
       meta.appendChild(metaLeft);
 
-      if (item.message) {
+      var displayMessage = item.message ? formatFailureMessage(item.message) : '';
+      if (displayMessage) {
         meta.appendChild(buildIconButton('', 'copy', t('failures.copy_msg'), (function (message) {
           return function () {
             copyToClipboard(message);
             showToast(t('failures.msg_copied'), 'success');
           };
-        })(item.message)));
+        })(displayMessage)));
       }
 
       card.appendChild(meta);
 
-      if (item.message) {
+      if (displayMessage) {
         var bodyEl = document.createElement('div');
         bodyEl.className = 'failure-body';
-        bodyEl.textContent = formatFailureMessage(item.message);
+        bodyEl.textContent = displayMessage;
         card.appendChild(bodyEl);
       }
 
@@ -3174,17 +3175,80 @@ function openFailuresModal(index, initialModel) {
   loadFailures();
 }
 
+function decodeHTMLText(raw) {
+  if (typeof raw !== 'string') return '';
+  if (raw.indexOf('&') === -1) return raw;
+  var named = {
+    quot: '"',
+    apos: "'",
+    lt: '<',
+    gt: '>',
+    amp: '&'
+  };
+  var current = raw;
+  for (var pass = 0; pass < 3; pass++) {
+    var next = current.replace(/&(#\d+|#[xX][0-9a-fA-F]+|quot|apos|lt|gt|amp);/g, function (match, body) {
+      if (body.charAt(0) === '#') {
+        var isHex = body.charAt(1) === 'x' || body.charAt(1) === 'X';
+        var code = parseInt(body.slice(isHex ? 2 : 1), isHex ? 16 : 10);
+        if (code > 0 && code <= 0x10FFFF && !(code >= 0xD800 && code <= 0xDFFF)) {
+          if (code <= 0xFFFF) {
+            return String.fromCharCode(code);
+          }
+          var offset = code - 0x10000;
+          return String.fromCharCode(0xD800 + (offset >> 10), 0xDC00 + (offset & 0x3FF));
+        }
+        return match;
+      }
+      return named[body] || match;
+    });
+    if (next === current) break;
+    current = next;
+  }
+  return current;
+}
+
+function decodeHTMLInValue(value) {
+  if (typeof value === 'string') {
+    return decodeHTMLText(value);
+  }
+  if (Array.isArray(value)) {
+    var out = new Array(value.length);
+    for (var i = 0; i < value.length; i++) {
+      out[i] = decodeHTMLInValue(value[i]);
+    }
+    return out;
+  }
+  if (value && typeof value === 'object') {
+    var keys = Object.keys(value);
+    var cloned = {};
+    for (var j = 0; j < keys.length; j++) {
+      var k = keys[j];
+      cloned[decodeHTMLText(k)] = decodeHTMLInValue(value[k]);
+    }
+    return cloned;
+  }
+  return value;
+}
+
 function formatFailureMessage(raw) {
   if (typeof raw !== 'string') return '';
   var trimmed = raw.trim();
-  if (!trimmed || (trimmed.charAt(0) !== '{' && trimmed.charAt(0) !== '[')) {
-    return raw;
+  if (!trimmed) return raw;
+  if (trimmed.charAt(0) === '{' || trimmed.charAt(0) === '[') {
+    try {
+      var parsed = JSON.parse(trimmed);
+      return JSON.stringify(trimmed.indexOf('&') === -1 ? parsed : decodeHTMLInValue(parsed), null, 2);
+    } catch (_) {
+      var decodedTrimmed = decodeHTMLText(trimmed).trim();
+      if (decodedTrimmed.charAt(0) === '{' || decodedTrimmed.charAt(0) === '[') {
+        try {
+          return JSON.stringify(JSON.parse(decodedTrimmed), null, 2);
+        } catch (_) {}
+      }
+    }
   }
-  try {
-    return JSON.stringify(JSON.parse(trimmed), null, 2);
-  } catch (_) {
-    return raw;
-  }
+  return decodeHTMLText(raw);
 }
 
 function closeFailuresModal() {

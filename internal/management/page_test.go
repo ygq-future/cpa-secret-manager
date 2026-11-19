@@ -2106,8 +2106,27 @@ func extractJSFunction(script, name string) string {
 	}
 	depth := 0
 	started := false
+	var quote byte
+	escaped := false
 	for index := start; index < len(script); index++ {
-		switch script[index] {
+		ch := script[index]
+		if quote != 0 {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if ch == '\\' {
+				escaped = true
+				continue
+			}
+			if ch == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch ch {
+		case '\'', '"':
+			quote = ch
 		case '{':
 			depth++
 			started = true
@@ -2428,6 +2447,68 @@ setTimeout(function () {
     throw new Error('expected click outside openSelect to close it, closedCount=' + closedCount);
   }
 }, 10);
+`
+	cmd := exec.Command(nodePath, "-e", testRunner)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("node execution failed: %v\noutput: %s", err, string(out))
+	}
+}
+
+func TestPage_FailureMessageFormattingAndEntityDecode(t *testing.T) {
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed; skipping runtime JS evaluation test")
+	}
+
+	script := extractPageScript(t)
+	decodeFn := extractJSFunction(script, "decodeHTMLText")
+	decodeValFn := extractJSFunction(script, "decodeHTMLInValue")
+	formatFn := extractJSFunction(script, "formatFailureMessage")
+	if decodeFn == "" || decodeValFn == "" || formatFn == "" {
+		t.Fatalf("missing failure message formatter functions (decode=%v value=%v format=%v)", decodeFn != "", decodeValFn != "", formatFn != "")
+	}
+
+	testRunner := decodeFn + "\n" + decodeValFn + "\n" + formatFn + `
+function assertEq(name, got, want) {
+  if (got !== want) {
+    throw new Error(name + ': got ' + JSON.stringify(got) + ', want ' + JSON.stringify(want));
+  }
+}
+
+// 1. HTML-escaped JSON (like &#34; from host) formats cleanly with double quotes.
+assertEq(
+  'escaped-json',
+  formatFailureMessage('{\n  &#34;error&#34;: {\n    &#34;code&#34;: 429,\n    &#34;message&#34;: &#34;Resource has been exhausted (e.g. check quota).&#34;,\n    &#34;status&#34;: &#34;RESOURCE_EXHAUSTED&#34;\n  }\n}'),
+  '{\n  "error": {\n    "code": 429,\n    "message": "Resource has been exhausted (e.g. check quota).",\n    "status": "RESOURCE_EXHAUSTED"\n  }\n}'
+);
+
+// 2. Double-escaped JSON is also decoded and pretty-printed.
+assertEq(
+  'double-escaped-json',
+  formatFailureMessage('{&amp;#34;error&amp;#34;:{&amp;#34;code&amp;#34;:429}}'),
+  '{\n  "error": {\n    "code": 429\n  }\n}'
+);
+
+// 3. Plain text error containing &#34; is decoded without touching URL query parameters.
+assertEq(
+  'escaped-text',
+  formatFailureMessage('Post &#34;https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse&#34;: context canceled'),
+  'Post "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse": context canceled'
+);
+
+// 4. Truncated HTML-escaped JSON falls back to readable decoded text.
+assertEq(
+  'truncated-escaped-json',
+  formatFailureMessage('{&#34;error&#34;:{&#34;message&#34;:&#34;truncated…'),
+  '{"error":{"message":"truncated…'
+);
+
+// 5. Valid JSON whose string values carry HTML entities decodes cleanly without breaking JSON escaping.
+assertEq(
+  'valid-json-nested-entities',
+  formatFailureMessage('{"error":{"message":"Post &#34;https://example.com&#34;: failed"}}'),
+  '{\n  "error": {\n    "message": "Post \\"https://example.com\\": failed"\n  }\n}'
+);
 `
 	cmd := exec.Command(nodePath, "-e", testRunner)
 	if out, err := cmd.CombinedOutput(); err != nil {
